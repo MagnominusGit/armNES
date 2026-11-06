@@ -169,7 +169,7 @@ struct Apu {
 	bool dmcFlag;
 	// The IRQ level detector the frame counter and DMC drive, latched onto the IRQ line once a cycle
 	bool irqDetector;
-	bool lengthReload[4];
+	bool lengthReload[4], lengthReloadAny, haltPending;
 	uint8_t lengthReloadValue[4];
 	uint8_t registers[0x10];
 	// Controllers: the strobe latches on the APU's get-to-put edge; reads shift two cycles later

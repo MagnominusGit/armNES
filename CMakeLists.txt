@@ -24,6 +24,12 @@ add_library(armnes STATIC ${CORE_SOURCES})
 target_include_directories(armnes PUBLIC src)
 target_link_libraries(armnes PUBLIC ZLIB::ZLIB)
 target_compile_options(armnes PRIVATE -O3)
+# The core's parts call each other every master clock: let the compiler inline across its files
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ipo)
+if(ipo)
+	set_property(TARGET armnes PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
 
 # Headless runner for test ROMs and library sweeps
 add_executable(nesrun tests/nesrun.c)

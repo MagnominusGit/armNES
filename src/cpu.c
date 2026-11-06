@@ -11,7 +11,7 @@ enum { FLAG_C = 1, FLAG_Z = 2, FLAG_I = 4, FLAG_D = 8, FLAG_B = 16, FLAG_U = 32,
 
 // One master clock besides the CPU's own access, in TriCNES's order: the NMI line at clock 4, the
 // IRQ line at 7 (M2 going low), the PPU's dot and half dot, then the APU in the CPU's slot.
-void nesTick(struct NES* nes) {
+static inline __attribute__((always_inline)) void tick(struct NES* nes) {
 	struct Cpu* cpu = &nes->cpu;
 	if (nes->cpuClock == 4) {
 		// The PPU raises the NMI line; it only drops again on an opcode fetch
@@ -42,9 +42,13 @@ void nesTick(struct NES* nes) {
 	nes->masterClock++;
 }
 
+void nesTick(struct NES* nes) {
+	tick(nes);
+}
+
 static inline void startCycle(struct NES* nes) {
 	while (nes->cpuClock != nes->cpuPeriod) {
-		nesTick(nes);
+		tick(nes);
 	}
 	nes->cpuClock = 0;
 	nes->cpu.cycles++;
@@ -60,7 +64,7 @@ static inline void endCycle(struct NES* nes) {
 		nes->board->cpuCycle(nes);
 	}
 	do {
-		nesTick(nes);
+		tick(nes);
 	} while (nes->cpuClock != nes->cpuPeriod);
 	cpu->prevNeedNmi = cpu->needNmi;
 	if (!cpu->nmiPrevLine && cpu->nmiLine) {

@@ -48,18 +48,18 @@ static const uint16_t stepsNtsc5[5] = { 7457, 14913, 22371, 37281, 37282 };
 static const uint16_t stepsPal[6] = { 8313, 16627, 24939, 33252, 33253, 33254 };
 static const uint16_t stepsPal5[5] = { 8313, 16627, 24939, 41565, 41566 };
 
-static float pulseMix[31];
-static float tndMix[203];
+static int32_t pulseMix[31];
+static int32_t tndMix[203];
 
 static void buildMixer(void) {
 	if (pulseMix[1] != 0) {
 		return;
 	}
 	for (int i = 1; i < 31; i++) {
-		pulseMix[i] = 95.52f / (8128.0f / i + 100.0f);
+		pulseMix[i] = (int32_t) (40000.0f * 95.52f / (8128.0f / i + 100.0f));
 	}
 	for (int i = 1; i < 203; i++) {
-		tndMix[i] = 163.67f / (24329.0f / i + 100.0f);
+		tndMix[i] = (int32_t) (40000.0f * 163.67f / (24329.0f / i + 100.0f));
 	}
 }
 
@@ -185,6 +185,11 @@ static void lengthCounters(struct Apu* apu, bool half) {
 		}
 		apu->lengthReload[i] = false;
 	}
+}
+
+// Halt bits written this cycle take effect after its length counter clock
+static void applyHalts(struct Apu* apu) {
+	apu->haltPending = false;
 	apu->pulse[0].lengthHalt = apu->registers[0x0] & 0x20;
 	apu->pulse[1].lengthHalt = apu->registers[0x4] & 0x20;
 	apu->triangle.control = apu->registers[0x8] & 0x80;
@@ -322,7 +327,13 @@ static void frameCounter(struct NES* nes) {
 		apu->halfClock = false;
 		sweeps(apu);
 	}
-	lengthCounters(apu, half);
+	if (half || apu->lengthReloadAny) {
+		lengthCounters(apu, half);
+		apu->lengthReloadAny = false;
+	}
+	if (apu->haltPending) {
+		applyHalts(apu);
+	}
 }
 
 static int mix(struct NES* nes) {
@@ -339,8 +350,7 @@ static int mix(struct NES* nes) {
 	if (apu->noise.lengthCounter && !(apu->noise.shift & 1)) {
 		noise = apu->noise.constant ? apu->noise.volume : apu->noise.envelopeDecay;
 	}
-	float out = pulseMix[pulse] + tndMix[3 * triangle + 2 * noise + apu->dmc.output];
-	int value = (int) (out * 40000.0f);
+	int value = pulseMix[pulse] + tndMix[3 * triangle + 2 * noise + apu->dmc.output];
 	if (nes->board->audio) {
 		value += nes->board->audio(nes);
 	}
@@ -532,6 +542,9 @@ void apuWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		return;
 	}
 	apu->registers[address & 0xF] = value;
+	if ((address & 3) == 0) {
+		apu->haltPending = true;
+	}
 	switch (address) {
 	case 0x4000:
 	case 0x4004: {
@@ -566,7 +579,7 @@ void apuWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		p->envelopeStart = true;
 		if (p->enabled) {
 			apu->lengthReloadValue[i] = lengthTable[value >> 3];
-			apu->lengthReload[i] = true;
+			apu->lengthReload[i] = apu->lengthReloadAny = true;
 		}
 		break;
 	}
@@ -581,7 +594,7 @@ void apuWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		apu->triangle.linearReloadFlag = true;
 		if (apu->triangle.enabled) {
 			apu->lengthReloadValue[2] = lengthTable[value >> 3];
-			apu->lengthReload[2] = true;
+			apu->lengthReload[2] = apu->lengthReloadAny = true;
 		}
 		break;
 	case 0x400C:
@@ -596,7 +609,7 @@ void apuWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		apu->noise.envelopeStart = true;
 		if (apu->noise.enabled) {
 			apu->lengthReloadValue[3] = lengthTable[value >> 3];
-			apu->lengthReload[3] = true;
+			apu->lengthReload[3] = apu->lengthReloadAny = true;
 		}
 		break;
 	case 0x4010:
