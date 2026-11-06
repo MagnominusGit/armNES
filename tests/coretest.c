@@ -26,9 +26,26 @@ static bool environment(unsigned cmd, void* data) {
 	case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
 		*(const char**) data = getenv("CORETEST_SYSTEM");
 		return *(const char**) data != NULL;
-	case RETRO_ENVIRONMENT_GET_VARIABLE:
-		((struct retro_variable*) data)->value = NULL;
+	// CORETEST_VARS="key=value,...": core options
+	case RETRO_ENVIRONMENT_GET_VARIABLE: {
+		struct retro_variable* v = data;
+		static char value[64];
+		const char* vars = getenv("CORETEST_VARS");
+		v->value = NULL;
+		size_t keyLength = strlen(v->key);
+		for (const char* p = vars; p && *p; p = strchr(p, ',') ? strchr(p, ',') + 1 : NULL) {
+			if (!strncmp(p, v->key, keyLength) && p[keyLength] == '=') {
+				const char* start = p + keyLength + 1;
+				size_t length = strcspn(start, ",");
+				length = length < sizeof(value) - 1 ? length : sizeof(value) - 1;
+				memcpy(value, start, length);
+				value[length] = 0;
+				v->value = value;
+				return true;
+			}
+		}
 		return false;
+	}
 	default:
 		return false;
 	}
@@ -74,7 +91,19 @@ static void video(const void* data, unsigned width, unsigned height, size_t pitc
 	}
 }
 
+// CORETEST_PCM=<file>: the sound up to the save state, as 16-bit stereo
+static bool dumpingSound;
+
 static size_t audioBatch(const int16_t* data, size_t frames) {
+	static FILE* pcm;
+	static bool opened;
+	if (!opened) {
+		opened = true;
+		pcm = getenv("CORETEST_PCM") ? fopen(getenv("CORETEST_PCM"), "wb") : NULL;
+	}
+	if (pcm && dumpingSound) {
+		fwrite(data, 4, frames, pcm);
+	}
 	audioHash = crc32(audioHash, (const uint8_t*) data, frames * 4);
 	audioFrames += frames;
 	return frames;
@@ -151,9 +180,11 @@ int main(int argc, char** argv) {
 	p_retro_get_system_av_info(&av);
 	unsigned start = getenv("CORETEST_FRAME") ? atoi(getenv("CORETEST_FRAME")) + 1 : 600;
 	start = start < 600 ? 600 : start;
+	dumpingSound = true;
 	for (frame = 0; frame < start; frame++) {
 		p_retro_run();
 	}
+	dumpingSound = false;
 	size_t stateSize = p_retro_serialize_size();
 	void* state = malloc(stateSize);
 	if (!p_retro_serialize(state, stateSize)) {
