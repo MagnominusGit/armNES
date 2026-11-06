@@ -82,6 +82,12 @@ int main(int argc, char** argv) {
 	bool seenRunning = false;
 	// NESRUN_PRESS="frame:mask[:frames],...": hold pad 1 buttons (bit 0 A ... bit 7 Right)
 	const char* press = getenv("NESRUN_PRESS");
+	// NESRUN_WAV=file: the sound, 48 kHz 16-bit stereo
+	FILE* wav = getenv("NESRUN_WAV") ? fopen(getenv("NESRUN_WAV"), "wb") : NULL;
+	uint32_t wavBytes = 0;
+	if (wav) {
+		fwrite("RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x02\0\x80\xbb\0\0\0\xee\x02\0\x04\0\x10\0data\0\0\0\0", 1, 44, wav);
+	}
 	for (int frame = 0; frame < frames; frame++) {
 		nes.pads[0] = 0;
 		for (const char* p = press; p && *p;) {
@@ -94,6 +100,9 @@ int main(int argc, char** argv) {
 			p = p ? p + 1 : NULL;
 		}
 		nesRunFrame(&nes);
+		if (wav) {
+			wavBytes += fwrite(nes.audioOut, 2, nes.audioCount, wav) * 2;
+		}
 		uint8_t* w = nes.cart.wram;
 		if (!w || memcmp(w + 1, "\xDE\xB0\x61", 3)) {
 			continue;
@@ -152,6 +161,14 @@ int main(int argc, char** argv) {
 				printf("%s\n", line);
 			}
 		}
+	}
+	if (wav) {
+		uint32_t riff = wavBytes + 36;
+		fseek(wav, 4, SEEK_SET);
+		fwrite(&riff, 4, 1, wav);
+		fseek(wav, 40, SEEK_SET);
+		fwrite(&wavBytes, 4, 1, wav);
+		fclose(wav);
 	}
 	uint32_t hash = crc32(0, (uint8_t*) nes.frameBuffer, NES_WIDTH * NES_HEIGHT * 2);
 	bool seen[512] = { false };

@@ -619,3 +619,399 @@ const struct Board boardNamco175 = {
 	.name = "Namco 175/340", .reset = namco163Reset, .write = namco163Write, .sync = namco163Sync,
 	.stateSize = sizeof(struct Namco163),
 };
+
+// VRC1 (75): 4 KB CHR banks with their fifth bits in the mirroring register
+struct Vrc1 {
+	uint8_t prg[3], chr[2], control;
+};
+
+static void vrc1Sync(struct NES* nes) {
+	struct Vrc1* v = STATE(Vrc1);
+	for (int i = 0; i < 3; i++) {
+		prg8(nes, 0x8000 + i * 0x2000, v->prg[i]);
+	}
+	prg8(nes, 0xE000, -1);
+	chr4(nes, 0x0000, (v->chr[0] & 15) | ((v->control & 2) << 3));
+	chr4(nes, 0x1000, (v->chr[1] & 15) | ((v->control & 4) << 2));
+	if (nes->cart.mirroring != MIRROR_FOUR) {
+		nesSetMirroring(nes, (v->control & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
+	}
+}
+
+static void vrc1Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Vrc1* v = STATE(Vrc1);
+	switch (address & 0xF000) {
+	case 0x8000:
+		v->prg[0] = value & 15;
+		break;
+	case 0x9000:
+		v->control = value;
+		break;
+	case 0xA000:
+		v->prg[1] = value & 15;
+		break;
+	case 0xC000:
+		v->prg[2] = value & 15;
+		break;
+	case 0xE000:
+		v->chr[0] = value;
+		break;
+	case 0xF000:
+		v->chr[1] = value;
+		break;
+	default:
+		return;
+	}
+	vrc1Sync(nes);
+}
+
+static void vrc1Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Vrc1));
+	}
+	vrc1Sync(nes);
+}
+
+const struct Board boardVrc1 = {
+	.name = "VRC1", .reset = vrc1Reset, .write = vrc1Write, .sync = vrc1Sync, .stateSize = sizeof(struct Vrc1),
+};
+
+// VRC3 (73): a 16 KB PRG bank and a 16-bit (or 8-bit) up-counting IRQ
+struct Vrc3 {
+	uint8_t prg, control;
+	uint16_t latch, counter;
+};
+
+static void vrc3Sync(struct NES* nes) {
+	prg16(nes, 0x8000, STATE(Vrc3)->prg);
+	prg16(nes, 0xC000, -1);
+}
+
+static void vrc3Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Vrc3* v = STATE(Vrc3);
+	if (address >= 0x8000 && address < 0xC000) {
+		int shift = ((address >> 12) - 8) * 4;
+		v->latch = (v->latch & ~(15 << shift)) | ((value & 15) << shift);
+		return;
+	}
+	switch (address & 0xF000) {
+	case 0xC000:
+		v->control = value & 7;
+		if (value & 2) {
+			v->counter = v->latch;
+		}
+		nesSetIrq(nes, IRQ_MAPPER, false);
+		break;
+	case 0xD000:
+		v->control = (v->control & ~2) | ((v->control & 1) << 1);
+		nesSetIrq(nes, IRQ_MAPPER, false);
+		break;
+	case 0xF000:
+		v->prg = value & 7;
+		vrc3Sync(nes);
+		break;
+	}
+}
+
+static void vrc3Cycle(struct NES* nes) {
+	struct Vrc3* v = STATE(Vrc3);
+	if (!(v->control & 2)) {
+		return;
+	}
+	if (v->control & 4) {
+		uint8_t low = v->counter + 1;
+		if (low == 0) {
+			low = v->latch;
+			nesSetIrq(nes, IRQ_MAPPER, true);
+		}
+		v->counter = (v->counter & 0xFF00) | low;
+	} else if (++v->counter == 0) {
+		v->counter = v->latch;
+		nesSetIrq(nes, IRQ_MAPPER, true);
+	}
+}
+
+static void vrc3Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Vrc3));
+	}
+	wram8(nes);
+	vrc3Sync(nes);
+}
+
+const struct Board boardVrc3 = {
+	.name = "VRC3", .reset = vrc3Reset, .write = vrc3Write, .cpuCycle = vrc3Cycle, .sync = vrc3Sync,
+	.stateSize = sizeof(struct Vrc3),
+};
+
+// VRC6 (24, and 26 with A0 and A1 swapped): two pulse channels and a sawtooth beside the APU
+struct Vrc6Pulse {
+	uint8_t control;
+	uint16_t period, timer;
+	uint8_t step;
+	bool enabled;
+};
+
+struct Vrc6 {
+	uint8_t prg[2], chr[8], banking;
+	struct VrcIrq irq;
+	struct Vrc6Pulse pulse[2];
+	uint8_t sawRate, sawStep, sawAccumulator;
+	uint16_t sawPeriod, sawTimer;
+	bool sawEnabled;
+};
+
+static void vrc6Sync(struct NES* nes) {
+	struct Vrc6* v = STATE(Vrc6);
+	prg16(nes, 0x8000, v->prg[0]);
+	prg8(nes, 0xC000, v->prg[1]);
+	prg8(nes, 0xE000, -1);
+	for (int i = 0; i < 8; i++) {
+		chr1(nes, i * 0x400, v->chr[i]);
+	}
+	static const enum Mirroring mirrors[4] = { MIRROR_VERTICAL, MIRROR_HORIZONTAL, MIRROR_SCREEN_A, MIRROR_SCREEN_B };
+	nesSetMirroring(nes, mirrors[(v->banking >> 2) & 3]);
+	if (v->banking & 0x80) {
+		wram8(nes);
+	} else {
+		nesUnmapPrg(nes, 0x6000, 0x2000);
+	}
+}
+
+static void vrc6Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Vrc6* v = STATE(Vrc6);
+	if (address < 0x8000) {
+		return;
+	}
+	int sub = nes->cart.mapper == 26 ? ((address & 1) << 1) | ((address >> 1) & 1) : address & 3;
+	switch (address & 0xF000) {
+	case 0x8000:
+		v->prg[0] = value & 15;
+		break;
+	case 0x9000:
+	case 0xA000: {
+		if (sub == 3) {
+			return;
+		}
+		struct Vrc6Pulse* p = &v->pulse[(address >> 12) - 9];
+		if (sub == 0) {
+			p->control = value;
+		} else if (sub == 1) {
+			p->period = (p->period & 0xF00) | value;
+		} else {
+			p->period = (p->period & 0x0FF) | ((value & 15) << 8);
+			p->enabled = value & 0x80;
+			if (!p->enabled) {
+				p->step = 0;
+			}
+		}
+		return;
+	}
+	case 0xB000:
+		if (sub == 0) {
+			v->sawRate = value & 0x3F;
+		} else if (sub == 1) {
+			v->sawPeriod = (v->sawPeriod & 0xF00) | value;
+		} else if (sub == 2) {
+			v->sawPeriod = (v->sawPeriod & 0x0FF) | ((value & 15) << 8);
+			v->sawEnabled = value & 0x80;
+			if (!v->sawEnabled) {
+				v->sawStep = 0;
+				v->sawAccumulator = 0;
+			}
+		} else {
+			v->banking = value;
+			break;
+		}
+		return;
+	case 0xC000:
+		v->prg[1] = value & 0x1F;
+		break;
+	case 0xD000:
+	case 0xE000:
+		v->chr[((address >> 12) - 0xD) * 4 + sub] = value;
+		break;
+	case 0xF000:
+		if (sub == 0) {
+			v->irq.latch = value;
+		} else if (sub == 1) {
+			vrcIrqControl(nes, &v->irq, value);
+		} else if (sub == 2) {
+			vrcIrqAck(nes, &v->irq);
+		}
+		return;
+	}
+	vrc6Sync(nes);
+}
+
+static void vrc6Cycle(struct NES* nes) {
+	struct Vrc6* v = STATE(Vrc6);
+	vrcIrqCycle(nes, &v->irq);
+	for (int i = 0; i < 2; i++) {
+		struct Vrc6Pulse* p = &v->pulse[i];
+		if (p->enabled && p->timer-- == 0) {
+			p->timer = p->period;
+			p->step = (p->step + 1) & 15;
+		}
+	}
+	if (v->sawEnabled && v->sawTimer-- == 0) {
+		v->sawTimer = v->sawPeriod;
+		if (++v->sawStep == 14) {
+			v->sawStep = 0;
+			v->sawAccumulator = 0;
+		} else if (!(v->sawStep & 1)) {
+			v->sawAccumulator += v->sawRate;
+		}
+	}
+}
+
+static int vrc6Audio(struct NES* nes) {
+	struct Vrc6* v = STATE(Vrc6);
+	int out = 0;
+	for (int i = 0; i < 2; i++) {
+		struct Vrc6Pulse* p = &v->pulse[i];
+		if (p->enabled && ((p->control & 0x80) || p->step <= ((p->control >> 4) & 7))) {
+			out += p->control & 15;
+		}
+	}
+	if (v->sawEnabled) {
+		out += v->sawAccumulator >> 3;
+	}
+	return out * 380;
+}
+
+static void vrc6Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Vrc6));
+	}
+	vrc6Sync(nes);
+}
+
+const struct Board boardVrc6 = {
+	.name = "VRC6", .reset = vrc6Reset, .write = vrc6Write, .cpuCycle = vrc6Cycle, .audio = vrc6Audio,
+	.sync = vrc6Sync, .stateSize = sizeof(struct Vrc6),
+};
+
+// VRC7 (85): VRC6's banking layout with an FM synthesizer, emu2413 in its VRC7 mode at the OPLL's
+// own rate (3.58 MHz / 72, once every 36 CPU cycles). Its registers are kept here and written to
+// the synthesizer again after a state load.
+#include "sound/emu2413.h"
+
+struct Vrc7 {
+	uint8_t prg[3], chr[8], control, audioAddress;
+	uint8_t audioRegs[0x40];
+	struct VrcIrq irq;
+	uint8_t audioClock;
+	int16_t sample;
+};
+
+static OPLL* opll;
+
+static void vrc7Banks(struct NES* nes) {
+	struct Vrc7* v = STATE(Vrc7);
+	for (int i = 0; i < 3; i++) {
+		prg8(nes, 0x8000 + i * 0x2000, v->prg[i]);
+	}
+	prg8(nes, 0xE000, -1);
+	for (int i = 0; i < 8; i++) {
+		chr1(nes, i * 0x400, v->chr[i]);
+	}
+	static const enum Mirroring mirrors[4] = { MIRROR_VERTICAL, MIRROR_HORIZONTAL, MIRROR_SCREEN_A, MIRROR_SCREEN_B };
+	nesSetMirroring(nes, mirrors[v->control & 3]);
+	if (v->control & 0x80) {
+		wram8(nes);
+	} else {
+		nesUnmapPrg(nes, 0x6000, 0x2000);
+	}
+}
+
+// After a state load: the banks, and the synthesizer's registers again
+static void vrc7Sync(struct NES* nes) {
+	struct Vrc7* v = STATE(Vrc7);
+	vrc7Banks(nes);
+	if (opll) {
+		for (int i = 0; i < 0x40; i++) {
+			OPLL_writeReg(opll, i, v->audioRegs[i]);
+		}
+	}
+}
+
+static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Vrc7* v = STATE(Vrc7);
+	if (address < 0x8000) {
+		return;
+	}
+	// The register select line: A4 on VRC7a, A3 on VRC7b, either without a submapper
+	int line = nes->cart.submapper == 1 ? 0x08 : nes->cart.submapper == 2 ? 0x10 : 0x18;
+	bool odd = address & line;
+	switch (address & 0xF000) {
+	case 0x8000:
+		v->prg[odd] = value & 0x3F;
+		break;
+	case 0x9000:
+		if (!odd) {
+			v->prg[2] = value & 0x3F;
+		} else if (address & 0x20) {
+			v->audioRegs[v->audioAddress & 0x3F] = value;
+			if (opll) {
+				OPLL_writeReg(opll, v->audioAddress, value);
+			}
+			return;
+		} else {
+			v->audioAddress = value;
+			return;
+		}
+		break;
+	case 0xA000:
+	case 0xB000:
+	case 0xC000:
+	case 0xD000:
+		v->chr[((address >> 12) - 0xA) * 2 + odd] = value;
+		break;
+	case 0xE000:
+		if (odd) {
+			v->irq.latch = value;
+			return;
+		}
+		v->control = value;
+		break;
+	case 0xF000:
+		if (odd) {
+			vrcIrqAck(nes, &v->irq);
+		} else {
+			vrcIrqControl(nes, &v->irq, value);
+		}
+		return;
+	}
+	vrc7Banks(nes);
+}
+
+static void vrc7Cycle(struct NES* nes) {
+	struct Vrc7* v = STATE(Vrc7);
+	vrcIrqCycle(nes, &v->irq);
+	if (++v->audioClock == 36) {
+		v->audioClock = 0;
+		v->sample = (v->control & 0x40) || !opll ? 0 : OPLL_calc(opll);
+	}
+}
+
+static int vrc7Audio(struct NES* nes) {
+	return STATE(Vrc7)->sample * 2;
+}
+
+static void vrc7Reset(struct NES* nes, bool hard) {
+	if (!opll) {
+		opll = OPLL_new(3579545, 49716);
+		OPLL_setChipType(opll, 1);
+	}
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Vrc7));
+		OPLL_reset(opll);
+	}
+	vrc7Banks(nes);
+}
+
+const struct Board boardVrc7 = {
+	.name = "VRC7", .reset = vrc7Reset, .write = vrc7Write, .cpuCycle = vrc7Cycle, .audio = vrc7Audio,
+	.sync = vrc7Sync, .stateSize = sizeof(struct Vrc7),
+};

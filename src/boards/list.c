@@ -40,8 +40,22 @@ const struct Board* boardFind(int mapper, int submapper) {
 		return &boardVrc2;
 	case 23:
 		return submapper == 3 ? &boardVrc2 : &boardVrc24;
+	case 24:
+	case 26:
+		return &boardVrc6;
 	case 33:
 		return &boardTc0190;
+	case 64:
+	case 158:
+		return &boardRambo;
+	case 73:
+		return &boardVrc3;
+	case 75:
+		return &boardVrc1;
+	case 85:
+		return &boardVrc7;
+	case 215:
+		return &board8237;
 	case 35:
 	case 90:
 	case 209:

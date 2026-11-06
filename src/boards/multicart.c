@@ -368,3 +368,96 @@ const struct Board boardCoolboy = {
 	.name = "COOLBOY/MINDKIDS", .reset = m268Reset, .write = m268Write, .ppuBus = mmc3PpuBus,
 	.irqQuietDots = mmc3IrqQuietDots, .sync = mmc3Sync, .stateSize = sizeof(struct Mmc3), .data = &m268,
 };
+
+// UNL-8237 (215): MMC3 behind permuted register addresses and indices, with outer banks, an NROM
+// mode and a protection read at $5xxx (after FCEUmm's 8237.c, Copyright (C) 2011 CaH4e3)
+static const uint8_t regPermutations[8][8] = {
+	{ 0, 1, 2, 3, 4, 5, 6, 7 }, { 0, 2, 6, 1, 7, 3, 4, 5 }, { 0, 5, 4, 1, 7, 2, 6, 3 }, { 0, 6, 3, 7, 5, 2, 4, 1 },
+	{ 0, 2, 5, 3, 6, 1, 7, 4 }, { 0, 1, 2, 3, 4, 5, 6, 7 }, { 0, 1, 2, 3, 4, 5, 6, 7 }, { 0, 1, 2, 3, 4, 5, 6, 7 },
+};
+static const uint8_t addressPermutations[8][8] = {
+	{ 0, 1, 2, 3, 4, 5, 6, 7 }, { 3, 2, 0, 4, 1, 5, 6, 7 }, { 0, 1, 2, 3, 4, 5, 6, 7 }, { 5, 0, 1, 2, 3, 7, 6, 4 },
+	{ 3, 1, 0, 5, 2, 4, 6, 7 }, { 0, 1, 2, 3, 4, 5, 6, 7 }, { 0, 1, 2, 3, 4, 5, 6, 7 }, { 0, 1, 2, 3, 4, 5, 6, 7 },
+};
+static const uint8_t protection[8][8] = {
+	{ 0, 0, 0, 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0, 0, 3, 0 }, { 0, 0, 0, 0, 3, 4, 0, 0 }, { 0, 0, 0, 1, 0, 4, 5, 0 },
+	{ 0, 0, 0, 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0, 0, 0, 0 }, { 0, 0, 0, 1, 2, 4, 15, 0 },
+};
+
+static void m215Chr(struct NES* nes, uint16_t address, int bank) {
+	uint8_t* e = STATE(Mmc3)->extra;
+	int outer = nes->cart.submapper == 1 ? (e[1] & 0x0E) << 7 : (e[1] & 0x0C) << 6;
+	chr1(nes, address, (e[0] & 0x40) ? outer | (bank & 0x7F) | ((e[1] & 0x20) << 2) : outer | bank);
+}
+
+static void m215Prg(struct NES* nes, uint16_t address, int bank) {
+	uint8_t* e = STATE(Mmc3)->extra;
+	int outer = (e[1] & 3) << 5;
+	if (nes->cart.submapper == 1) {
+		outer |= (e[1] & 8) << 4;
+	}
+	bool small = e[0] & 0x40;
+	int inner = small ? (bank & 0x0F) | (e[1] & 0x10) : bank & 0x1F;
+	if (e[0] & 0x80) {
+		int nrom = (outer >> 1) | (small ? (e[0] & 7) | ((e[1] & 0x10) >> 1) : e[0] & 0x0F);
+		if (e[0] & 0x20) {
+			prg32(nes, nrom >> 1);
+		} else {
+			prg16(nes, 0x8000, nrom);
+			prg16(nes, 0xC000, nrom);
+		}
+	} else {
+		prg8(nes, address, outer | inner);
+	}
+}
+
+static uint8_t m215Read(struct NES* nes, uint16_t address) {
+	return (protection[STATE(Mmc3)->extra[3] & 7][address & 7] & 0x0F) | 0x50;
+}
+
+static void m215Write(struct NES* nes, uint16_t address, uint8_t value) {
+	uint8_t* e = STATE(Mmc3)->extra;
+	if (address >= 0x5000 && address < 0x6000) {
+		switch (address & 0xF007) {
+		case 0x5000:
+			e[0] = value;
+			mmc3Sync(nes);
+			break;
+		case 0x5001:
+			e[1] = value;
+			mmc3Sync(nes);
+			break;
+		case 0x5002:
+			e[3] = value;
+			break;
+		case 0x5007:
+			e[2] = value;
+			break;
+		}
+		return;
+	}
+	if (address < 0x8000) {
+		return;
+	}
+	uint8_t reg = addressPermutations[e[2] & 7][((address >> 12) & 6) | (address & 1)];
+	if (reg == 0) {
+		value = (value & 0xC0) | regPermutations[e[2] & 7][value & 7];
+	}
+	mmc3Write(nes, 0x8000 | ((reg & 6) << 12) | (reg & 1), value);
+}
+
+static void m215Reset(struct NES* nes, bool hard) {
+	uint8_t* e = STATE(Mmc3)->extra;
+	e[0] = e[2] = 0;
+	e[1] = 0x0F;
+	e[3] = 7;
+	nes->readHooks |= 1 << 5;
+	mmc3Reset(nes, hard);
+}
+
+static const struct Mmc3Variant m215 = { m215Prg, m215Chr, NULL, NULL };
+
+const struct Board board8237 = {
+	.name = "UNL-8237", .reset = m215Reset, .write = m215Write, .read = m215Read, .ppuBus = mmc3PpuBus,
+	.irqQuietDots = mmc3IrqQuietDots, .sync = mmc3Sync, .stateSize = sizeof(struct Mmc3), .data = &m215,
+};

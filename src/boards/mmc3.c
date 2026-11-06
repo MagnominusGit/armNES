@@ -283,3 +283,108 @@ static void namco3425Chr(struct NES* nes) {
 
 static const struct Namco108Variant namco3425 = { namco3425Chr, false };
 NAMCO108_BOARD(boardNamco3425, "Namco 3425", &namco3425);
+
+// RAMBO-1 (64, and 158 with TxSROM-style name tables): sixteen registers, a 1 KB CHR mode, a third
+// switchable PRG bank, and an IRQ clocked by A12 or by every fourth CPU cycle
+#define RAMBO_REGS(m) ((m)->extra)
+
+static void ramboSync(struct NES* nes) {
+	struct Mmc3* m = STATE(Mmc3);
+	uint8_t* r = RAMBO_REGS(m);
+	if (m->select & 0x40) {
+		prg8(nes, 0x8000, r[15]);
+		prg8(nes, 0xA000, r[6]);
+		prg8(nes, 0xC000, r[7]);
+	} else {
+		prg8(nes, 0x8000, r[6]);
+		prg8(nes, 0xA000, r[7]);
+		prg8(nes, 0xC000, r[15]);
+	}
+	prg8(nes, 0xE000, -1);
+	uint16_t a12 = (m->select & 0x80) ? 0x1000 : 0;
+	int banks[8];
+	if (m->select & 0x20) {
+		banks[0] = r[0];
+		banks[1] = r[8];
+		banks[2] = r[1];
+		banks[3] = r[9];
+	} else {
+		banks[0] = r[0] & 0xFE;
+		banks[1] = r[0] | 1;
+		banks[2] = r[1] & 0xFE;
+		banks[3] = r[1] | 1;
+	}
+	for (int i = 0; i < 4; i++) {
+		banks[4 + i] = r[2 + i];
+	}
+	for (int i = 0; i < 8; i++) {
+		uint16_t address = (i * 0x400) ^ a12;
+		chr1(nes, address, banks[i]);
+		if (nes->cart.mapper == 158 && address < 0x1000) {
+			nesSetNametable(nes, address >> 10, nes->ppu.ntRam + ((banks[i] >> 7) & 1) * 0x400);
+		}
+	}
+	if (nes->cart.mapper != 158) {
+		nesSetMirroring(nes, (m->mirroring & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
+	}
+}
+
+static void ramboWrite(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Mmc3* m = STATE(Mmc3);
+	switch (address & 0xE001) {
+	case 0x8000:
+		m->select = value;
+		break;
+	case 0x8001:
+		RAMBO_REGS(m)[m->select & 15] = value;
+		break;
+	case 0xA000:
+		m->mirroring = value;
+		break;
+	case 0xC001:
+		// Bit 0 picks the CPU-cycle clock; extra[16] holds the mode, extra[17] the prescaler
+		m->extra[16] = value & 1;
+		m->extra[17] = 0;
+		mmc3Write(nes, address, value);
+		return;
+	default:
+		mmc3Write(nes, address, value);
+		return;
+	}
+	ramboSync(nes);
+}
+
+static void ramboPpuBus(struct NES* nes, uint16_t address) {
+	if (!STATE(Mmc3)->extra[16]) {
+		mmc3PpuBus(nes, address);
+	}
+}
+
+static void ramboCycle(struct NES* nes) {
+	struct Mmc3* m = STATE(Mmc3);
+	if (!m->extra[16] || (++m->extra[17] & 3)) {
+		return;
+	}
+	if (m->reload || m->counter == 0) {
+		m->counter = m->latch;
+		m->reload = false;
+	} else {
+		m->counter--;
+	}
+	if (m->counter == 0 && m->irqEnabled) {
+		nesSetIrq(nes, IRQ_MAPPER, true);
+	}
+}
+
+static void ramboReset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Mmc3));
+	}
+	nes->watchPpuBus = true;
+	ramboSync(nes);
+}
+
+const struct Board boardRambo = {
+	.name = "RAMBO-1", .reset = ramboReset, .write = ramboWrite, .ppuBus = ramboPpuBus, .cpuCycle = ramboCycle,
+	.irqQuietDots = mmc3IrqQuietDots, .sync = ramboSync, .stateSize = sizeof(struct Mmc3),
+};

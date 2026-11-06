@@ -23,6 +23,7 @@ set(CORE_SOURCES
 	src/boards/mmc5.c
 	src/boards/multicart.c
 	src/boards/sachen.c
+	src/sound/emu2413.c
 	src/bus.c
 	src/cart.c
 	src/cpu.c
@@ -33,8 +34,9 @@ set(CORE_SOURCES
 )
 add_library(armnes STATIC ${CORE_SOURCES})
 target_include_directories(armnes PUBLIC src src/boards)
-target_link_libraries(armnes PUBLIC ZLIB::ZLIB)
+target_link_libraries(armnes PUBLIC ZLIB::ZLIB m)
 target_compile_options(armnes PRIVATE -O3)
+set_source_files_properties(src/sound/emu2413.c PROPERTIES COMPILE_OPTIONS "-w")
 # The core's parts call each other every master clock: let the compiler inline across its files
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo)

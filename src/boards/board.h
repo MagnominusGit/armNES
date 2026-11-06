@@ -77,6 +77,7 @@ BOARD(boardNamco3446);
 BOARD(boardNamco3433);
 BOARD(boardNamco3425);
 BOARD(boardNamco3453);
+BOARD(boardRambo);
 
 // asic.c
 BOARD(boardMmc2);
@@ -87,10 +88,15 @@ BOARD(boardTc0190);
 BOARD(boardSs88006);
 BOARD(boardNamco163);
 BOARD(boardNamco175);
+BOARD(boardVrc1);
+BOARD(boardVrc3);
+BOARD(boardVrc6);
+BOARD(boardVrc7);
 
 // multicart.c
 BOARD(boardFk23c);
 BOARD(boardCoolboy);
+BOARD(board8237);
 
 // sachen.c
 BOARD(boardS8259);
