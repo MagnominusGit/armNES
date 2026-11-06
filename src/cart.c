@@ -107,8 +107,121 @@ static void fixHeader(struct Cart* cart, const uint8_t* rom, size_t size) {
 	}
 }
 
+// UNIF: chunks with a board name instead of a header, made into an NES 2.0 image by FCEUmm's list
+// of boards
+struct UnifBoard {
+	const char* name;
+	int mapper;
+	uint8_t chrRamShift;
+	bool fourScreen;
+};
+
+static const struct UnifBoard unifBoards[] = {
+#include "fceu/unif-boards.inc"
+};
+
+static int hexDigit(uint8_t c) {
+	return c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+// The chunks in order, repeated to fill size
+static void gather(uint8_t* out, uint32_t size, const uint8_t* const* chunks, const uint32_t* sizes) {
+	uint32_t total = 0;
+	for (int i = 0; i < 16; i++) {
+		if (chunks[i]) {
+			memcpy(out + total, chunks[i], sizes[i]);
+			total += sizes[i];
+		}
+	}
+	for (uint32_t i = total; i < size; i++) {
+		out[i] = out[i % total];
+	}
+}
+
+static uint8_t* unifToNes(const uint8_t* data, size_t size, size_t* nesSize) {
+	const uint8_t* prg[16] = { 0 };
+	const uint8_t* chr[16] = { 0 };
+	uint32_t prgSizes[16] = { 0 }, chrSizes[16] = { 0 };
+	uint32_t prgTotal = 0, chrTotal = 0;
+	char name[64] = "";
+	int mirroring = -1, battery = 0, tv = 0;
+	for (size_t i = 32; i + 8 <= size;) {
+		const uint8_t* id = data + i;
+		uint32_t length = id[4] | id[5] << 8 | id[6] << 16 | (uint32_t) id[7] << 24;
+		const uint8_t* body = id + 8;
+		if (length > size - i - 8) {
+			break;
+		}
+		int n = hexDigit(id[3]);
+		if (!memcmp(id, "MAPR", 4)) {
+			size_t copy = length < sizeof(name) - 1 ? length : sizeof(name) - 1;
+			memcpy(name, body, copy);
+			name[copy] = 0;
+		} else if (!memcmp(id, "PRG", 3) && n >= 0) {
+			prg[n] = body;
+			prgSizes[n] = length;
+			prgTotal += length;
+		} else if (!memcmp(id, "CHR", 3) && n >= 0) {
+			chr[n] = body;
+			chrSizes[n] = length;
+			chrTotal += length;
+		} else if (!memcmp(id, "MIRR", 4) && length) {
+			mirroring = body[0];
+		} else if (!memcmp(id, "BATR", 4) && length) {
+			battery = body[0] != 0;
+		} else if (!memcmp(id, "TVCI", 4) && length) {
+			tv = body[0];
+		}
+		i += 8 + length;
+	}
+	const char* board = name;
+	static const char* prefixes[] = { "NES-", "UNL-", "HVC-", "BTL-", "BMC-" };
+	for (int i = 0; i < 5; i++) {
+		if (!strncmp(board, prefixes[i], 4)) {
+			board += 4;
+			break;
+		}
+	}
+	const struct UnifBoard* u = NULL;
+	for (size_t i = 0; i < sizeof(unifBoards) / sizeof(unifBoards[0]); i++) {
+		if (!strcmp(board, unifBoards[i].name)) {
+			u = &unifBoards[i];
+			break;
+		}
+	}
+	if (!u || !prgTotal) {
+		return NULL;
+	}
+	uint32_t prgBanks = (prgTotal + 0x3FFF) / 0x4000, chrBanks = (chrTotal + 0x1FFF) / 0x2000;
+	*nesSize = 16 + prgBanks * 0x4000 + chrBanks * 0x2000;
+	uint8_t* out = calloc(1, *nesSize);
+	uint8_t* h = out;
+	memcpy(h, "NES\x1A", 4);
+	h[4] = prgBanks & 0xFF;
+	h[5] = chrBanks & 0xFF;
+	h[6] = (u->mapper & 0x0F) << 4 | battery << 1 | (mirroring == 1) | (mirroring == 4 || u->fourScreen) << 3;
+	h[7] = (u->mapper & 0xF0) | 0x08;
+	h[8] = u->mapper >> 8;
+	h[9] = (prgBanks >> 8) | (chrBanks >> 8) << 4;
+	h[10] = battery ? 0x70 : 0x07;
+	h[11] = chrBanks ? 0 : u->chrRamShift;
+	h[12] = tv == 1;
+	gather(out + 16, prgBanks * 0x4000, prg, prgSizes);
+	if (chrBanks) {
+		gather(out + 16 + prgBanks * 0x4000, chrBanks * 0x2000, chr, chrSizes);
+	}
+	return out;
+}
+
 bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 	struct Cart* cart = &nes->cart;
+	if (size >= 32 && !memcmp(data, "UNIF", 4)) {
+		size_t nesSize;
+		uint8_t* image = unifToNes(data, size, &nesSize);
+		bool loaded = image && cartLoad(nes, image, nesSize);
+		free(image);
+		return loaded;
+	}
 	if (size < 16 || memcmp(data, "NES\x1A", 4)) {
 		return false;
 	}
