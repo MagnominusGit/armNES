@@ -1,0 +1,621 @@
+/* Copyright (c) 2026 Magnominus
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later */
+#include "board.h"
+
+// Mapper chips: MMC2/MMC4, Sunsoft FME-7, Konami VRC2/VRC4, Taito TC0190, Jaleco SS88006 and Namco
+// 163/175/340, after the NESdev wiki's descriptions.
+
+// MMC2 (9) and MMC4 (10): two CHR banks per half, switched by fetching tile $FD or $FE
+struct Mmc2 {
+	uint8_t prg, chr[4], latch[2], mirroring;
+};
+
+static void mmc2Sync(struct NES* nes) {
+	struct Mmc2* m = STATE(Mmc2);
+	if (nes->cart.mapper == 9) {
+		prg8(nes, 0x8000, m->prg & 15);
+		prg8(nes, 0xA000, -3);
+		prg8(nes, 0xC000, -2);
+		prg8(nes, 0xE000, -1);
+	} else {
+		prg16(nes, 0x8000, m->prg & 15);
+		prg16(nes, 0xC000, -1);
+	}
+	chr4(nes, 0x0000, m->chr[m->latch[0]]);
+	chr4(nes, 0x1000, m->chr[2 + m->latch[1]]);
+	nesSetMirroring(nes, (m->mirroring & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
+}
+
+static void mmc2Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Mmc2* m = STATE(Mmc2);
+	switch (address & 0xF000) {
+	case 0xA000:
+		m->prg = value;
+		break;
+	case 0xB000:
+	case 0xC000:
+	case 0xD000:
+	case 0xE000:
+		m->chr[((address >> 12) - 0xB)] = value & 0x1F;
+		break;
+	case 0xF000:
+		m->mirroring = value;
+		break;
+	default:
+		return;
+	}
+	mmc2Sync(nes);
+}
+
+static uint8_t mmc2PpuRead(struct NES* nes, uint16_t address) {
+	struct Mmc2* m = STATE(Mmc2);
+	uint8_t* page = nes->chrPages[(address >> 10) & 15];
+	uint8_t value = page ? page[address & 0x3FF] : 0;
+	// The bank switches after the fetch that triggers it
+	uint16_t tile = address & 0x0FF8;
+	int half = (address >> 12) & 1;
+	if (address < 0x2000 && (tile == 0x0FD8 || tile == 0x0FE8)) {
+		// MMC2's first half switches on one address only
+		if (half || nes->cart.mapper == 10 || (address & 7) == 0) {
+			uint8_t latch = tile == 0x0FE8;
+			if (m->latch[half] != latch) {
+				m->latch[half] = latch;
+				chr4(nes, half ? 0x1000 : 0x0000, m->chr[half * 2 + latch]);
+			}
+		}
+	}
+	return value;
+}
+
+static void mmc2Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Mmc2));
+	}
+	nes->ppuReadHook = true;
+	wram8(nes);
+	mmc2Sync(nes);
+}
+
+const struct Board boardMmc2 = {
+	.name = "MMC2/MMC4", .reset = mmc2Reset, .write = mmc2Write, .ppuRead = mmc2PpuRead, .sync = mmc2Sync,
+	.stateSize = sizeof(struct Mmc2),
+};
+
+// Sunsoft FME-7 (69)
+struct Fme7 {
+	uint8_t command, regs[16];
+	uint16_t counter;
+	bool irqEnabled, counting;
+};
+
+static void fme7Sync(struct NES* nes) {
+	struct Fme7* f = STATE(Fme7);
+	for (int i = 0; i < 8; i++) {
+		chr1(nes, i * 0x400, f->regs[i]);
+	}
+	uint8_t r8 = f->regs[8];
+	if (r8 & 0x40) {
+		if (r8 & 0x80) {
+			nesMapWram(nes, 0x6000, 0x2000, r8 & 0x3F, true);
+		} else {
+			nesUnmapPrg(nes, 0x6000, 0x2000);
+		}
+	} else {
+		prg8(nes, 0x6000, r8 & 0x3F);
+	}
+	prg8(nes, 0x8000, f->regs[9] & 0x3F);
+	prg8(nes, 0xA000, f->regs[10] & 0x3F);
+	prg8(nes, 0xC000, f->regs[11] & 0x3F);
+	prg8(nes, 0xE000, -1);
+	static const enum Mirroring mirrors[4] = { MIRROR_VERTICAL, MIRROR_HORIZONTAL, MIRROR_SCREEN_A, MIRROR_SCREEN_B };
+	nesSetMirroring(nes, mirrors[f->regs[12] & 3]);
+}
+
+static void fme7Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Fme7* f = STATE(Fme7);
+	switch (address & 0xE000) {
+	case 0x8000:
+		f->command = value & 15;
+		return;
+	case 0xA000:
+		f->regs[f->command] = value;
+		switch (f->command) {
+		case 13:
+			f->irqEnabled = value & 1;
+			f->counting = value & 0x80;
+			nesSetIrq(nes, IRQ_MAPPER, false);
+			return;
+		case 14:
+			f->counter = (f->counter & 0xFF00) | value;
+			return;
+		case 15:
+			f->counter = (f->counter & 0x00FF) | (value << 8);
+			return;
+		}
+		fme7Sync(nes);
+		return;
+	}
+}
+
+static void fme7Cycle(struct NES* nes) {
+	struct Fme7* f = STATE(Fme7);
+	if (f->counting && f->counter-- == 0 && f->irqEnabled) {
+		nesSetIrq(nes, IRQ_MAPPER, true);
+	}
+}
+
+static void fme7Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Fme7));
+	}
+	fme7Sync(nes);
+}
+
+const struct Board boardFme7 = {
+	.name = "FME-7", .reset = fme7Reset, .write = fme7Write, .cpuCycle = fme7Cycle, .sync = fme7Sync,
+	.stateSize = sizeof(struct Fme7),
+};
+
+// Konami's IRQ (VRC4, VRC6, VRC7): a counter clocked every CPU cycle or every scanline's worth of
+// them (341/3), reloading and raising the IRQ when it passes $FF
+struct VrcIrq {
+	uint8_t latch, counter, control;
+	int16_t prescaler;
+};
+
+static void vrcIrqControl(struct NES* nes, struct VrcIrq* irq, uint8_t value) {
+	irq->control = value & 7;
+	if (value & 2) {
+		irq->counter = irq->latch;
+		irq->prescaler = 341;
+	}
+	nesSetIrq(nes, IRQ_MAPPER, false);
+}
+
+static void vrcIrqAck(struct NES* nes, struct VrcIrq* irq) {
+	irq->control = (irq->control & ~2) | ((irq->control & 1) << 1);
+	nesSetIrq(nes, IRQ_MAPPER, false);
+}
+
+static void vrcIrqCycle(struct NES* nes, struct VrcIrq* irq) {
+	if (!(irq->control & 2)) {
+		return;
+	}
+	if (!(irq->control & 4)) {
+		irq->prescaler -= 3;
+		if (irq->prescaler > 0) {
+			return;
+		}
+		irq->prescaler += 341;
+	}
+	if (irq->counter == 0xFF) {
+		irq->counter = irq->latch;
+		nesSetIrq(nes, IRQ_MAPPER, true);
+	} else {
+		irq->counter++;
+	}
+}
+
+// VRC2 and VRC4 (21, 22, 23, 25): the boards wire different address lines to the chip's A0 and A1;
+// with no submapper both candidates are ORed together
+struct Vrc24 {
+	uint8_t prg[2], mirroring, swap;
+	uint16_t chr[8];
+	struct VrcIrq irq;
+};
+
+struct VrcWiring {
+	uint8_t a0, a1, a0b, a1b;
+	bool vrc2;
+	uint8_t chrShift;
+};
+
+static struct VrcWiring vrcWiring(const struct NES* nes) {
+	int mapper = nes->cart.mapper, sub = nes->cart.submapper;
+	switch (mapper) {
+	case 21:
+		return sub == 1 ? (struct VrcWiring) { 1, 2, 1, 2, false, 0 }
+			: sub == 2 ? (struct VrcWiring) { 6, 7, 6, 7, false, 0 } : (struct VrcWiring) { 1, 2, 6, 7, false, 0 };
+	case 22:
+		return (struct VrcWiring) { 1, 0, 1, 0, true, 1 };
+	case 23:
+		return sub == 1 ? (struct VrcWiring) { 0, 1, 0, 1, false, 0 }
+			: sub == 2 ? (struct VrcWiring) { 2, 3, 2, 3, false, 0 }
+			: sub == 3 ? (struct VrcWiring) { 0, 1, 0, 1, true, 0 } : (struct VrcWiring) { 0, 1, 2, 3, false, 0 };
+	default:
+		return sub == 1 ? (struct VrcWiring) { 1, 0, 1, 0, false, 0 }
+			: sub == 2 ? (struct VrcWiring) { 3, 2, 3, 2, false, 0 }
+			: sub == 3 ? (struct VrcWiring) { 1, 0, 1, 0, true, 0 } : (struct VrcWiring) { 1, 0, 3, 2, false, 0 };
+	}
+}
+
+static void vrc24Sync(struct NES* nes) {
+	struct Vrc24* v = STATE(Vrc24);
+	struct VrcWiring w = vrcWiring(nes);
+	if (v->swap & 2) {
+		prg8(nes, 0x8000, -2);
+		prg8(nes, 0xC000, v->prg[0]);
+	} else {
+		prg8(nes, 0x8000, v->prg[0]);
+		prg8(nes, 0xC000, -2);
+	}
+	prg8(nes, 0xA000, v->prg[1]);
+	prg8(nes, 0xE000, -1);
+	for (int i = 0; i < 8; i++) {
+		chr1(nes, i * 0x400, v->chr[i] >> w.chrShift);
+	}
+	if (w.vrc2) {
+		nesSetMirroring(nes, (v->mirroring & 1) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
+	} else {
+		static const enum Mirroring mirrors[4] = { MIRROR_VERTICAL, MIRROR_HORIZONTAL, MIRROR_SCREEN_A,
+			MIRROR_SCREEN_B };
+		nesSetMirroring(nes, mirrors[v->mirroring & 3]);
+	}
+}
+
+static void vrc24Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Vrc24* v = STATE(Vrc24);
+	if (address < 0x8000) {
+		return;
+	}
+	struct VrcWiring w = vrcWiring(nes);
+	int sub = (((address >> w.a0) | (address >> w.a0b)) & 1) | ((((address >> w.a1) | (address >> w.a1b)) & 1) << 1);
+	switch (address & 0xF000) {
+	case 0x8000:
+		v->prg[0] = value & 0x1F;
+		break;
+	case 0x9000:
+		if (w.vrc2 || sub < 2) {
+			v->mirroring = value;
+		} else {
+			v->swap = value;
+		}
+		break;
+	case 0xA000:
+		v->prg[1] = value & 0x1F;
+		break;
+	case 0xF000:
+		if (w.vrc2) {
+			return;
+		}
+		switch (sub) {
+		case 0:
+			v->irq.latch = (v->irq.latch & 0xF0) | (value & 15);
+			break;
+		case 1:
+			v->irq.latch = (v->irq.latch & 0x0F) | (value << 4);
+			break;
+		case 2:
+			vrcIrqControl(nes, &v->irq, value);
+			break;
+		case 3:
+			vrcIrqAck(nes, &v->irq);
+			break;
+		}
+		return;
+	default: {
+		int index = (((address >> 12) - 0xB) << 1) | (sub >> 1);
+		if (sub & 1) {
+			v->chr[index] = (v->chr[index] & 0x0F) | ((value & 0x1F) << 4);
+		} else {
+			v->chr[index] = (v->chr[index] & 0x1F0) | (value & 15);
+		}
+		break;
+	}
+	}
+	vrc24Sync(nes);
+}
+
+static void vrc24Cycle(struct NES* nes) {
+	vrcIrqCycle(nes, &STATE(Vrc24)->irq);
+}
+
+static void vrc24Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Vrc24));
+	}
+	wram8(nes);
+	vrc24Sync(nes);
+}
+
+const struct Board boardVrc24 = {
+	.name = "VRC2/VRC4", .reset = vrc24Reset, .write = vrc24Write, .cpuCycle = vrc24Cycle, .sync = vrc24Sync,
+	.stateSize = sizeof(struct Vrc24),
+};
+
+// VRC2 alone has no IRQ, so it skips the per-cycle clock
+const struct Board boardVrc2 = {
+	.name = "VRC2", .reset = vrc24Reset, .write = vrc24Write, .sync = vrc24Sync, .stateSize = sizeof(struct Vrc24),
+};
+
+// Taito TC0190 (33)
+struct Tc0190 {
+	uint8_t prg[2], chr[6], mirroring;
+};
+
+static void tc0190Sync(struct NES* nes) {
+	struct Tc0190* t = STATE(Tc0190);
+	prg8(nes, 0x8000, t->prg[0]);
+	prg8(nes, 0xA000, t->prg[1]);
+	prg8(nes, 0xC000, -2);
+	prg8(nes, 0xE000, -1);
+	chr2(nes, 0x0000, t->chr[0]);
+	chr2(nes, 0x0800, t->chr[1]);
+	for (int i = 0; i < 4; i++) {
+		chr1(nes, 0x1000 + i * 0x400, t->chr[2 + i]);
+	}
+	nesSetMirroring(nes, t->mirroring ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
+}
+
+static void tc0190Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Tc0190* t = STATE(Tc0190);
+	switch (address & 0xA003) {
+	case 0x8000:
+		t->prg[0] = value & 0x3F;
+		t->mirroring = value & 0x40;
+		break;
+	case 0x8001:
+		t->prg[1] = value & 0x3F;
+		break;
+	case 0x8002:
+	case 0x8003:
+		t->chr[address & 1] = value;
+		break;
+	case 0xA000:
+	case 0xA001:
+	case 0xA002:
+	case 0xA003:
+		t->chr[2 + (address & 3)] = value;
+		break;
+	default:
+		return;
+	}
+	tc0190Sync(nes);
+}
+
+static void tc0190Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Tc0190));
+	}
+	tc0190Sync(nes);
+}
+
+const struct Board boardTc0190 = {
+	.name = "TC0190", .reset = tc0190Reset, .write = tc0190Write, .sync = tc0190Sync,
+	.stateSize = sizeof(struct Tc0190),
+};
+
+// Jaleco SS88006 (18): registers written a nibble at a time, a down-counting IRQ of 4 to 16 bits
+struct Ss88006 {
+	uint8_t prg[3], chr[8], mirroring, control;
+	uint16_t reload, counter;
+};
+
+static void ss88006Sync(struct NES* nes) {
+	struct Ss88006* s = STATE(Ss88006);
+	for (int i = 0; i < 3; i++) {
+		prg8(nes, 0x8000 + i * 0x2000, s->prg[i]);
+	}
+	prg8(nes, 0xE000, -1);
+	for (int i = 0; i < 8; i++) {
+		chr1(nes, i * 0x400, s->chr[i]);
+	}
+	static const enum Mirroring mirrors[4] = { MIRROR_HORIZONTAL, MIRROR_VERTICAL, MIRROR_SCREEN_A, MIRROR_SCREEN_B };
+	nesSetMirroring(nes, mirrors[s->mirroring & 3]);
+}
+
+static inline void setNibble(uint8_t* reg, int high, uint8_t value) {
+	*reg = high ? (*reg & 0x0F) | ((value & 15) << 4) : (*reg & 0xF0) | (value & 15);
+}
+
+static void ss88006Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Ss88006* s = STATE(Ss88006);
+	int a = address & 0xF003;
+	if (a >= 0x8000 && a < 0x9002) {
+		int index = ((a - 0x8000) >> 11) | ((a >> 1) & 1);
+		setNibble(&s->prg[index > 2 ? 2 : index], a & 1, value);
+	} else if (a >= 0xA000 && a < 0xE000) {
+		int index = (((a >> 12) - 0xA) << 1) | ((a >> 1) & 1);
+		setNibble(&s->chr[index], a & 1, value);
+	} else if (a >= 0xE000 && a <= 0xE003) {
+		int shift = (a & 3) * 4;
+		s->reload = (s->reload & ~(15 << shift)) | ((value & 15) << shift);
+		return;
+	} else if (a == 0xF000) {
+		s->counter = s->reload;
+		nesSetIrq(nes, IRQ_MAPPER, false);
+		return;
+	} else if (a == 0xF001) {
+		s->control = value;
+		nesSetIrq(nes, IRQ_MAPPER, false);
+		return;
+	} else if (a == 0xF002) {
+		s->mirroring = value;
+	} else {
+		return;
+	}
+	ss88006Sync(nes);
+}
+
+static void ss88006Cycle(struct NES* nes) {
+	struct Ss88006* s = STATE(Ss88006);
+	if (!(s->control & 1)) {
+		return;
+	}
+	uint16_t mask = (s->control & 8) ? 0x000F : (s->control & 4) ? 0x00FF : (s->control & 2) ? 0x0FFF : 0xFFFF;
+	uint16_t low = (s->counter & mask) - 1;
+	if ((s->counter & mask) == 0) {
+		nesSetIrq(nes, IRQ_MAPPER, true);
+	}
+	s->counter = (s->counter & ~mask) | (low & mask);
+}
+
+static void ss88006Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Ss88006));
+	}
+	wram8(nes);
+	ss88006Sync(nes);
+}
+
+const struct Board boardSs88006 = {
+	.name = "SS88006", .reset = ss88006Reset, .write = ss88006Write, .cpuCycle = ss88006Cycle, .sync = ss88006Sync,
+	.stateSize = sizeof(struct Ss88006),
+};
+
+// Namco 163 (19) and 175/340 (210): 1 KB CHR banks that can be CIRAM, a 15-bit IRQ counter and
+// 128 bytes of RAM that hold the wavetable channels
+struct Namco163 {
+	uint8_t chr[8], nt[4], prg[3];
+	uint16_t counter;
+	uint8_t address;
+	uint8_t ram[128];
+	uint32_t phase[8];
+	int8_t output[8];
+	uint8_t channel, tick;
+	uint8_t mirroring;
+};
+
+static void namco163Sync(struct NES* nes) {
+	struct Namco163* n = STATE(Namco163);
+	bool is163 = nes->cart.mapper == 19;
+	for (int i = 0; i < 8; i++) {
+		bool ciramAllowed = is163 && !(n->prg[1] & (i < 4 ? 0x40 : 0x80));
+		if (ciramAllowed && n->chr[i] >= 0xE0) {
+			nes->chrPages[i] = nes->ppu.ntRam + (n->chr[i] & 1) * 0x400;
+			nes->chrWritable[i] = true;
+		} else {
+			chr1(nes, i * 0x400, n->chr[i]);
+		}
+	}
+	if (is163) {
+		for (int i = 0; i < 4; i++) {
+			if (n->nt[i] >= 0xE0) {
+				nesSetNametable(nes, i, nes->ppu.ntRam + (n->nt[i] & 1) * 0x400);
+			} else {
+				nesMapChr(nes, 0x2000 + i * 0x400, 0x400, n->nt[i]);
+				nes->chrPages[12 + i] = nes->chrPages[8 + i];
+				nes->chrWritable[8 + i] = nes->chrWritable[12 + i] = false;
+			}
+		}
+	} else if (nes->cart.submapper == 2) {
+		static const enum Mirroring mirrors[4] = { MIRROR_SCREEN_A, MIRROR_VERTICAL, MIRROR_SCREEN_B,
+			MIRROR_HORIZONTAL };
+		nesSetMirroring(nes, mirrors[n->prg[0] >> 6]);
+	}
+	for (int i = 0; i < 3; i++) {
+		prg8(nes, 0x8000 + i * 0x2000, n->prg[i] & 0x3F);
+	}
+	prg8(nes, 0xE000, -1);
+}
+
+static uint8_t namco163Read(struct NES* nes, uint16_t address) {
+	struct Namco163* n = STATE(Namco163);
+	switch (address & 0xF800) {
+	case 0x4800: {
+		uint8_t value = n->ram[n->address & 0x7F];
+		if (n->address & 0x80) {
+			n->address = 0x80 | ((n->address + 1) & 0x7F);
+		}
+		return value;
+	}
+	case 0x5000:
+		return n->counter & 0xFF;
+	case 0x5800:
+		return n->counter >> 8;
+	}
+	return nes->cpu.openBus;
+}
+
+static void namco163Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Namco163* n = STATE(Namco163);
+	switch (address & 0xF800) {
+	case 0x4800:
+		n->ram[n->address & 0x7F] = value;
+		if (n->address & 0x80) {
+			n->address = 0x80 | ((n->address + 1) & 0x7F);
+		}
+		return;
+	case 0x5000:
+		n->counter = (n->counter & 0xFF00) | value;
+		nesSetIrq(nes, IRQ_MAPPER, false);
+		return;
+	case 0x5800:
+		n->counter = (n->counter & 0x00FF) | (value << 8);
+		nesSetIrq(nes, IRQ_MAPPER, false);
+		return;
+	case 0xF800:
+		n->address = value;
+		return;
+	}
+	if (address >= 0x8000 && address < 0xC000) {
+		n->chr[(address - 0x8000) >> 11] = value;
+	} else if (address >= 0xC000 && address < 0xE000) {
+		n->nt[(address - 0xC000) >> 11] = value;
+	} else if (address >= 0xE000 && address < 0xF800) {
+		n->prg[(address - 0xE000) >> 11] = value;
+	} else {
+		return;
+	}
+	namco163Sync(nes);
+}
+
+static void namco163Cycle(struct NES* nes) {
+	struct Namco163* n = STATE(Namco163);
+	if ((n->counter & 0x8000) && (n->counter & 0x7FFF) != 0x7FFF && ++n->counter == 0xFFFF) {
+		nesSetIrq(nes, IRQ_MAPPER, true);
+	}
+	// Sound: one channel stepped every 15 cycles, from the last down
+	if (++n->tick < 15 || (n->prg[0] & 0x40)) {
+		return;
+	}
+	n->tick = 0;
+	int channels = ((n->ram[0x7F] >> 4) & 7) + 1;
+	int c = 7 - n->channel;
+	uint8_t* r = &n->ram[0x40 + c * 8];
+	uint32_t freq = r[0] | (r[2] << 8) | ((r[4] & 3) << 16);
+	uint32_t length = (256 - (r[4] & 0xFC)) << 16;
+	uint32_t phase = r[1] | (r[3] << 8) | (r[5] << 16);
+	phase = (phase + freq) % length;
+	r[1] = phase;
+	r[3] = phase >> 8;
+	r[5] = phase >> 16;
+	uint8_t index = ((phase >> 16) + r[6]) & 0xFF;
+	int sample = (n->ram[index >> 1] >> ((index & 1) * 4)) & 15;
+	n->output[c] = (sample - 8) * (r[7] & 15);
+	n->channel = (n->channel + 1) % channels;
+}
+
+static int namco163Audio(struct NES* nes) {
+	struct Namco163* n = STATE(Namco163);
+	if (nes->cart.mapper != 19) {
+		return 0;
+	}
+	int channels = ((n->ram[0x7F] >> 4) & 7) + 1, sum = 0;
+	for (int c = 8 - channels; c < 8; c++) {
+		sum += n->output[c];
+	}
+	return sum * 64 / channels;
+}
+
+static void namco163Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Namco163));
+	}
+	if (nes->cart.mapper == 19) {
+		nes->readHooks |= 1 << 4 | 1 << 5;
+	}
+	wram8(nes);
+	namco163Sync(nes);
+}
+
+const struct Board boardNamco163 = {
+	.name = "Namco 163", .reset = namco163Reset, .write = namco163Write, .read = namco163Read,
+	.cpuCycle = namco163Cycle, .audio = namco163Audio, .sync = namco163Sync, .stateSize = sizeof(struct Namco163),
+};
+
+const struct Board boardNamco175 = {
+	.name = "Namco 175/340", .reset = namco163Reset, .write = namco163Write, .sync = namco163Sync,
+	.stateSize = sizeof(struct Namco163),
+};

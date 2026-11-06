@@ -13,6 +13,7 @@ find_package(ZLIB REQUIRED)
 
 set(CORE_SOURCES
 	src/apu.c
+	src/boards/asic.c
 	src/boards/basic.c
 	src/boards/discrete.c
 	src/boards/list.c

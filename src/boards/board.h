@@ -78,6 +78,16 @@ BOARD(boardNamco3433);
 BOARD(boardNamco3425);
 BOARD(boardNamco3453);
 
+// asic.c
+BOARD(boardMmc2);
+BOARD(boardFme7);
+BOARD(boardVrc24);
+BOARD(boardVrc2);
+BOARD(boardTc0190);
+BOARD(boardSs88006);
+BOARD(boardNamco163);
+BOARD(boardNamco175);
+
 // discrete.c
 const struct Board* discreteFind(int mapper, int submapper);
 

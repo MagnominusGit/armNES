@@ -144,13 +144,23 @@ static void fetchSprites(struct NES* nes) {
 	int height = ppu->tall ? 16 : 8;
 	memset(ppu->lineSprites, 0, sizeof(ppu->lineSprites));
 	ppu->lineHasSprites = false;
-	for (int slot = ppu->nextCount - 1; slot >= 0; slot--) {
+	// Fetched in slot order, as boards that latch on tiles see them
+	uint8_t los[8], his[8];
+	bool fetched[8] = { false };
+	for (int slot = 0; slot < ppu->nextCount; slot++) {
 		if ((uint8_t) (line - ppu->oam2[slot * 4]) >= height) {
 			continue;
 		}
 		uint16_t address = spriteAddress(ppu, slot, line);
-		uint8_t lo = chrRead(nes, address);
-		uint8_t hi = chrRead(nes, address | 8);
+		los[slot] = chrRead(nes, address);
+		his[slot] = chrRead(nes, address | 8);
+		fetched[slot] = true;
+	}
+	for (int slot = ppu->nextCount - 1; slot >= 0; slot--) {
+		if (!fetched[slot]) {
+			continue;
+		}
+		uint8_t lo = los[slot], hi = his[slot];
 		const uint8_t* sprite = &ppu->oam2[slot * 4];
 		uint8_t attr = sprite[2];
 		if (attr & 0x40) {

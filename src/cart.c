@@ -123,7 +123,11 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 	if (cart->wramSize < 0x2000 && !nes2) {
 		cart->wramSize = 0x2000;
 	}
-	cart->wram = calloc(1, cart->wramSize ? cart->wramSize : 0x2000);
+	// The CPU maps 4 KB pages, so smaller RAM is given a whole 8 KB
+	if (cart->wramSize < 0x2000) {
+		cart->wramSize = 0x2000;
+	}
+	cart->wram = calloc(1, cart->wramSize);
 
 	cart->prgCrc = crc32(0, cart->prg, cart->prgSize);
 	return true;
