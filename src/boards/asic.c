@@ -83,11 +83,98 @@ const struct Board boardMmc2 = {
 };
 
 // Sunsoft FME-7 (69)
+// Sunsoft 5B's sound (FME-7's sound version): an AY-3-8910's three square channels, noise and
+// envelope, clocked at half the CPU's rate and counted in 16s
+struct Sunsoft5b {
+	uint8_t address, regs[16];
+	uint16_t toneTimer[3];
+	bool toneOut[3];
+	uint8_t noiseTimer;
+	uint32_t noiseShift;
+	uint32_t envelopeTimer;
+	uint8_t envelopeStep;
+	bool envelopeHolding;
+	uint8_t divider;
+};
+
 struct Fme7 {
 	uint8_t command, regs[16];
 	uint16_t counter;
 	bool irqEnabled, counting;
+	struct Sunsoft5b audio;
 };
+
+// 3 dB per volume step, 0 to 15
+static const uint16_t ayVolume[16] = { 0, 45, 63, 89, 126, 178, 251, 355, 501, 708, 1000, 1413, 1995, 2818, 3981, 5623 };
+
+static void sunsoft5bWrite(struct Sunsoft5b* a, uint8_t value) {
+	a->regs[a->address & 15] = value;
+	if ((a->address & 15) == 13) {
+		a->envelopeStep = 0;
+		a->envelopeHolding = false;
+		a->envelopeTimer = 0;
+	}
+}
+
+static void sunsoft5bCycle(struct Sunsoft5b* a) {
+	if (++a->divider < 16) {
+		return;
+	}
+	a->divider = 0;
+	for (int i = 0; i < 3; i++) {
+		uint16_t period = a->regs[i * 2] | ((a->regs[i * 2 + 1] & 15) << 8);
+		if (++a->toneTimer[i] >= (period ? period : 1) * 2) {
+			a->toneTimer[i] = 0;
+			a->toneOut[i] = !a->toneOut[i];
+		}
+	}
+	uint8_t noisePeriod = a->regs[6] & 0x1F;
+	if (++a->noiseTimer >= (noisePeriod ? noisePeriod : 1) * 2) {
+		a->noiseTimer = 0;
+		uint32_t bit = (a->noiseShift ^ (a->noiseShift >> 3)) & 1;
+		a->noiseShift = (a->noiseShift >> 1) | (bit << 16);
+	}
+	uint32_t envelopePeriod = a->regs[11] | (a->regs[12] << 8);
+	if (!a->envelopeHolding && ++a->envelopeTimer >= (envelopePeriod ? envelopePeriod : 1) * 2) {
+		a->envelopeTimer = 0;
+		if (++a->envelopeStep >= 32) {
+			uint8_t shape = a->regs[13];
+			if (!(shape & 8) || (shape & 1)) {
+				a->envelopeHolding = true;
+				a->envelopeStep = 31;
+			} else {
+				a->envelopeStep = 0;
+			}
+		}
+	}
+}
+
+static int sunsoft5bOutput(const struct Sunsoft5b* a) {
+	uint8_t shape = a->regs[13];
+	int level = a->envelopeStep >> 1;
+	bool attack = shape & 4;
+	if (a->envelopeHolding) {
+		// After the first cycle: hold at the end, or at the start for shapes that alternate
+		bool flip = (shape & 8) && (shape & 2);
+		level = (attack ^ flip) ? 15 : 0;
+		if (!(shape & 8)) {
+			level = 0;
+		}
+	} else {
+		bool alternate = (shape & 8) && (shape & 2) && (a->envelopeStep >= 16);
+		level = (attack ^ alternate) ? level : 15 - level;
+	}
+	int out = 0;
+	for (int i = 0; i < 3; i++) {
+		bool toneOff = a->regs[7] & (1 << i), noiseOff = a->regs[7] & (8 << i);
+		bool on = (toneOff || a->toneOut[i]) && (noiseOff || (a->noiseShift & 1));
+		if (on) {
+			uint8_t volume = a->regs[8 + i];
+			out += ayVolume[(volume & 0x10) ? level : volume & 15];
+		}
+	}
+	return out;
+}
 
 static void fme7Sync(struct NES* nes) {
 	struct Fme7* f = STATE(Fme7);
@@ -114,6 +201,14 @@ static void fme7Sync(struct NES* nes) {
 
 static void fme7Write(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Fme7* f = STATE(Fme7);
+	if (address >= 0xC000) {
+		if (address < 0xE000) {
+			f->audio.address = value;
+		} else {
+			sunsoft5bWrite(&f->audio, value);
+		}
+		return;
+	}
 	switch (address & 0xE000) {
 	case 0x8000:
 		f->command = value & 15;
@@ -140,20 +235,26 @@ static void fme7Write(struct NES* nes, uint16_t address, uint8_t value) {
 
 static void fme7Cycle(struct NES* nes) {
 	struct Fme7* f = STATE(Fme7);
+	sunsoft5bCycle(&f->audio);
 	if (f->counting && f->counter-- == 0 && f->irqEnabled) {
 		nesSetIrq(nes, IRQ_MAPPER, true);
 	}
 }
 
+static int fme7Audio(struct NES* nes) {
+	return sunsoft5bOutput(&STATE(Fme7)->audio);
+}
+
 static void fme7Reset(struct NES* nes, bool hard) {
 	if (hard) {
 		memset(nes->boardState, 0, sizeof(struct Fme7));
+		STATE(Fme7)->audio.noiseShift = 1;
 	}
 	fme7Sync(nes);
 }
 
 const struct Board boardFme7 = {
-	.name = "FME-7", .reset = fme7Reset, .write = fme7Write, .cpuCycle = fme7Cycle, .sync = fme7Sync,
+	.name = "FME-7", .reset = fme7Reset, .write = fme7Write, .cpuCycle = fme7Cycle, .audio = fme7Audio, .sync = fme7Sync,
 	.stateSize = sizeof(struct Fme7),
 };
 

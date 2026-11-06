@@ -117,6 +117,9 @@ static inline __attribute__((always_inline)) void tick(struct NES* nes) {
 		ppuCatchUp(nes);
 	}
 	if (nes->cpuClock == 0) {
+		if (nes->board->cpuCycle) {
+			nes->board->cpuCycle(nes);
+		}
 		apuCatchUp(nes);
 		apuCycle(nes);
 		nes->apuQuiet = apuQuietCycles(nes);
@@ -146,7 +149,10 @@ static inline void finishCycle(struct NES* nes) {
 	int c = nes->cpuClock, period = nes->cpuPeriod;
 	nes->masterClock += period - c;
 	if (c == 0) {
-		// Only cycles the CPU can see the result of run now; the rest wait for apuCatchUp()
+		// The board's clock, then the APU's; only APU cycles the CPU can see the result of run now
+		if (nes->board->cpuCycle) {
+			nes->board->cpuCycle(nes);
+		}
 		if (++nes->apuPending > nes->apuQuiet) {
 			apuCatchUp(nes);
 		}
@@ -180,9 +186,6 @@ static inline void endCycle(struct NES* nes) {
 		nes->apu.dmc.implicitAbort = false;
 	}
 	if (__builtin_expect(nes->slowCycles, 0)) {
-		if (nes->board->cpuCycle) {
-			nes->board->cpuCycle(nes);
-		}
 		if (nes->exactTiming) {
 			do {
 				tick(nes);

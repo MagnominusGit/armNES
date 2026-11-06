@@ -678,6 +678,10 @@ void apuRun(struct NES* nes, int cycles) {
 // delayed write landing
 int apuQuietCycles(struct NES* nes) {
 	const struct Apu* apu = &nes->apu;
+	// A board's own sound moves on every cycle: the mix has to be taken with it
+	if (nes->board->audio) {
+		return 0;
+	}
 	const struct Dmc* d = &apu->dmc;
 	if (d->enableDelay | d->loadDelay | d->cannotRun | apu->clearingFrameFlag | apu->quarterClock |
 		apu->halfClock | d->setImplicitAbort | !(apu->frameReset & 0x80) | nes->cpu.dmcDma) {

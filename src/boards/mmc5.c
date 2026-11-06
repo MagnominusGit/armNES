@@ -7,10 +7,27 @@
 
 // MMC5 (5), after the NESdev wiki: four PRG modes over ROM and RAM, four CHR modes with separate
 // sprite and background banks for 8x16 sprites, 1 KB of ExRAM (as a name table, for extended
-// attributes, or as RAM), fill mode, a scanline IRQ and a multiplier. The split screen and the
-// sound channels aren't here yet.
+// attributes, or as RAM), fill mode, a scanline IRQ, a multiplier, and two pulse channels and a
+// PCM channel beside the APU. The split screen isn't here yet.
+
+struct Mmc5Pulse {
+	uint8_t control, length, envelopeDivider, envelopeDecay, step;
+	uint16_t period, timer;
+	bool envelopeStart, enabled;
+};
+
+static const uint8_t mmc5Lengths[32] = {
+	10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14,
+	12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
+};
+
+static const uint8_t mmc5Duty[4] = { 0x01, 0x03, 0x0F, 0xFC };
 
 struct Mmc5 {
+	struct Mmc5Pulse pulse[2];
+	uint8_t pcm;
+	uint16_t frameTimer;
+	bool odd;
 	uint8_t prgMode, chrMode, protect[2], exramMode, ntMapping, fillTile, fillAttr;
 	uint8_t prg[5];
 	uint16_t chrA[8], chrB[4];
@@ -138,6 +155,9 @@ static uint8_t mmc5PpuRead(struct NES* nes, uint16_t address) {
 
 static uint8_t mmc5Read(struct NES* nes, uint16_t address) {
 	struct Mmc5* m = M5;
+	if (address == 0x5015) {
+		return (m->pulse[0].length ? 1 : 0) | (m->pulse[1].length ? 2 : 0);
+	}
 	if (address >= 0x5C00 && address < 0x6000) {
 		return m->exramMode >= 2 ? exram(nes)[address & 0x3FF] : nes->cpu.openBus;
 	}
@@ -161,6 +181,39 @@ static void mmc5Write(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address >= 0x5C00 && address < 0x6000) {
 		if (m->exramMode != 3) {
 			exram(nes)[address & 0x3FF] = value;
+		}
+		return;
+	}
+	if (address >= 0x5000 && address < 0x5008) {
+		struct Mmc5Pulse* p = &m->pulse[(address >> 2) & 1];
+		switch (address & 3) {
+		case 0:
+			p->control = value;
+			break;
+		case 2:
+			p->period = (p->period & 0x700) | value;
+			break;
+		case 3:
+			p->period = (p->period & 0xFF) | ((value & 7) << 8);
+			if (p->enabled) {
+				p->length = mmc5Lengths[value >> 3];
+			}
+			p->envelopeStart = true;
+			p->step = 0;
+			break;
+		}
+		return;
+	}
+	if (address == 0x5011) {
+		m->pcm = value;
+		return;
+	}
+	if (address == 0x5015) {
+		for (int i = 0; i < 2; i++) {
+			m->pulse[i].enabled = value & (1 << i);
+			if (!m->pulse[i].enabled) {
+				m->pulse[i].length = 0;
+			}
 		}
 		return;
 	}
@@ -261,6 +314,52 @@ static int mmc5IrqQuietDots(struct NES* nes) {
 	return lines > 1 ? (lines - 1) * 341 : 0;
 }
 
+// The pulses' timers run every other CPU cycle; envelopes and lengths at about 240 Hz
+static void mmc5Cycle(struct NES* nes) {
+	struct Mmc5* m = M5;
+	bool frame = ++m->frameTimer >= 7457;
+	if (frame) {
+		m->frameTimer = 0;
+	}
+	m->odd = !m->odd;
+	for (int i = 0; i < 2; i++) {
+		struct Mmc5Pulse* p = &m->pulse[i];
+		if (m->odd && p->timer-- == 0) {
+			p->timer = p->period;
+			p->step = (p->step - 1) & 7;
+		}
+		if (frame) {
+			if (p->envelopeStart) {
+				p->envelopeStart = false;
+				p->envelopeDecay = 15;
+				p->envelopeDivider = p->control & 15;
+			} else if (p->envelopeDivider-- == 0) {
+				p->envelopeDivider = p->control & 15;
+				if (p->envelopeDecay) {
+					p->envelopeDecay--;
+				} else if (p->control & 0x20) {
+					p->envelopeDecay = 15;
+				}
+			}
+			if (p->length && !(p->control & 0x20)) {
+				p->length--;
+			}
+		}
+	}
+}
+
+static int mmc5Audio(struct NES* nes) {
+	struct Mmc5* m = M5;
+	int out = 0;
+	for (int i = 0; i < 2; i++) {
+		struct Mmc5Pulse* p = &m->pulse[i];
+		if (p->length && p->period >= 8 && (mmc5Duty[p->control >> 6] >> p->step) & 1) {
+			out += (p->control & 0x10) ? p->control & 15 : p->envelopeDecay;
+		}
+	}
+	return out * 400 + m->pcm * 40;
+}
+
 static void mmc5Reset(struct NES* nes, bool hard) {
 	struct Mmc5* m = M5;
 	struct Cart* cart = &nes->cart;
@@ -286,5 +385,6 @@ static void mmc5Reset(struct NES* nes, bool hard) {
 
 const struct Board boardMmc5 = {
 	.name = "MMC5", .reset = mmc5Reset, .write = mmc5Write, .read = mmc5Read, .ppuRead = mmc5PpuRead,
-	.scanline = mmc5Scanline, .irqQuietDots = mmc5IrqQuietDots, .sync = mmc5Sync, .stateSize = sizeof(struct Mmc5),
+	.scanline = mmc5Scanline, .irqQuietDots = mmc5IrqQuietDots, .cpuCycle = mmc5Cycle, .audio = mmc5Audio,
+	.sync = mmc5Sync, .stateSize = sizeof(struct Mmc5),
 };

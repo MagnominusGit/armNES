@@ -48,6 +48,12 @@ static const char* differs(struct NES* a, struct NES* b) {
 		return "cpu";
 	}
 	if (a->audioCount != b->audioCount || memcmp(a->audioOut, b->audioOut, a->audioCount * 2)) {
+		size_t i = 0;
+		while (i < a->audioCount && a->audioOut[i] == b->audioOut[i]) {
+			i++;
+		}
+		printf("  audio %zu/%zu samples, first differs at %zu: %d/%d\n", a->audioCount, b->audioCount, i,
+			i < a->audioCount ? a->audioOut[i] : 0, i < b->audioCount ? b->audioOut[i] : 0);
 		return "audio";
 	}
 	if (memcmp(a->boardState, b->boardState, sizeof(a->boardState))) {
