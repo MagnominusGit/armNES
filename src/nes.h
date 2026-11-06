@@ -31,11 +31,14 @@ struct Cpu {
 	bool needNmi, prevNeedNmi;
 	bool runIrq, prevRunIrq;
 	bool jammed;
-	// DMA: the CPU halts on its next read for a sprite or sample transfer
-	bool dmaHalt, dmaDummy;
-	bool spriteDma, dmcDma;
-	uint8_t spritePage;
-	uint8_t openBus;
+	// DMA: the CPU halts on a read cycle while either unit runs; each has a halt cycle first
+	bool dmcDma, dmcHalt;
+	bool oamDma, oamHalt, oamFirst, oamAligned;
+	uint8_t oamPage, oamIndex, oamValue;
+	bool ignoreH;
+	uint16_t addressBus;
+	// The external data bus (open bus) and the 2A03's internal one, which $4015 reads drive alone
+	uint8_t openBus, internalBus;
 };
 
 struct SpriteLine {
@@ -118,15 +121,18 @@ struct Noise {
 
 struct Dmc {
 	bool irqEnabled, loop;
-	uint16_t rate, timer;
+	uint8_t rateIndex;
+	uint16_t lfsr;
 	uint8_t output;
 	uint16_t sampleAddress, sampleLength;
 	uint16_t currentAddress, bytesRemaining;
-	uint8_t sampleBuffer;
-	bool bufferEmpty;
-	uint8_t shift, bitsRemaining;
-	bool silence;
-	int transferDelay;
+	uint8_t buffer, shifter, bitsRemaining;
+	bool silent;
+	bool enabled, enabledPending;
+	uint8_t enableDelay;
+	uint8_t loadDelay;
+	uint8_t cannotRun;
+	bool implicitAbort, setImplicitAbort;
 };
 
 struct Apu {
@@ -134,18 +140,23 @@ struct Apu {
 	struct Triangle triangle;
 	struct Noise noise;
 	struct Dmc dmc;
+	bool putCycle;
 	bool fiveStep, irqInhibit;
-	int frameStep;
-	uint32_t frameCycle;
-	int frameResetDelay;
-	uint8_t frameValue;
-	bool lengthHaltPending[4];
-	uint8_t lengthLoadPending[4];
-	bool lengthLoadFlag[4];
-	bool halfClocked;
+	uint16_t frameCounter;
+	uint8_t frameReset;
+	bool quarterClock, halfClock;
+	bool frameFlag, clearingFrameFlag;
+	bool dmcFlag;
+	// The IRQ level detector the frame counter and DMC drive, latched onto the IRQ line once a cycle
+	bool irqDetector;
+	bool lengthReload[4];
+	uint8_t lengthReloadValue[4];
+	uint8_t registers[0x10];
+	// Controllers: the strobe latches on the APU's get-to-put edge; reads shift two cycles later
+	bool strobing, strobed;
+	uint8_t padShift[2];
+	uint8_t padShiftDelay[2];
 	uint64_t cycles;
-	// Audio: band-limited steps in an accumulating buffer
-	int lastOut;
 	int32_t expansion;
 };
 
@@ -213,10 +224,8 @@ struct NES {
 	bool watchPpuBus;
 	bool ppuReadHook;
 
-	// Controllers: buttons pressed and the shift registers
+	// Controllers: buttons pressed, bit 0 A to bit 7 Right
 	uint8_t pads[2];
-	uint8_t padShift[2];
-	bool strobe;
 
 	uint16_t* frameBuffer;
 	bool frameDone;
@@ -270,7 +279,9 @@ void apuReset(struct NES*, bool hard);
 void apuCycle(struct NES*);
 uint8_t apuReadStatus(struct NES*);
 void apuWrite(struct NES*, uint16_t address, uint8_t value);
-void apuDmcDmaDone(struct NES*, uint8_t value);
+void apuDmcDmaGet(struct NES*);
+uint8_t apuConflictRead(struct NES*, uint8_t value, uint16_t address, bool driven);
+void apuLatchIrq(struct NES*);
 
 // boards.c
 const struct Board* boardFind(int mapper, int submapper);

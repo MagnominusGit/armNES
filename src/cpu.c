@@ -13,14 +13,19 @@ static inline void startCycle(struct NES* nes, bool forRead) {
 	nes->masterClock += forRead ? nes->startClocks - 1 : nes->startClocks + 1;
 	nes->cpu.cycles++;
 	ppuRun(nes, nes->masterClock - nes->ppuOffset);
-	apuCycle(nes);
-	if (nes->board->cpuCycle) {
-		nes->board->cpuCycle(nes);
-	}
 }
 
 static inline void endCycle(struct NES* nes, bool forRead) {
 	struct Cpu* cpu = &nes->cpu;
+	// A 1-cycle DMA that this cycle didn't run never runs
+	if (cpu->dmcDma && nes->apu.dmc.implicitAbort) {
+		nes->apu.dmc.implicitAbort = false;
+	}
+	apuCycle(nes);
+	if (nes->board->cpuCycle) {
+		nes->board->cpuCycle(nes);
+	}
+	apuLatchIrq(nes);
 	nes->masterClock += forRead ? nes->endClocks + 1 : nes->endClocks - 1;
 	ppuRun(nes, nes->masterClock - nes->ppuOffset);
 	cpu->prevNeedNmi = cpu->needNmi;
@@ -32,76 +37,89 @@ static inline void endCycle(struct NES* nes, bool forRead) {
 	cpu->runIrq = cpu->irqLine && !(cpu->p & FLAG_I);
 }
 
-// Halted cycles repeat the read the CPU was making. The controller ports only see a read where the
-// one before it was elsewhere, so back-to-back reads of them count once.
-static uint8_t dmaRead(struct NES* nes, uint16_t address, bool repeat) {
-	if (repeat && (address == 0x4016 || address == 0x4017)) {
-		return nes->cpu.openBus;
-	}
-	return busRead(nes, address);
+// The DMA unit (after TriCNES): while a sprite or sample transfer is pending the CPU halts on its
+// next read. Get cycles read, put cycles write; each transfer starts with a halt cycle, and halted
+// or alignment cycles repeat the CPU's read.
+static inline bool dmaPending(struct NES* nes) {
+	struct Cpu* cpu = &nes->cpu;
+	return (cpu->dmcDma && (nes->apu.dmc.enabled || nes->apu.dmc.implicitAbort)) || cpu->oamDma;
 }
 
-static void runDma(struct NES* nes, uint16_t readAddress) {
+static void oamGet(struct NES* nes) {
 	struct Cpu* cpu = &nes->cpu;
-	cpu->dmaHalt = false;
-	// The halt cycle: the CPU's read happens and is thrown away
-	startCycle(nes, true);
-	dmaRead(nes, readAddress, false);
-	endCycle(nes, true);
+	cpu->oamAligned = true;
+	cpu->oamValue = busRead(nes, (cpu->oamPage << 8) | cpu->oamIndex);
+}
 
-	uint16_t spriteCount = 0;
-	uint8_t spriteValue = 0;
-	bool lastElsewhere = false;
-	while (cpu->dmcDma || cpu->spriteDma) {
-		bool getCycle = (cpu->cycles & 1) == 1;
-		if (getCycle) {
-			if (cpu->dmcDma && !cpu->dmaHalt && !cpu->dmaDummy) {
-				startCycle(nes, true);
-				uint8_t value = dmaRead(nes, nes->apu.dmc.currentAddress, false);
-				lastElsewhere = true;
-				endCycle(nes, true);
-				cpu->dmcDma = false;
-				apuDmcDmaDone(nes, value);
-			} else if (cpu->spriteDma) {
-				startCycle(nes, true);
-				spriteValue = dmaRead(nes, (cpu->spritePage << 8) | (spriteCount >> 1), false);
-				lastElsewhere = true;
-				endCycle(nes, true);
-				spriteCount++;
-			} else {
-				startCycle(nes, true);
-				dmaRead(nes, readAddress, !lastElsewhere);
-				lastElsewhere = false;
-				endCycle(nes, true);
-			}
-		} else {
-			if (cpu->spriteDma && (spriteCount & 1)) {
-				startCycle(nes, false);
-				busWrite(nes, 0x2004, spriteValue);
-				endCycle(nes, false);
-				lastElsewhere = true;
-				spriteCount++;
-				if (spriteCount == 0x200) {
-					cpu->spriteDma = false;
-				}
-			} else {
-				startCycle(nes, true);
-				dmaRead(nes, readAddress, !lastElsewhere);
-				lastElsewhere = false;
-				endCycle(nes, true);
-			}
-		}
-		if (cpu->dmaHalt) {
-			cpu->dmaHalt = false;
-		} else if (cpu->dmaDummy) {
-			cpu->dmaDummy = false;
+static void oamPut(struct NES* nes) {
+	struct Cpu* cpu = &nes->cpu;
+	if (!cpu->oamAligned) {
+		busRead(nes, cpu->addressBus);
+		return;
+	}
+	busWrite(nes, 0x2004, cpu->oamValue);
+	if (++cpu->oamIndex == 0) {
+		cpu->oamDma = false;
+		cpu->oamAligned = false;
+	}
+}
+
+static void dmaCycle(struct NES* nes) {
+	struct Cpu* cpu = &nes->cpu;
+	bool put = nes->apu.putCycle;
+	bool write = put && cpu->oamDma && !cpu->oamHalt && cpu->oamAligned && !(cpu->dmcDma && cpu->dmcHalt && cpu->oamHalt);
+	startCycle(nes, !write);
+	if (cpu->oamDma && cpu->oamFirst) {
+		cpu->oamFirst = false;
+		if (!put) {
+			cpu->oamHalt = true;
 		}
 	}
+	bool both = cpu->dmcDma && cpu->oamDma;
+	if (put) {
+		if (both) {
+			if (cpu->dmcHalt && cpu->oamHalt) {
+				busRead(nes, cpu->addressBus);
+			} else if (cpu->oamHalt) {
+				busRead(nes, cpu->addressBus);
+			} else {
+				oamPut(nes);
+			}
+		} else if (cpu->dmcDma || cpu->oamHalt) {
+			busRead(nes, cpu->addressBus);
+		} else {
+			oamPut(nes);
+		}
+	} else {
+		if (both) {
+			if (cpu->dmcHalt && cpu->oamHalt) {
+				busRead(nes, cpu->addressBus);
+			} else if (cpu->dmcHalt) {
+				oamGet(nes);
+			} else {
+				apuDmcDmaGet(nes);
+			}
+		} else if (cpu->dmcDma) {
+			if (cpu->dmcHalt) {
+				busRead(nes, cpu->addressBus);
+			} else {
+				apuDmcDmaGet(nes);
+			}
+		} else if (cpu->oamHalt) {
+			busRead(nes, cpu->addressBus);
+		} else {
+			oamGet(nes);
+		}
+		cpu->dmcHalt = false;
+		cpu->oamHalt = false;
+	}
+	endCycle(nes, !write);
 }
 
 static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
-	if (__builtin_expect(nes->cpu.dmaHalt, 0)) {
-		runDma(nes, address);
+	nes->cpu.addressBus = address;
+	while (__builtin_expect(dmaPending(nes), 0)) {
+		dmaCycle(nes);
 	}
 	startCycle(nes, true);
 	uint8_t value = busRead(nes, address);
@@ -110,6 +128,7 @@ static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
 }
 
 static inline void writeCycle(struct NES* nes, uint16_t address, uint8_t value) {
+	nes->cpu.addressBus = address;
 	startCycle(nes, false);
 	busWrite(nes, address, value);
 	endCycle(nes, false);
@@ -415,32 +434,37 @@ static inline void doStore(struct NES* nes, enum Op op, uint16_t address) {
 	writeCycle(nes, address, storeValue(&nes->cpu, op));
 }
 
-// SHA, SHX, SHY, TAS: the value stored is ANDed with the address's high byte plus one, and a page
-// cross puts that value on the high address lines.
+// SHA, SHX, SHY, TAS: the value stored is ANDed with the base's high byte plus one (unless a DMA
+// takes the cycle before the write), and a page cross ANDs the register into the address's high byte.
 static void storeHigh(struct NES* nes, uint16_t base, uint8_t index, uint8_t value) {
 	uint16_t address = base + index;
+	bool ignoreH = dmaPending(nes);
 	readCycle(nes, (base & 0xFF00) | (address & 0xFF));
-	value &= (base >> 8) + 1;
+	if (!ignoreH) {
+		value &= (base >> 8) + 1;
+	}
 	if ((address & 0xFF00) != (base & 0xFF00)) {
-		address = (address & 0xFF) | (value << 8);
+		address = (address & 0xFF) | ((address >> 8) & value) << 8;
 	}
 	writeCycle(nes, address, value);
 }
 
+// Branches poll interrupts before cycle 2 and, when they cross a page, again before cycle 4; a
+// successful first poll can't be undone by the second.
 static void branch(struct NES* nes, bool taken) {
 	struct Cpu* cpu = &nes->cpu;
+	bool firstPoll = cpu->runIrq;
 	int8_t offset = fetch(nes);
 	if (!taken) {
 		return;
-	}
-	// A taken branch that stays on its page doesn't poll interrupts on its last cycle
-	if (cpu->runIrq && !cpu->prevRunIrq) {
-		cpu->runIrq = false;
 	}
 	dummyFetch(nes);
 	uint16_t target = cpu->pc + offset;
 	if ((target & 0xFF00) != (cpu->pc & 0xFF00)) {
 		readCycle(nes, (cpu->pc & 0xFF00) | (target & 0xFF));
+		cpu->prevRunIrq |= firstPoll;
+	} else {
+		cpu->prevRunIrq = firstPoll;
 	}
 	cpu->pc = target;
 }
@@ -479,7 +503,7 @@ void cpuReset(struct NES* nes, bool hard) {
 	cpu->runIrq = cpu->prevRunIrq = false;
 	cpu->irqLine = 0;
 	cpu->jammed = false;
-	cpu->dmaHalt = cpu->dmaDummy = cpu->spriteDma = cpu->dmcDma = false;
+	cpu->dmcDma = cpu->dmcHalt = cpu->oamDma = cpu->oamHalt = cpu->oamFirst = cpu->oamAligned = false;
 	// The reset sequence: three reads that would be pushes, then the vector
 	for (int i = 0; i < 5; i++) {
 		readCycle(nes, i < 2 ? cpu->pc : 0x100 | cpu->s);
