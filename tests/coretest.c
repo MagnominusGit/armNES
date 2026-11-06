@@ -7,21 +7,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <zlib.h>
 
 // coretest <core.so> <rom>: loads the game through the libretro API, runs it, and checks that a
 // save state taken and loaded again replays the same picture and sound.
 
 static uint32_t videoHash, audioHash;
-static bool rgb565;
+static enum retro_pixel_format pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
 static unsigned frameWidth, frameHeight;
 static size_t audioFrames;
 
 static bool environment(unsigned cmd, void* data) {
 	switch (cmd) {
 	case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
-		rgb565 = *(enum retro_pixel_format*) data == RETRO_PIXEL_FORMAT_RGB565;
-		return rgb565;
+		pixelFormat = *(enum retro_pixel_format*) data;
+		return true;
 	case RETRO_ENVIRONMENT_SET_MESSAGE:
 		fprintf(stderr, "MESSAGE: %s\n", ((const struct retro_message*) data)->msg);
 		return true;
@@ -65,13 +66,20 @@ static void dumpFrame(const void* data, unsigned width, unsigned height, size_t 
 	}
 	fprintf(f, "P6\n%u %u\n255\n", width, height);
 	for (unsigned y = 0; y < height; y++) {
-		const uint16_t* row = (const uint16_t*) ((const uint8_t*) data + y * pitch);
+		const uint8_t* line = (const uint8_t*) data + y * pitch;
 		for (unsigned x = 0; x < width; x++) {
-			uint16_t p = row[x];
-			uint8_t rgb[3] = { (p >> 11) << 3, ((p >> 5) & 0x3F) << 2, (p & 0x1F) << 3 };
-			if (!rgb565) {
-				rgb[0] = ((p >> 10) & 0x1F) << 3;
-				rgb[1] = ((p >> 5) & 0x1F) << 3;
+			uint8_t rgb[3];
+			if (pixelFormat == RETRO_PIXEL_FORMAT_XRGB8888) {
+				uint32_t p = ((const uint32_t*) line)[x];
+				rgb[0] = p >> 16;
+				rgb[1] = p >> 8;
+				rgb[2] = p;
+			} else {
+				uint16_t p = ((const uint16_t*) line)[x];
+				bool rgb565 = pixelFormat == RETRO_PIXEL_FORMAT_RGB565;
+				rgb[0] = (rgb565 ? p >> 11 : (p >> 10) & 0x1F) << 3;
+				rgb[1] = rgb565 ? ((p >> 5) & 0x3F) << 2 : ((p >> 5) & 0x1F) << 3;
+				rgb[2] = (p & 0x1F) << 3;
 			}
 			fwrite(rgb, 1, 3, f);
 		}
@@ -90,7 +98,7 @@ static void video(const void* data, unsigned width, unsigned height, size_t pitc
 	frameWidth = width;
 	frameHeight = height;
 	for (unsigned y = 0; y < height; y++) {
-		videoHash = crc32(videoHash, (const uint8_t*) data + y * pitch, width * 2);
+		videoHash = crc32(videoHash, (const uint8_t*) data + y * pitch, width * (pixelFormat == RETRO_PIXEL_FORMAT_XRGB8888 ? 4 : 2));
 	}
 }
 
@@ -181,6 +189,19 @@ int main(int argc, char** argv) {
 	}
 	struct retro_system_av_info av;
 	p_retro_get_system_av_info(&av);
+	// CORETEST_BENCH=frames: just the time retro_run takes for that many frames
+	if (getenv("CORETEST_BENCH")) {
+		int frames = atoi(getenv("CORETEST_BENCH"));
+		struct timespec t0, t1;
+		clock_gettime(CLOCK_MONOTONIC, &t0);
+		for (frame = 0; frame < (unsigned) frames; frame++) {
+			p_retro_run();
+		}
+		clock_gettime(CLOCK_MONOTONIC, &t1);
+		double seconds = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+		printf("BENCH %.0f fps\n", frames / seconds);
+		return 0;
+	}
 	unsigned start = getenv("CORETEST_FRAME") ? atoi(getenv("CORETEST_FRAME")) + 1 : 600;
 	start = start < 600 ? 600 : start;
 	dumpingSound = true;

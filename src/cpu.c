@@ -179,6 +179,42 @@ static inline bool quietCycle(const struct NES* nes) {
 		nes->apuPending < nes->apuQuiet;
 }
 
+// After a quiet cycle with the interrupt lines settled (an IRQ may be held while I is set, NMI held
+// after it was taken): how many more cycles stay that way, by the same tests quietCycle() makes, so
+// those cycles can skip them. Clearing I ends the run (CLI, PLP, RTI).
+static inline void quietAhead(struct NES* nes) {
+	struct Cpu* cpu = &nes->cpu;
+	const struct Apu* apu = &nes->apu;
+	bool nmi = ppuNmiOutput(nes);
+	if (cpu->nmiLine != nmi || cpu->nmiPrevLine != nmi || cpu->needNmi || cpu->prevNeedNmi || cpu->runIrq ||
+		cpu->prevRunIrq || (cpu->irqLine && !(cpu->p & FLAG_I)) || cpu->dmcDma || cpu->oamDma ||
+		(apu->frameFlag && !apu->irqInhibit && !apu->irqDetector) || ((cpu->irqLine & IRQ_FRAME) != 0) != apu->irqDetector) {
+		return;
+	}
+	int period = nes->cpuPeriod;
+	int ppuRoom = nes->ppuQuietTicks - nes->ppuLag - 9, boardRoom = nes->mapperQuietTicks - nes->ppuLag - 9;
+	if (ppuRoom < 0 || boardRoom < 0) {
+		return;
+	}
+	int byPpu = ppuRoom / period + 1;
+	int byBoard = boardRoom / period + 1;
+	int byApu = nes->apuQuiet - nes->apuPending;
+	int n = byPpu < byBoard ? byPpu : byBoard;
+	n = n < byApu ? n : byApu;
+	nes->quietBudget = n > 0 ? n : 0;
+}
+
+// One of those cycles
+static inline void quietStep(struct NES* nes) {
+	int period = nes->cpuPeriod;
+	nes->quietBudget--;
+	nes->slotTick = nes->masterClock;
+	nes->cpu.cycles++;
+	nes->masterClock += period;
+	nes->ppuLag += period;
+	nes->apuPending++;
+}
+
 static inline void endCycle(struct NES* nes) {
 	struct Cpu* cpu = &nes->cpu;
 	// A 1-cycle DMA that this cycle didn't run never runs
@@ -226,6 +262,7 @@ static inline void endCycle(struct NES* nes) {
 		apuLatchIrq(nes);
 		cpu->irqSampled = cpu->irqLine != 0;
 		nes->cpuClock = period;
+		quietAhead(nes);
 	} else {
 		finishCycle(nes);
 	}
@@ -320,6 +357,23 @@ static void dmaCycle(struct NES* nes) {
 
 static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
 	struct Cpu* cpu = &nes->cpu;
+	if (__builtin_expect(nes->quietBudget > 0, 1)) {
+		uint8_t* page = nes->prgPages[address >> 12];
+		uint8_t value;
+		if (address < 0x2000) {
+			value = nes->ram[address & 0x7FF];
+		} else if (address >= 0x8000 && page && !(nes->readHooks & (1 << (address >> 12)))) {
+			value = page[address & 0xFFF];
+		} else {
+			goto full;
+		}
+		cpu->addressBus = address;
+		quietStep(nes);
+		cpu->openBus = cpu->internalBus = value;
+		return value;
+	}
+full:
+	nes->quietBudget = 0;
 	cpu->addressBus = address;
 	while (__builtin_expect(dmaPending(nes), 0)) {
 		dmaCycle(nes);
@@ -342,6 +396,14 @@ static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
 }
 
 static inline void writeCycle(struct NES* nes, uint16_t address, uint8_t value) {
+	if (__builtin_expect(nes->quietBudget > 0, 1) && address < 0x2000) {
+		nes->cpu.addressBus = address;
+		quietStep(nes);
+		nes->cpu.openBus = nes->cpu.internalBus = value;
+		nes->ram[address & 0x7FF] = value;
+		return;
+	}
+	nes->quietBudget = 0;
 	nes->cpu.addressBus = address;
 	startCycle(nes);
 	busWrite(nes, address, value);
@@ -972,7 +1034,7 @@ void cpuStep(struct NES* nes) {
 	case 0x88: dummyFetch(nes); cpu->y--; setZN(cpu, cpu->y); break;
 	case 0x18: dummyFetch(nes); cpu->p &= ~FLAG_C; break;
 	case 0x38: dummyFetch(nes); cpu->p |= FLAG_C; break;
-	case 0x58: dummyFetch(nes); cpu->p &= ~FLAG_I; break;
+	case 0x58: dummyFetch(nes); cpu->p &= ~FLAG_I; nes->quietBudget = 0; break;
 	case 0x78: dummyFetch(nes); cpu->p |= FLAG_I; break;
 	case 0xB8: dummyFetch(nes); cpu->p &= ~FLAG_V; break;
 	case 0xD8: dummyFetch(nes); cpu->p &= ~FLAG_D; break;
@@ -991,6 +1053,7 @@ void cpuStep(struct NES* nes) {
 		dummyFetch(nes);
 		readCycle(nes, 0x100 | cpu->s);
 		cpu->p = (pop(nes) & ~FLAG_B) | FLAG_U;
+		nes->quietBudget = 0;
 		break;
 
 	// Jumps and returns
@@ -1022,6 +1085,7 @@ void cpuStep(struct NES* nes) {
 		dummyFetch(nes);
 		readCycle(nes, 0x100 | cpu->s);
 		cpu->p = (pop(nes) & ~FLAG_B) | FLAG_U;
+		nes->quietBudget = 0;
 		uint8_t lo = pop(nes);
 		cpu->pc = lo | (pop(nes) << 8);
 		break;

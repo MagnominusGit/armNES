@@ -281,6 +281,9 @@ struct NES {
 	int cpuClock, ppuClock, ppuCpuClock;
 	int cpuPeriod, ppuPeriod;
 	int ppuLag, ppuQuietTicks, mapperQuietTicks;
+	// CPU cycles ahead known to be quiet with no interrupt about to change: ROM and RAM accesses
+	// just advance the clocks
+	int quietBudget;
 	// Something needs every CPU cycle stepped in full: exact timing or a board hook
 	bool slowCycles;
 	// APU cycles the CPU has passed but the APU hasn't run, and how many can pass before it must

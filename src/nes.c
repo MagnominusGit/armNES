@@ -213,6 +213,7 @@ void nesReset(struct NES* nes, bool hard) {
 	nes->ppuEveryCycle = nes->board->m2Rise != NULL;
 	nes->slowCycles = nes->ppuEveryCycle || nes->board->cpuCycle || nes->exactTiming;
 	nes->mapperQuietTicks = 0;
+	nes->quietBudget = 0;
 	cpuReset(nes, hard);
 }
 
