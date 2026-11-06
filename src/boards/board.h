@@ -113,6 +113,12 @@ BOARD(boardBandai);
 // mmc5.c
 BOARD(boardMmc5);
 
+// rare.c
+BOARD(board127);
+BOARD(boardJy043);
+BOARD(boardKaraoke);
+BOARD(boardQta);
+
 // fds.c
 BOARD(boardFds);
 bool fdsCartLoad(struct NES*, const uint8_t* data, size_t size);

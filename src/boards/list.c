@@ -11,6 +11,14 @@ const struct Board* boardFind(int mapper, int submapper) {
 		return &boardNrom;
 	case 20:
 		return &boardFds;
+	case 122:
+		return &boardJy043;
+	case 127:
+		return &board127;
+	case 515:
+		return &boardKaraoke;
+	case 547:
+		return &boardQta;
 	case 1:
 		return &boardMmc1;
 	case 2:

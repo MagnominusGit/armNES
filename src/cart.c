@@ -289,6 +289,11 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		cart->mirroring = (h[6] & 1) ? MIRROR_VERTICAL : MIRROR_HORIZONTAL;
 	}
 
+	// 171 once also meant J.Y.'s JY043, now 122; the keyboard famiclones 171 means now have CHR RAM
+	if (cart->mapper == 171 && !cart->chrRam) {
+		cart->mapper = 122;
+	}
+
 	size_t offset = 16;
 	cart->hasTrainer = h[6] & 4;
 	if (cart->hasTrainer) {
@@ -332,8 +337,9 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		memcpy(cart->misc, data + offset, cart->miscSize);
 	}
 
-	// TQROM has 8 KB of CHR RAM beside its ROM even under an old header
-	if (!cart->vramSize && cart->mapper == 119) {
+	// TQROM and Konami's QTa adapter have 8 KB of CHR RAM beside their ROM even when the header
+	// doesn't say so
+	if (!cart->vramSize && (cart->mapper == 119 || cart->mapper == 547)) {
 		cart->vramSize = 0x2000;
 	}
 	if (cart->vramSize) {
