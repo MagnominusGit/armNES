@@ -533,6 +533,8 @@ static void renderTile(struct NES* nes) {
 	ppu->loLatch = chrRead(nes, table | (nt << 4) | (ppu->v >> 12));
 	ppu->hiLatch = chrRead(nes, table | (nt << 4) | (ppu->v >> 12) | 8);
 	reload(ppu);
+	// The bus as the last fetch left it; with A12 low throughout, a board watching it saw nothing
+	ppu->addressBus = table | (nt << 4) | ((ppu->v >> 12) & 7) | 8;
 	incrementX(ppu);
 	ppu->dot += 8;
 	ppu->dots += 8;
@@ -569,7 +571,8 @@ void fastRun(struct NES* nes, int dots) {
 				ppu->oamAddr = 0;
 				dots -= n;
 				continue;
-			} else if (line < 240 && rendering(ppu) && !nes->watchPpuBus && !(line == 0 && ppu->skippedDot) &&
+			} else if (line < 240 && rendering(ppu) &&
+				(!nes->watchPpuBus || (!ppu->bgTable && !(ppu->addressBus & 0x1000))) && !(line == 0 && ppu->skippedDot) &&
 				(ppu->hit || !ppu->lineHasZero) &&
 				dot < 248 && (dot & 7) == 0 && dot >= 8 && dots >= 8) {
 				// dot is the last one done: tiles start on dots 9, 17, ... and the one ending on 256 has extra work
