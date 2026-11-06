@@ -58,9 +58,35 @@ static struct OptionChoice jumperChoices[] = {
 	{ "23", 23 },
 };
 
+enum { ASPECT_TV, ASPECT_PAR, ASPECT_SQUARE };
+
+static struct OptionChoice aspectChoices[] = {
+	{ "4:3", ASPECT_TV },
+	{ "8:7 PAR", ASPECT_PAR },
+	{ "1:1", ASPECT_SQUARE },
+};
+
+static struct OptionChoice cropChoices[] = {
+	{ "0", 0 },
+	{ "4", 4 },
+	{ "8", 8 },
+	{ "12", 12 },
+	{ "16", 16 },
+};
+
 static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_region", "Region", NULL, "The console the game runs on. Auto takes it from the game's header.", NULL, NULL,
 		{ { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { "Dendy", NULL }, { NULL, NULL } }, "Auto" },
+	{ "armnes_aspect", "Aspect Ratio", NULL,
+		"4:3 is the picture as a TV showed it. 8:7 PAR keeps the console's pixel shape (8:7 on NTSC, about "
+		"11:8 on PAL). 1:1 shows square pixels.",
+		NULL, NULL, { { "4:3", NULL }, { "8:7 PAR", NULL }, { "1:1", NULL }, { NULL, NULL } }, "4:3" },
+	{ "armnes_crop_vertical", "Crop Top and Bottom", NULL,
+		"Pixels hidden at the top and at the bottom, as a TV's overscan hid them.",
+		NULL, NULL, { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
+	{ "armnes_crop_horizontal", "Crop Sides", NULL,
+		"Pixels hidden at the left and at the right edge.",
+		NULL, NULL, { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
 	{ "armnes_jumper", "Cart Jumper", NULL,
 		"Some carts have solder pads or DIP switches that pick their menu, the games listed, a language or "
 		"the video timing. Auto uses the setting known for the dump, or 0. Changing it restarts the game, "
@@ -71,7 +97,38 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 
 static struct retro_core_options_v2 options = { NULL, optionDefinitions };
 
-static void checkJumper(void);
+static void checkOptions(void);
+
+// The picture: its shape and how much of the edges is cropped
+static int aspect, cropVertical, cropHorizontal;
+
+static void readVideoOptions(void) {
+	aspect = optionChoice(environ_cb, "armnes_aspect", aspectChoices, 3, ASPECT_TV);
+	cropVertical = optionChoice(environ_cb, "armnes_crop_vertical", cropChoices, 5, 0);
+	cropHorizontal = optionChoice(environ_cb, "armnes_crop_horizontal", cropChoices, 5, 0);
+}
+
+static void geometry(struct retro_game_geometry* g) {
+	unsigned width = NES_WIDTH - 2 * cropHorizontal, height = NES_HEIGHT - 2 * cropVertical;
+	// NTSC pixels are 8:7; PAL's are 2950000:2128137
+	float pixel = nes.region == REGION_NTSC ? 8.0f / 7.0f : 2950000.0f / 2128137.0f;
+	g->base_width = width;
+	g->base_height = height;
+	g->max_width = NES_WIDTH;
+	g->max_height = NES_HEIGHT;
+	switch (aspect) {
+	case ASPECT_PAR:
+		g->aspect_ratio = width * pixel / height;
+		break;
+	case ASPECT_SQUARE:
+		g->aspect_ratio = (float) width / height;
+		break;
+	default:
+		// The TV's 4:3 for the whole picture, cropped in proportion
+		g->aspect_ratio = (4.0f / 3.0f) * (width / (float) NES_WIDTH) / (height / (float) NES_HEIGHT);
+		break;
+	}
+}
 
 // The NTSC signal's levels decoded to RGB (Bisqwit's method), with the emphasis bits dimming the
 // other two channels
@@ -162,11 +219,7 @@ void retro_get_system_info(struct retro_system_info* info) {
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {
 	memset(info, 0, sizeof(*info));
-	info->geometry.base_width = NES_WIDTH;
-	info->geometry.base_height = NES_HEIGHT;
-	info->geometry.max_width = NES_WIDTH;
-	info->geometry.max_height = NES_HEIGHT;
-	info->geometry.aspect_ratio = 4.0f / 3.0f;
+	geometry(&info->geometry);
 	info->timing.fps = nes.region == REGION_NTSC ? 60.0988 : (nes.region == REGION_PAL ? 50.0070 : 50.0070);
 	info->timing.sample_rate = 48000;
 }
@@ -217,11 +270,12 @@ void retro_run(void) {
 		}
 	}
 	nesRunFrame(&nes);
-	checkJumper();
+	checkOptions();
 	for (int i = 0; i < NES_WIDTH * NES_HEIGHT; i++) {
 		video[i] = palette565[nes.frameBuffer[i] & 0x1FF];
 	}
-	video_cb(video, NES_WIDTH, NES_HEIGHT, NES_WIDTH * sizeof(uint16_t));
+	video_cb(video + cropVertical * NES_WIDTH + cropHorizontal, NES_WIDTH - 2 * cropHorizontal,
+		NES_HEIGHT - 2 * cropVertical, NES_WIDTH * sizeof(uint16_t));
 	if (nes.audioCount) {
 		audio_batch_cb(nes.audioOut, nes.audioCount / 2);
 	}
@@ -298,13 +352,20 @@ static struct retro_disk_control_callback diskControl = {
 	setEjectState, getEjectState, getImageIndex, setImageIndex, getNumImages, NULL, NULL,
 };
 
-// Carts with solder pads or DIP switches: say so once the game looks at them, and restart the game
-// when the setting changes
+// Options changed while running: the picture's shape at once; a cart's solder pads or DIP switches
+// restart the game. Carts with them say so once the game looks at them.
 static bool jumperNoticed;
 
-static void checkJumper(void) {
+static void checkOptions(void) {
 	bool updated = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+		int oldAspect = aspect, oldVertical = cropVertical, oldHorizontal = cropHorizontal;
+		readVideoOptions();
+		if (aspect != oldAspect || cropVertical != oldVertical || cropHorizontal != oldHorizontal) {
+			struct retro_game_geometry g;
+			geometry(&g);
+			environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g);
+		}
 		int jumper = optionChoice(environ_cb, "armnes_jumper", jumperChoices, 25, -1);
 		if (jumper != nes.jumper) {
 			nes.jumper = jumper;
@@ -374,6 +435,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		}
 		return false;
 	}
+	readVideoOptions();
 	int region = optionChoice(environ_cb, "armnes_region", regionChoices, 4, -1);
 	if (region >= 0 && region != (int) nes.region) {
 		nesSetRegion(&nes, region);

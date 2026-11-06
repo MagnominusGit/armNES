@@ -208,8 +208,8 @@ int main(int argc, char** argv) {
 		hashes[pass][1] = audioHash;
 	}
 	bool same = hashes[0][0] == hashes[1][0] && hashes[0][1] == hashes[1][1];
-	printf("%s %ux%u %.4f fps %.0f Hz, state %zu bytes, %zu audio frames, replay %s\n", same ? "OK" : "FAIL",
-		frameWidth, frameHeight, av.timing.fps, av.timing.sample_rate, stateSize, audioFrames, same ? "same" : "DIFFERS");
+	printf("%s %ux%u aspect %.4f %.4f fps %.0f Hz, state %zu bytes, %zu audio frames, replay %s\n", same ? "OK" : "FAIL",
+		frameWidth, frameHeight, av.geometry.aspect_ratio, av.timing.fps, av.timing.sample_rate, stateSize, audioFrames, same ? "same" : "DIFFERS");
 	p_retro_unload_game();
 	p_retro_deinit();
 	return same ? 0 : 1;
