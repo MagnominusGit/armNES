@@ -92,6 +92,15 @@ BOARD(boardNamco175);
 BOARD(boardFk23c);
 BOARD(boardCoolboy);
 
+// sachen.c
+BOARD(boardS8259);
+BOARD(boardSachenLatch);
+BOARD(boardTca01);
+BOARD(boardS74ls374n);
+
+// jy.c
+BOARD(boardJy);
+
 // discrete.c
 const struct Board* discreteFind(int mapper, int submapper);
 

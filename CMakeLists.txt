@@ -16,9 +16,11 @@ set(CORE_SOURCES
 	src/boards/asic.c
 	src/boards/basic.c
 	src/boards/discrete.c
+	src/boards/jy.c
 	src/boards/list.c
 	src/boards/mmc3.c
 	src/boards/multicart.c
+	src/boards/sachen.c
 	src/bus.c
 	src/cart.c
 	src/cpu.c
