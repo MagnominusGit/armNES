@@ -116,7 +116,7 @@ static inline __attribute__((always_inline)) void tick(struct NES* nes) {
 	if (nes->exactTiming) {
 		ppuCatchUp(nes);
 	}
-	if (nes->cpuClock == 0) {
+	if (nes->cpuClock == 0 && !nes->overclockTicks) {
 		if (nes->board->cpuCycle) {
 			nes->board->cpuCycle(nes);
 		}
@@ -185,7 +185,27 @@ static inline void endCycle(struct NES* nes) {
 	if (__builtin_expect(cpu->dmcDma, 0) && nes->apu.dmc.implicitAbort) {
 		nes->apu.dmc.implicitAbort = false;
 	}
-	if (__builtin_expect(nes->slowCycles, 0)) {
+	if (__builtin_expect(nes->overclockTicks > 0, 0)) {
+		// Overclocked time: the PPU runs its repeated line, the APU and the board's clock wait
+		int period = nes->cpuPeriod, c = nes->cpuClock;
+		nes->overclockTicks -= period - c;
+		if (nes->overclockTicks < 0) {
+			nes->overclockTicks = 0;
+		}
+		nes->masterClock += period - c;
+		nes->ppuLag += period - c;
+		if (nes->ppuLag >= nes->ppuQuietTicks || nes->ppuEveryCycle) {
+			ppuCatchUp(nes);
+		}
+		bool out = ppuNmiOutput(nes);
+		cpu->nmiLine |= out;
+		if (cpu->opcodeCycle && !out) {
+			cpu->nmiLine = false;
+		}
+		apuLatchIrq(nes);
+		cpu->irqSampled = cpu->irqLine != 0;
+		nes->cpuClock = period;
+	} else if (__builtin_expect(nes->slowCycles, 0)) {
 		if (nes->exactTiming) {
 			do {
 				tick(nes);

@@ -60,6 +60,21 @@ static struct OptionChoice jumperChoices[] = {
 
 enum { ASPECT_TV, ASPECT_PAR, ASPECT_SQUARE };
 
+// Overclocking: frames' worth of extra CPU time, negative for after the picture instead of vblank
+static struct OptionChoice overclockChoices[] = {
+	{ "Off", 0 },
+	{ "2x (vblank)", 1 },
+	{ "3x (vblank)", 2 },
+	{ "4x (vblank)", 3 },
+	{ "2x (after the picture)", -1 },
+	{ "3x (after the picture)", -2 },
+};
+
+static struct OptionChoice spriteChoices[] = {
+	{ "8 per line", 0 },
+	{ "No limit", 1 },
+};
+
 static struct OptionChoice aspectChoices[] = {
 	{ "4:3", ASPECT_TV },
 	{ "8:7 PAR", ASPECT_PAR },
@@ -87,6 +102,16 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_crop_horizontal", "Crop Sides", NULL,
 		"Pixels hidden at the left and at the right edge.",
 		NULL, NULL, { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
+	{ "armnes_overclock", "Overclock", NULL,
+		"Gives the CPU extra time each frame, which removes most slowdown. The picture, sound and game "
+		"speed stay as they are. Not accurate: a few games misbehave, mostly with the extra time in "
+		"vblank; try the other placement for those.",
+		NULL, NULL, { { "Off", NULL }, { "2x (vblank)", NULL }, { "3x (vblank)", NULL }, { "4x (vblank)", NULL },
+		{ "2x (after the picture)", NULL }, { "3x (after the picture)", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_sprite_limit", "Sprite Limit", NULL,
+		"The console shows 8 sprites on a line and drops the rest, which games turn into flicker. No limit "
+		"shows them all; games still see the console's limit.",
+		NULL, NULL, { { "8 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "8 per line" },
 	{ "armnes_jumper", "Cart Jumper", NULL,
 		"Some carts have solder pads or DIP switches that pick their menu, the games listed, a language or "
 		"the video timing. Auto uses the setting known for the dump, or 0. Changing it restarts the game, "
@@ -101,6 +126,15 @@ static void checkOptions(void);
 
 // The picture: its shape and how much of the edges is cropped
 static int aspect, cropVertical, cropHorizontal;
+
+// Applied at once: the line count follows the region (262 lines NTSC, 312 PAL and Dendy)
+static void readSpeedOptions(void) {
+	int overclock = optionChoice(environ_cb, "armnes_overclock", overclockChoices, 6, 0);
+	int frames = overclock < 0 ? -overclock : overclock;
+	nes.overclockLines = frames * (nes.region == REGION_NTSC ? 262 : 312);
+	nes.overclockPostRender = overclock < 0;
+	nes.noSpriteLimit = optionChoice(environ_cb, "armnes_sprite_limit", spriteChoices, 2, 0);
+}
 
 static void readVideoOptions(void) {
 	aspect = optionChoice(environ_cb, "armnes_aspect", aspectChoices, 3, ASPECT_TV);
@@ -361,6 +395,7 @@ static void checkOptions(void) {
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
 		int oldAspect = aspect, oldVertical = cropVertical, oldHorizontal = cropHorizontal;
 		readVideoOptions();
+		readSpeedOptions();
 		if (aspect != oldAspect || cropVertical != oldVertical || cropHorizontal != oldHorizontal) {
 			struct retro_game_geometry g;
 			geometry(&g);
@@ -441,6 +476,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		nesSetRegion(&nes, region);
 		nesReset(&nes, true);
 	}
+	readSpeedOptions();
 	loaded = true;
 	return true;
 }

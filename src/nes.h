@@ -316,6 +316,17 @@ struct NES {
 	int jumper;
 	bool hasJumper;
 
+	// Options that leave the hardware behind. Overclocking adds overclockLines lines each frame, in
+	// vblank or after the picture (overclockPostRender): the PPU repeats an idle line that many times
+	// (overclockRepeat left, overclockHolding while it does) while the APU and the board's CPU clock
+	// stand still for the same time (overclockTicks left). noSpriteLimit draws more than 8 sprites a
+	// line.
+	int overclockLines;
+	bool overclockPostRender;
+	int overclockTicks, overclockRepeat;
+	bool overclockHolding;
+	bool noSpriteLimit;
+
 	uint16_t* frameBuffer;
 	bool frameDone;
 
@@ -362,6 +373,23 @@ void nesUnmapPrg(struct NES*, uint16_t address, uint32_t size);
 void nesMapChr(struct NES*, uint16_t address, uint32_t size, int bank);
 void nesMapVram(struct NES*, uint16_t address, uint32_t size, int bank);
 void nesSetIrq(struct NES*, int source, bool on);
+
+// Where an overclocked frame's extra lines start
+static inline void nesOverclockPoint(struct NES* nes, bool postRender) {
+	if (nes->overclockLines && nes->overclockPostRender == postRender && !nes->overclockHolding) {
+		nes->overclockTicks = nes->overclockLines * 341 * nes->ppuPeriod;
+		nes->overclockRepeat = nes->overclockLines;
+	}
+}
+
+// At the end of a line: whether the PPU goes through it again rather than on to the next
+static inline bool nesOverclockHold(struct NES* nes, int line) {
+	nes->overclockHolding = nes->overclockRepeat && line == (nes->overclockPostRender ? 240 : 242);
+	if (nes->overclockHolding) {
+		nes->overclockRepeat--;
+	}
+	return nes->overclockHolding;
+}
 
 // cpu.c
 void nesTick(struct NES*);

@@ -74,6 +74,10 @@ int main(int argc, char** argv) {
 	nes.audioOut = audio;
 	nes.audioCapacity = 8192;
 	nes.exactPpu = getenv("NESRUN_EXACT") != NULL;
+	// NESRUN_OVERCLOCK=lines (NESRUN_POSTRENDER for after the picture), NESRUN_SPRITES for no sprite limit
+	nes.overclockLines = getenv("NESRUN_OVERCLOCK") ? atoi(getenv("NESRUN_OVERCLOCK")) : 0;
+	nes.overclockPostRender = getenv("NESRUN_POSTRENDER") != NULL;
+	nes.noSpriteLimit = getenv("NESRUN_SPRITES") != NULL;
 	// NESRUN_JUMPER=n: the cart's solder pads or DIP switches
 	if (getenv("NESRUN_JUMPER")) {
 		nes.jumper = atoi(getenv("NESRUN_JUMPER"));

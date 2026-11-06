@@ -106,17 +106,7 @@ static void evaluateSprites(struct NES* nes) {
 	ppu->nextCount = count;
 }
 
-static uint16_t spriteAddress(const struct Ppu* ppu, int slot, int line) {
-	const uint8_t* sprite = &ppu->oam2[slot * 4];
-	int tile = sprite[1];
-	int row = (uint8_t) (line - sprite[0]);
-	bool flipV = sprite[2] & 0x80;
-	if (slot >= ppu->nextCount) {
-		// Empty slots fetch tile $FF
-		tile = 0xFF;
-		row = 0;
-		flipV = false;
-	}
+static uint16_t patternAddress(const struct Ppu* ppu, int tile, int row, bool flipV) {
 	if (ppu->tall) {
 		row &= 15;
 		if (flipV) {
@@ -135,6 +125,50 @@ static uint16_t spriteAddress(const struct Ppu* ppu, int slot, int line) {
 		row = 7 - row;
 	}
 	return (ppu->spriteTable ? 0x1000 : 0) | (tile << 4) | row;
+}
+
+static uint16_t spriteAddress(const struct Ppu* ppu, int slot, int line) {
+	const uint8_t* sprite = &ppu->oam2[slot * 4];
+	if (slot >= ppu->nextCount) {
+		// Empty slots fetch tile $FF
+		return patternAddress(ppu, 0xFF, 0, false);
+	}
+	return patternAddress(ppu, sprite[1], (uint8_t) (line - sprite[0]), sprite[2] & 0x80);
+}
+
+// With the sprite limit lifted: the line's sprites past the eighth, behind the eight the PPU shows.
+// Only the picture changes; their patterns come straight from the CHR pages, so boards that watch
+// fetches or supply graphics as they're read keep the limit.
+static void extraSprites(struct NES* nes, int line, int height) {
+	struct Ppu* ppu = &nes->ppu;
+	int found = 0;
+	for (int n = 0; n < 64; n++) {
+		const uint8_t* sprite = &ppu->oam[n * 4];
+		int row = (uint8_t) (line - sprite[0]);
+		if (row >= height || ++found <= 8) {
+			continue;
+		}
+		uint16_t address = patternAddress(ppu, sprite[1], row, sprite[2] & 0x80);
+		const uint8_t* page = nes->chrPages[address >> 10];
+		if (!page) {
+			continue;
+		}
+		uint8_t lo = page[address & 0x3FF], hi = page[(address | 8) & 0x3FF];
+		uint8_t attr = sprite[2];
+		if (attr & 0x40) {
+			lo = reverseBits(lo);
+			hi = reverseBits(hi);
+		}
+		uint8_t flags = SPRITE_OPAQUE | ((attr & 3) << 2) | ((attr & 0x20) ? SPRITE_BEHIND : 0);
+		int x = sprite[3];
+		for (int i = 0; i < 8 && x + i < 256; i++) {
+			int color = ((lo >> (7 - i)) & 1) | (((hi >> (7 - i)) & 1) << 1);
+			if (color && !ppu->lineSprites[x + i]) {
+				ppu->lineSprites[x + i] = flags | color;
+				ppu->lineHasSprites = true;
+			}
+		}
+	}
 }
 
 // The pattern fetches for the next line's sprites, drawn into a line of pixels
@@ -183,6 +217,9 @@ static void fetchSprites(struct NES* nes) {
 				ppu->lineSprites[x + i] = flags | color;
 			}
 		}
+	}
+	if (nes->noSpriteLimit && ppu->nextCount == 8 && !nes->ppuReadHook) {
+		extraSprites(nes, line, height);
 	}
 	ppu->lineHasZero = ppu->nextZero;
 }
@@ -465,7 +502,8 @@ static inline void step(struct NES* nes) {
 	}
 	if (++ppu->dot > 340) {
 		ppu->dot = 0;
-		if (++ppu->scanline > pre) {
+		if (nesOverclockHold(nes, ppu->scanline)) {
+		} else if (++ppu->scanline > pre) {
 			ppu->scanline = 0;
 			ppu->frame++;
 		} else if (ppu->scanline == pre) {
@@ -476,8 +514,11 @@ static inline void step(struct NES* nes) {
 	}
 	int line = ppu->scanline, dot = ppu->dot;
 	ppu->dots++;
-	if (dot == 0 && line <= 240 && nes->board->scanline && (rendering(ppu) || line == 240)) {
+	if (dot == 0 && line <= 240 && nes->board->scanline && (rendering(ppu) || line == 240) && !nes->overclockHolding) {
 		nes->board->scanline(nes, line);
+	}
+	if (dot == 0 && line == 240) {
+		nesOverclockPoint(nes, true);
 	}
 	if (ppu->pendingHit && --ppu->hitDelay == 0) {
 		ppu->pendingHit = false;
@@ -512,6 +553,7 @@ static inline void step(struct NES* nes) {
 		ppu->read2002 = false;
 		ppu->resetting = false;
 		nes->frameDone = true;
+		nesOverclockPoint(nes, false);
 	}
 	if (!rendering(ppu) && nes->watchPpuBus) {
 		busAddress(nes, ppu->v & 0x3FFF);
@@ -754,8 +796,15 @@ void fastRun(struct NES* nes, int dots) {
 			int line = ppu->scanline, dot = ppu->dot;
 			if (line > vbl || (line == vbl && dot >= 1)) {
 				if (line < pre - 1 || (line == pre - 1 && dot < 340)) {
-					// Nothing happens in VBL until the line before pre-render ends
-					int left = (pre - 1 - line) * 341 + 340 - dot;
+					// Nothing happens in VBL until the line before pre-render ends, or an overclocked
+					// frame's held line does
+					int last = nes->overclockRepeat && !nes->overclockPostRender && line <= 242 ? 242 : pre - 1;
+					int left = (last - line) * 341 + 340 - dot;
+					if (left <= 0) {
+						step(nes);
+						dots--;
+						continue;
+					}
 					int n = dots < left ? dots : left;
 					int lines = (dot + n) / 341;
 					ppu->scanline += lines;
@@ -765,6 +814,15 @@ void fastRun(struct NES* nes, int dots) {
 					dots -= n;
 					continue;
 				}
+			} else if (line == 240 && nes->overclockRepeat && nes->overclockPostRender && dot < 340) {
+				// An overclocked frame's held line after the picture: idle to its last dot
+				int n = 340 - dot;
+				n = dots < n ? dots : n;
+				ppu->dot += n;
+				ppu->dots += n;
+				ppu->dotTick += (uint64_t) n * nes->ppuPeriod;
+				dots -= n;
+				continue;
 			} else if ((line < 240 || line == pre) && rendering(ppu) && !nes->watchPpuBus && dot >= 257 && dot < 319 &&
 				!(line == pre && dot < 304)) {
 				// Between the sprite search and the sprite fetch nothing shows without a board watching

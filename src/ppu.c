@@ -774,7 +774,8 @@ void ppuStep(struct NES* nes) {
 
 	if (++ppu->dot > 340) {
 		ppu->dot = 0;
-		if (++ppu->scanline > pre) {
+		if (nesOverclockHold(nes, ppu->scanline)) {
+		} else if (++ppu->scanline > pre) {
 			ppu->scanline = 0;
 			ppu->frame++;
 		}
@@ -785,7 +786,10 @@ void ppuStep(struct NES* nes) {
 		} else if (ppu->dot == 1) {
 			ppu->resetting = false;
 			nes->frameDone = true;
+			nesOverclockPoint(nes, false);
 		}
+	} else if (ppu->scanline == 240 && ppu->dot == 0) {
+		nesOverclockPoint(nes, true);
 	} else if (ppu->scanline == pre - 1 && ppu->dot == 340) {
 		ppu->oddFrame = !ppu->oddFrame;
 	} else if (ppu->scanline == pre && ppu->dot == 1) {
@@ -838,7 +842,8 @@ void ppuStep(struct NES* nes) {
 	ppu->spriteFetch = renderLine(nes) && ppu->dot >= 257 && ppu->dot <= 320;
 	// Line 0's dot 0 is skipped on odd frames; the line still starts
 	bool lineStart = ppu->dot == 0 || (ppu->dot == 1 && ppu->scanline == 0 && ppu->skippedDot);
-	if (lineStart && ppu->scanline <= 240 && nes->board->scanline && (rendering(ppu) || ppu->scanline == 240)) {
+	if (lineStart && ppu->scanline <= 240 && nes->board->scanline && (rendering(ppu) || ppu->scanline == 240) &&
+		!nes->overclockHolding) {
 		nes->board->scanline(nes, ppu->scanline);
 	}
 	if (renderLine(nes)) {
