@@ -118,6 +118,7 @@ BOARD(board127);
 BOARD(boardJy043);
 BOARD(boardKaraoke);
 BOARD(boardQta);
+BOARD(boardYuxing);
 
 // fds.c
 BOARD(boardFds);

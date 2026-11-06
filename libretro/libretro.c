@@ -173,6 +173,14 @@ void retro_run(void) {
 	input_poll_cb();
 	nes.pads[0] = readPad(0);
 	nes.pads[1] = readPad(1);
+	if (nes.board == &boardYuxing) {
+		memset(nes.keys, 0, sizeof(nes.keys));
+		for (unsigned key = 1; key < RETROK_LAST; key++) {
+			if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, key)) {
+				nes.keys[key >> 3] |= 1 << (key & 7);
+			}
+		}
+	}
 	nesRunFrame(&nes);
 	for (int i = 0; i < NES_WIDTH * NES_HEIGHT; i++) {
 		video[i] = palette565[nes.frameBuffer[i] & 0x1FF];

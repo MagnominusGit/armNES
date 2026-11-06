@@ -95,6 +95,8 @@ int main(int argc, char** argv) {
 	bool seenRunning = false;
 	// NESRUN_PRESS="frame:mask[:frames],...": hold pad 1 buttons (bit 0 A ... bit 7 Right)
 	const char* press = getenv("NESRUN_PRESS");
+	// NESRUN_KEYS="frame:key[:frames],...": hold keyboard keys, by libretro key code
+	const char* keys = getenv("NESRUN_KEYS");
 	// NESRUN_WAV=file: the sound, 48 kHz 16-bit stereo
 	FILE* wav = getenv("NESRUN_WAV") ? fopen(getenv("NESRUN_WAV"), "wb") : NULL;
 	uint32_t wavBytes = 0;
@@ -108,6 +110,16 @@ int main(int argc, char** argv) {
 			int n = sscanf(p, "%d:%i:%d", &at, &mask, &hold);
 			if (n >= 2 && frame >= at && frame < at + hold) {
 				nes.pads[0] |= mask;
+			}
+			p = strchr(p, ',');
+			p = p ? p + 1 : NULL;
+		}
+		memset(nes.keys, 0, sizeof(nes.keys));
+		for (const char* p = keys; p && *p;) {
+			int at = 0, key = 0, hold = 4;
+			int n = sscanf(p, "%d:%i:%d", &at, &key, &hold);
+			if (n >= 2 && frame >= at && frame < at + hold && key > 0 && key < 512) {
+				nes.keys[key >> 3] |= 1 << (key & 7);
 			}
 			p = strchr(p, ',');
 			p = p ? p + 1 : NULL;

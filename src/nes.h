@@ -307,6 +307,8 @@ struct NES {
 
 	// Controllers: buttons pressed, bit 0 A to bit 7 Right
 	uint8_t pads[2];
+	// A keyboard, for the boards that have one: keys down by libretro key code (RETROK_*)
+	uint8_t keys[64];
 
 	uint16_t* frameBuffer;
 	bool frameDone;

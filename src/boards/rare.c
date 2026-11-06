@@ -1,10 +1,12 @@
 /* Copyright (c) 2026 Magnominus
- * Register behaviour after NintendulatorNRS's mappers 127, 515 and 547 (Copyright (C) 2002-2011
+ * Register behaviour after NintendulatorNRS's mappers 127, 169, 515 and 547 (Copyright (C) 2002-2011
  * QMT Productions, and NewRisingSun), under the GNU General Public License, version 2 or later.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "board.h"
+#include "mmc3.h"
 
+#include "libretro.h"
 #include "sound/emu2413.h"
 
 // Boards with a game or two each.
@@ -323,4 +325,199 @@ static void qtaReset(struct NES* nes, bool hard) {
 const struct Board boardQta = {
 	.name = "Konami QTa", .reset = qtaReset, .write = qtaWrite, .read = qtaRead, .ppuRead = qtaPpuRead,
 	.cpuCycle = qtaCycle, .sync = qtaSync, .stateSize = sizeof(struct Qta),
+};
+
+// 169: Yuxing's educational computers. 1 MB of RAM and 256 KB of CHR RAM; in its own mode it maps
+// 32 KB of ROM or RAM (written through a latch when $4800 bit 5 is set), with two special CHR modes:
+// the screen in four bands of 4 KB CHR banks, picked as the name table reaches each, and 1 bpp
+// graphics, both bitplanes read from the one picked by the name table address. A MMC3 mode runs
+// games from RAM. The keyboard is a matrix of 14 rows read at $4207; the floppy controller reads as
+// ready with no disk.
+struct Yuxing {
+	uint8_t reg4800, reg5500, reg5501, ramLatch;
+	uint16_t keyboardRow;
+	bool pa00, pa09, pa13;
+};
+
+#define YX ((struct Yuxing*) STATE(Mmc3)->extra)
+
+static bool yuxingMmc3(struct NES* nes) {
+	return YX->reg5501 & 0x80;
+}
+
+static void yuxingWram(struct NES* nes) {
+	uint8_t mode = YX->reg5500 & 3;
+	nesMapWram(nes, 0x6000, 0x2000, mode ? mode : 0x3C, true);
+}
+
+static void yuxingPrg(struct NES* nes, uint16_t address, int bank) {
+	nesMapWram(nes, address, 0x2000, bank & 0x3F, false);
+}
+
+static int yuxingChrBank(struct Yuxing* y) {
+	return (y->reg5501 & 0x10) | ((y->reg5501 << 2) & 0x0C) | ((y->reg5501 >> 2) & 3);
+}
+
+static const struct Mmc3Variant yuxingVariant = { yuxingPrg, NULL, NULL, yuxingWram };
+
+static void yuxingSync(struct NES* nes) {
+	struct Yuxing* y = YX;
+	nes->ppuReadHook = false;
+	if (yuxingMmc3(nes)) {
+		mmc3Sync(nes);
+		return;
+	}
+	if (y->reg5500 & 4) {
+		bool writable = !(y->reg4800 & 0x20);
+		if (y->reg5500 & 0x40) {
+			nesMapWram(nes, 0x8000, 0x8000, y->ramLatch >> 1, writable);
+		} else {
+			nesMapWram(nes, 0x8000, 0x4000, y->ramLatch, writable);
+			nesMapWram(nes, 0xC000, 0x4000, 0xFF, writable);
+		}
+	} else {
+		prg32(nes, y->reg4800 & 0x1F);
+	}
+	chr8(nes, yuxingChrBank(y));
+	nes->ppuReadHook = y->reg4800 & 0x80;
+	nesSetMirroring(nes, (y->reg5500 & 8) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
+	yuxingWram(nes);
+}
+
+static const uint16_t yuxingKeys[14][8] = {
+	{ RETROK_ESCAPE, RETROK_F9, RETROK_7, RETROK_r, RETROK_a, 0, 0, RETROK_LSHIFT },
+	{ 0, RETROK_KP_ENTER, 0, RETROK_KP_MULTIPLY, RETROK_KP_DIVIDE, RETROK_UP, RETROK_BACKSPACE, RETROK_F12 },
+	{ 0, 0, 0, RETROK_KP_PLUS, RETROK_NUMLOCK, RETROK_LEFT, RETROK_DOWN, RETROK_RIGHT },
+	{ 0, RETROK_KP7, RETROK_KP8, RETROK_KP_MINUS, RETROK_KP9, RETROK_F11, RETROK_END, RETROK_PAGEDOWN },
+	{ RETROK_F8, RETROK_6, RETROK_e, RETROK_RIGHTBRACKET, RETROK_l, RETROK_z, RETROK_n, RETROK_SPACE },
+	{ RETROK_F7, RETROK_5, RETROK_w, RETROK_LEFTBRACKET, RETROK_k, RETROK_DELETE, RETROK_b, RETROK_SLASH },
+	{ RETROK_F6, RETROK_4, RETROK_q, RETROK_p, RETROK_j, RETROK_BACKSLASH, RETROK_v, RETROK_PERIOD },
+	{ RETROK_F5, RETROK_3, RETROK_EQUALS, RETROK_o, RETROK_h, RETROK_QUOTE, RETROK_c, RETROK_COMMA },
+	{ RETROK_F4, RETROK_2, RETROK_MINUS, RETROK_i, RETROK_g, RETROK_SEMICOLON, RETROK_x, RETROK_m },
+	{ RETROK_F3, RETROK_1, RETROK_0, RETROK_u, RETROK_f, RETROK_CAPSLOCK, RETROK_LSUPER, 0 },
+	{ RETROK_F2, RETROK_BACKQUOTE, RETROK_9, RETROK_y, RETROK_d, RETROK_LCTRL, RETROK_LALT, RETROK_SCROLLOCK },
+	{ RETROK_F1, RETROK_RETURN, RETROK_8, RETROK_t, RETROK_s, 0, RETROK_RSUPER, RETROK_MENU },
+	{ RETROK_KP_PERIOD, RETROK_F10, RETROK_KP4, RETROK_KP6, RETROK_KP5, RETROK_INSERT, RETROK_HOME, RETROK_PAGEUP },
+	{ 0, RETROK_KP0, RETROK_KP1, RETROK_KP3, RETROK_KP2, RETROK_SYSREQ, RETROK_TAB, RETROK_PAUSE },
+};
+
+static uint8_t yuxingRead(struct NES* nes, uint16_t address) {
+	switch (address) {
+	case 0x4207: {
+		// The selected rows' keys shift through, the last eight read
+		uint8_t result = 0;
+		for (int row = 0; row < 14; row++) {
+			if (YX->keyboardRow & (1 << row)) {
+				for (int column = 0; column < 8; column++) {
+					uint16_t key = yuxingKeys[row][column];
+					bool down = key && (nes->keys[key >> 3] >> (key & 7)) & 1;
+					result = (result >> 1) | (down ? 0x80 : 0);
+				}
+			}
+		}
+		return result;
+	}
+	case 0x4204:
+	case 0x4304:
+		return 0x80;
+	case 0x4205:
+	case 0x4305:
+		return 0xFF;
+	case 0x5002:
+		// No VCD player
+		return 0x02;
+	}
+	return nes->cpu.openBus;
+}
+
+static void yuxingWrite(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Yuxing* y = YX;
+	if (address >= 0x8000) {
+		if (yuxingMmc3(nes)) {
+			mmc3Write(nes, address, value);
+		} else if ((y->reg5500 & 4) && (y->reg4800 & 0x20)) {
+			y->ramLatch = value;
+			yuxingSync(nes);
+		}
+		return;
+	}
+	switch (address) {
+	case 0x4202:
+	case 0x4302:
+	case 0x5004:
+		y->keyboardRow = (y->keyboardRow & 0xFF00) | value;
+		break;
+	case 0x4203:
+	case 0x4303:
+	case 0x5005:
+		y->keyboardRow = (y->keyboardRow & 0x00FF) | value << 8;
+		break;
+	case 0x4800:
+		y->reg4800 = value;
+		yuxingSync(nes);
+		break;
+	case 0x5500:
+		y->reg5500 = value;
+		yuxingSync(nes);
+		break;
+	case 0x5501:
+		y->reg5501 = value;
+		yuxingSync(nes);
+		break;
+	}
+}
+
+static uint8_t yuxingPpuRead(struct NES* nes, uint16_t address) {
+	struct Yuxing* y = YX;
+	if (y->reg5500 & 0x80) {
+		// Four bands: each 256 bytes of name table brings its own 4 KB bank for $1000
+		if (address >= 0x2000 && !(address & 0xFF)) {
+			chr4(nes, 0x0000, ((y->reg5501 >> 1) & 6) | ((y->reg5501 << 3) & 0x18));
+			chr4(nes, 0x1000, ((address >> 7) & 6) | ((y->reg5501 << 3) & 0x18) | 1);
+		}
+	} else if (address >= 0x2000) {
+		// 1 bpp: the name table fetch picks the 4 KB half and the bitplane for the pattern fetches
+		if (!y->pa13) {
+			y->pa00 = address & 1;
+			y->pa09 = address & 0x200;
+		}
+		y->pa13 = true;
+	} else {
+		y->pa13 = false;
+		address = (((address >> 10) & 3) | (y->pa09 ? 4 : 0)) << 10 | (address & 0x3F7) | (y->pa00 ? 8 : 0);
+	}
+	uint8_t* page = nes->chrPages[(address >> 10) & 15];
+	return page ? page[address & 0x3FF] : 0;
+}
+
+// At the end of the picture the CPU's CHR writes go to the 8 KB bank again
+static void yuxingScanline(struct NES* nes, int line) {
+	if (line == 240 && !yuxingMmc3(nes) && (YX->reg4800 & 0x80) && (YX->reg5500 & 0x80)) {
+		chr8(nes, yuxingChrBank(YX));
+	}
+}
+
+static void yuxingPpuBus(struct NES* nes, uint16_t address) {
+	if (yuxingMmc3(nes)) {
+		mmc3PpuBus(nes, address);
+	}
+}
+
+static int yuxingIrqQuietDots(struct NES* nes) {
+	return yuxingMmc3(nes) ? mmc3IrqQuietDots(nes) : 1 << 20;
+}
+
+static void yuxingReset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Mmc3));
+	}
+	mmc3Reset(nes, hard);
+	nes->readHooks |= 1 << 4 | 1 << 5;
+	yuxingSync(nes);
+}
+
+const struct Board boardYuxing = {
+	.name = "Yuxing", .reset = yuxingReset, .write = yuxingWrite, .read = yuxingRead, .ppuRead = yuxingPpuRead,
+	.ppuBus = yuxingPpuBus, .irqQuietDots = yuxingIrqQuietDots, .scanline = yuxingScanline, .sync = yuxingSync,
+	.stateSize = sizeof(struct Mmc3), .data = &yuxingVariant,
 };
