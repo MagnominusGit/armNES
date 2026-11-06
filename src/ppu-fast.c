@@ -674,6 +674,32 @@ static void drawTile(uint16_t* out, uint64_t pixels, const uint8_t* sprites, con
 #define drawTile drawTileScalar
 #endif
 
+// Up to a tile's end on a visible line, dot by dot but with only what such a dot does: the sprite 0
+// flag coming due, the pixel, the fetch, the shift, and at the end the next tile and the X step
+static void renderSpan(struct NES* nes, int n) {
+	struct Ppu* ppu = &nes->ppu;
+	for (int i = 0; i < n; i++) {
+		int dot = ++ppu->dot;
+		ppu->dots++;
+		ppu->dotTick += nes->ppuPeriod;
+		if (ppu->pendingHit && --ppu->hitDelay == 0) {
+			ppu->pendingHit = false;
+			ppu->hit = true;
+		}
+		drawPixel(nes, dot - 1);
+		fetchTile(nes, dot);
+		shift(ppu);
+		if (!(dot & 7)) {
+			reload(ppu);
+			incrementX(ppu);
+			if (dot == 256) {
+				incrementY(ppu);
+				evaluateSprites(nes);
+			}
+		}
+	}
+}
+
 // Eight dots of a visible line with nothing else going on: a whole tile
 static void renderTile(struct NES* nes) {
 	struct Ppu* ppu = &nes->ppu;
@@ -814,8 +840,8 @@ void fastRun(struct NES* nes, int dots) {
 					dots -= n;
 					continue;
 				}
-			} else if (line == 240 && nes->overclockRepeat && nes->overclockPostRender && dot < 340) {
-				// An overclocked frame's held line after the picture: idle to its last dot
+			} else if (line == 240 && dot < 340 && (!nes->watchPpuBus || (nes->overclockRepeat && nes->overclockPostRender))) {
+				// The line after the picture (or an overclocked frame's held one): idle to its last dot
 				int n = 340 - dot;
 				n = dots < n ? dots : n;
 				ppu->dot += n;
@@ -834,12 +860,40 @@ void fastRun(struct NES* nes, int dots) {
 				ppu->oamAddr = 0;
 				dots -= n;
 				continue;
+			} else if (line < 240 && dot < 340 && !rendering(ppu) && !nes->watchPpuBus && !(line == 0 && ppu->skippedDot)) {
+				// Rendering off: the backdrop (or the palette entry v points at) to the end of the line
+				int n = dots < 340 - dot ? dots : 340 - dot;
+				int end = dot + n < 256 ? dot + n : 256;
+				if (dot < end) {
+					uint8_t color = (ppu->v & 0x3F00) == 0x3F00 ? paletteRead(ppu, ppu->v) : ppu->palette[0];
+					if (ppu->gray) {
+						color &= 0x30;
+					}
+					uint16_t pixel = color | (ppu->emphRed ? 0x40 : 0) | (ppu->emphGreen ? 0x80 : 0) | (ppu->emphBlue ? 0x100 : 0);
+					uint16_t* out = &nes->frameBuffer[line * NES_WIDTH];
+					for (int x = dot; x < end; x++) {
+						out[x] = pixel;
+					}
+				}
+				ppu->dot += n;
+				ppu->dots += n;
+				ppu->dotTick += (uint64_t) n * nes->ppuPeriod;
+				dots -= n;
+				continue;
 			} else if (line < 240 && rendering(ppu) && !(line == 0 && ppu->skippedDot)) {
 				// dot is the last one done, so tiles start on dots 1, 9, ... 249
 				if (dot < 256 && (dot & 7) == 0 && dots >= 8 &&
 					(!nes->watchPpuBus || (!ppu->bgTable && !(ppu->addressBus & 0x1000)))) {
 					renderTile(nes);
 					dots -= 8;
+					continue;
+				}
+				if (dot >= 1 && dot < 256 && ((dot & 7) || dots < 8) && !nes->watchPpuBus) {
+					// Part of a tile, to its end or as far as asked
+					int n = 8 - (dot & 7);
+					n = dots < n ? dots : n;
+					renderSpan(nes, n);
+					dots -= n;
 					continue;
 				}
 				if (dot == 256 && dots >= 84) {
