@@ -17,6 +17,7 @@ set(CORE_SOURCES
 	src/boards/bandai.c
 	src/boards/basic.c
 	src/boards/discrete.c
+	src/boards/fds.c
 	src/boards/jy.c
 	src/boards/list.c
 	src/boards/mmc3.c

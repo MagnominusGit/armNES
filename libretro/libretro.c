@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "libretro.h"
-#include "nes.h"
+#include "board.h"
 #include "options.h"
 
 #include <math.h>
@@ -120,7 +120,7 @@ void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armNES";
 	info->library_version = "0.1";
-	info->valid_extensions = "nes";
+	info->valid_extensions = "nes|fds|unf|unif";
 	info->need_fullpath = false;
 	info->block_extract = false;
 }
@@ -183,6 +183,77 @@ void retro_run(void) {
 	}
 }
 
+// The Disk System's BIOS, from the frontend's system folder; some dumps carry a 16-byte header
+static uint8_t fdsBios[0x2000];
+
+static bool loadFdsBios(void) {
+	const char* dir = NULL;
+	if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &dir) || !dir) {
+		return false;
+	}
+	static const char* names[] = { "disksys.rom", "Disksys.rom", "DISKSYS.ROM" };
+	for (int i = 0; i < 3; i++) {
+		char path[1024];
+		snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+		FILE* f = fopen(path, "rb");
+		if (!f) {
+			continue;
+		}
+		fseek(f, 0, SEEK_END);
+		long size = ftell(f);
+		bool ok = size >= 0x2000 && fseek(f, size - 0x2000, SEEK_SET) == 0 && fread(fdsBios, 1, 0x2000, f) == 0x2000;
+		fclose(f);
+		if (ok) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool isDisk(const uint8_t* data, size_t size) {
+	return (size >= 4 && !memcmp(data, "FDS\x1A", 4)) || (size >= 15 && data[0] == 1 && !memcmp(data + 1, "*NINTENDO-HVC*", 14));
+}
+
+// Disk sides for the frontend's disk menu; the core also turns to the side the BIOS asks for
+static unsigned diskIndex;
+
+static bool setEjectState(bool ejected) {
+	if (ejected) {
+		int side = fdsSide(&nes);
+		diskIndex = side >= 0 ? (unsigned) side : diskIndex;
+	}
+	fdsInsert(&nes, ejected ? -1 : (int) diskIndex);
+	return true;
+}
+
+static bool getEjectState(void) {
+	return fdsSide(&nes) < 0;
+}
+
+static unsigned getImageIndex(void) {
+	int side = fdsSide(&nes);
+	return side >= 0 ? (unsigned) side : diskIndex;
+}
+
+static bool setImageIndex(unsigned index) {
+	if (index >= (unsigned) nes.cart.diskSides) {
+		return false;
+	}
+	diskIndex = index;
+	if (fdsSide(&nes) >= 0) {
+		fdsInsert(&nes, (int) index);
+	}
+	return true;
+}
+
+static unsigned getNumImages(void) {
+	return nes.cart.diskSides;
+}
+
+static struct retro_disk_control_callback diskControl = {
+	setEjectState, getEjectState, getImageIndex, setImageIndex, getNumImages, NULL, NULL,
+};
+
 bool retro_load_game(const struct retro_game_info* game) {
 	if (!game || !game->data) {
 		return false;
@@ -215,6 +286,16 @@ bool retro_load_game(const struct retro_game_info* game) {
 	nesInit(&nes);
 	nes.audioOut = audio;
 	nes.audioCapacity = sizeof(audio) / sizeof(audio[0]);
+	if (isDisk(game->data, game->size)) {
+		if (!loadFdsBios()) {
+			struct retro_message message = { "armNES: Disk System games need disksys.rom in the system folder", 360 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+			return false;
+		}
+		nes.fdsBios = fdsBios;
+		diskIndex = 0;
+		environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, &diskControl);
+	}
 	if (!nesLoad(&nes, game->data, game->size)) {
 		if (nes.cart.mapper || nes.cart.prgSize) {
 			struct retro_message message = { "armNES: this game's board isn't supported yet", 360 };
@@ -273,6 +354,10 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 void* retro_get_memory_data(unsigned id) {
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
+		// A disk's save is the disk
+		if (loaded && nes.cart.disk) {
+			return nes.cart.disk;
+		}
 		return loaded && nes.cart.battery ? nes.cart.wram : NULL;
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return nes.ram;
@@ -284,6 +369,9 @@ void* retro_get_memory_data(unsigned id) {
 size_t retro_get_memory_size(unsigned id) {
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
+		if (loaded && nes.cart.disk) {
+			return (size_t) nes.cart.diskSides * nes.cart.diskSideSize;
+		}
 		return loaded && nes.cart.battery ? nes.cart.batterySize : 0;
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return sizeof(nes.ram);

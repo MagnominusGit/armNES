@@ -244,6 +244,10 @@ struct Cart {
 	// NES 2.0's miscellaneous ROM, such as a protection chip's program
 	uint8_t* misc;
 	uint32_t miscSize;
+	// Disk System sides, as the drive reads them (boards/fds.c)
+	uint8_t* disk;
+	uint32_t diskSideSize;
+	int diskSides;
 	uint32_t batterySize;
 	bool battery;
 	int mapper, submapper;
@@ -297,6 +301,9 @@ struct NES {
 	bool chrWritable[16];
 	bool watchPpuBus;
 	bool ppuReadHook;
+
+	// The Disk System's BIOS, set before loading a disk
+	const uint8_t* fdsBios;
 
 	// Controllers: buttons pressed, bit 0 A to bit 7 Right
 	uint8_t pads[2];

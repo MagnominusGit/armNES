@@ -13,13 +13,19 @@
 // save state taken and loaded again replays the same picture and sound.
 
 static uint32_t videoHash, audioHash;
+static bool rgb565;
 static unsigned frameWidth, frameHeight;
 static size_t audioFrames;
 
 static bool environment(unsigned cmd, void* data) {
 	switch (cmd) {
 	case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
-		return *(enum retro_pixel_format*) data == RETRO_PIXEL_FORMAT_RGB565;
+		rgb565 = *(enum retro_pixel_format*) data == RETRO_PIXEL_FORMAT_RGB565;
+		return rgb565;
+	// CORETEST_SYSTEM=<dir>: where cores find BIOS files
+	case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
+		*(const char**) data = getenv("CORETEST_SYSTEM");
+		return *(const char**) data != NULL;
 	case RETRO_ENVIRONMENT_GET_VARIABLE:
 		((struct retro_variable*) data)->value = NULL;
 		return false;
@@ -30,7 +36,7 @@ static bool environment(unsigned cmd, void* data) {
 
 static unsigned frame;
 
-// CORETEST_PPM=<file>: the picture at frame 599, for comparing cores by eye
+// CORETEST_PPM=<file>: the picture at frame 599 (or CORETEST_FRAME), for comparing cores by eye
 static void dumpFrame(const void* data, unsigned width, unsigned height, size_t pitch) {
 	const char* path = getenv("CORETEST_PPM");
 	FILE* f = path ? fopen(path, "wb") : NULL;
@@ -41,7 +47,12 @@ static void dumpFrame(const void* data, unsigned width, unsigned height, size_t 
 	for (unsigned y = 0; y < height; y++) {
 		const uint16_t* row = (const uint16_t*) ((const uint8_t*) data + y * pitch);
 		for (unsigned x = 0; x < width; x++) {
-			uint8_t rgb[3] = { (row[x] >> 11) << 3, ((row[x] >> 5) & 0x3F) << 2, (row[x] & 0x1F) << 3 };
+			uint16_t p = row[x];
+			uint8_t rgb[3] = { (p >> 11) << 3, ((p >> 5) & 0x3F) << 2, (p & 0x1F) << 3 };
+			if (!rgb565) {
+				rgb[0] = ((p >> 10) & 0x1F) << 3;
+				rgb[1] = ((p >> 5) & 0x1F) << 3;
+			}
 			fwrite(rgb, 1, 3, f);
 		}
 	}
@@ -49,7 +60,11 @@ static void dumpFrame(const void* data, unsigned width, unsigned height, size_t 
 }
 
 static void video(const void* data, unsigned width, unsigned height, size_t pitch) {
-	if (frame == 599 && data) {
+	static int dumpAt = -1;
+	if (dumpAt < 0) {
+		dumpAt = getenv("CORETEST_FRAME") ? atoi(getenv("CORETEST_FRAME")) : 599;
+	}
+	if (frame == (unsigned) dumpAt && data) {
 		dumpFrame(data, width, height, pitch);
 	}
 	frameWidth = width;
@@ -134,7 +149,9 @@ int main(int argc, char** argv) {
 	}
 	struct retro_system_av_info av;
 	p_retro_get_system_av_info(&av);
-	for (frame = 0; frame < 600; frame++) {
+	unsigned start = getenv("CORETEST_FRAME") ? atoi(getenv("CORETEST_FRAME")) + 1 : 600;
+	start = start < 600 ? 600 : start;
+	for (frame = 0; frame < start; frame++) {
 		p_retro_run();
 	}
 	size_t stateSize = p_retro_serialize_size();
@@ -150,7 +167,7 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 		videoHash = audioHash = 0;
-		for (frame = 600; frame < 720; frame++) {
+		for (frame = start; frame < start + 120; frame++) {
 			p_retro_run();
 		}
 		hashes[pass][0] = videoHash;

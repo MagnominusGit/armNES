@@ -130,6 +130,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	int sampleRate = nes->sampleRate;
 	bool exactPpu = nes->exactPpu, exactTiming = nes->exactTiming;
 	uint8_t pads[2] = { nes->pads[0], nes->pads[1] };
+	const uint8_t* fdsBios = nes->fdsBios;
 
 	memcpy(nes, in, sizeof(struct NES));
 	in += sizeof(struct NES);
@@ -138,6 +139,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->cart.wram = cart.wram;
 	nes->cart.vram = cart.vram;
 	nes->cart.misc = cart.misc;
+	nes->cart.disk = cart.disk;
 	nes->board = board;
 	nes->frameBuffer = frameBuffer;
 	nes->audioOut = audioOut;
@@ -147,6 +149,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->exactTiming = exactTiming;
 	nes->pads[0] = pads[0];
 	nes->pads[1] = pads[1];
+	nes->fdsBios = fdsBios;
 	uint32_t tags[32];
 	memcpy(tags, in, sizeof(tags));
 	in += sizeof(tags);

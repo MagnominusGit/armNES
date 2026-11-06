@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Magnominus
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
-#include "nes.h"
+#include "board.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -222,6 +222,9 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		free(image);
 		return loaded;
 	}
+	if (fdsCartLoad(nes, data, size)) {
+		return true;
+	}
 	if (size < 16 || memcmp(data, "NES\x1A", 4)) {
 		return false;
 	}
@@ -321,6 +324,8 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 	// NES 2.0 miscellaneous ROM: what's left after CHR ROM
 	cart->misc = NULL;
 	cart->miscSize = 0;
+	cart->disk = NULL;
+	cart->diskSides = 0;
 	if (nes2 && (h[14] & 3) && size > offset) {
 		cart->miscSize = size - offset;
 		cart->misc = malloc(cart->miscSize);
@@ -353,6 +358,8 @@ void cartFree(struct NES* nes) {
 	free(nes->cart.wram);
 	free(nes->cart.vram);
 	free(nes->cart.misc);
-	nes->cart.prg = nes->cart.chr = nes->cart.wram = nes->cart.vram = nes->cart.misc = NULL;
+	free(nes->cart.disk);
+	nes->cart.prg = nes->cart.chr = nes->cart.wram = nes->cart.vram = nes->cart.misc = nes->cart.disk = NULL;
 	nes->cart.miscSize = 0;
+	nes->cart.diskSides = 0;
 }

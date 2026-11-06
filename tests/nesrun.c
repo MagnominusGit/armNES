@@ -74,6 +74,12 @@ int main(int argc, char** argv) {
 	nes.audioOut = audio;
 	nes.audioCapacity = 8192;
 	nes.exactPpu = getenv("NESRUN_EXACT") != NULL;
+	// NESRUN_BIOS=<disksys.rom>: the Disk System's BIOS
+	size_t biosSize = 0;
+	uint8_t* bios = getenv("NESRUN_BIOS") ? readFile(getenv("NESRUN_BIOS"), &biosSize) : NULL;
+	if (bios && biosSize >= 0x2000) {
+		nes.fdsBios = bios;
+	}
 	if (!nesLoad(&nes, data, size)) {
 		printf("UNSUPPORTED mapper %d.%d\n", nes.cart.mapper, nes.cart.submapper);
 		return 3;

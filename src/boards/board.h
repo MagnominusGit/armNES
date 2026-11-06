@@ -113,6 +113,12 @@ BOARD(boardBandai);
 // mmc5.c
 BOARD(boardMmc5);
 
+// fds.c
+BOARD(boardFds);
+bool fdsCartLoad(struct NES*, const uint8_t* data, size_t size);
+int fdsSide(struct NES*);
+void fdsInsert(struct NES*, int side);
+
 // discrete.c
 const struct Board* discreteFind(int mapper, int submapper);
 

@@ -9,6 +9,8 @@ const struct Board* boardFind(int mapper, int submapper) {
 	switch (mapper) {
 	case 0:
 		return &boardNrom;
+	case 20:
+		return &boardFds;
 	case 1:
 		return &boardMmc1;
 	case 2:
