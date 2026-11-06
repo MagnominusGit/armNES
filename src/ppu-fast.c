@@ -529,6 +529,16 @@ static void renderTile(struct NES* nes) {
 		for (int i = 0; i < 8; i++) {
 			uint8_t sprite = ppu->lineSprites[x + i];
 			uint8_t bg = pixels >> (i * 8);
+			if ((sprite & SPRITE_ZERO) && (bg & 3) && ppu->showBg && x + i != 255 && !ppu->hit && !ppu->pendingHit) {
+				// The flag shows three dots after the pixel's; this tile has run 7 - i of them
+				int delay = 3 - (7 - i);
+				if (delay <= 0) {
+					ppu->hit = true;
+				} else {
+					ppu->pendingHit = true;
+					ppu->hitDelay = delay;
+				}
+			}
 			if ((sprite & SPRITE_OPAQUE) && (!(bg & 3) || !(sprite & SPRITE_BEHIND))) {
 				uint8_t index = 0x10 | (sprite & 0x0F);
 				out[i] = (ppu->palette[index] & grayMask) | emphasis;
@@ -588,6 +598,38 @@ static void renderHblank(struct NES* nes) {
 	ppu->dotTick += 84 * nes->ppuPeriod;
 }
 
+// Dots 257-340 of a visible line for a board watching the bus: each dot shows it the address the
+// last one left
+static void renderHblankWatched(struct NES* nes) {
+	struct Ppu* ppu = &nes->ppu;
+	for (int dot = 257; dot <= 340; dot++) {
+		ppu->dotTick += nes->ppuPeriod;
+		nes->board->ppuBus(nes, ppu->addressBus);
+		ppu->dot = dot;
+		if (dot <= 320) {
+			if (dot == 257) {
+				shift(ppu);
+				ppu->v = (ppu->v & ~0x41F) | (ppu->t & 0x41F);
+			}
+			ppu->oamAddr = 0;
+			spriteFetchBus(nes, dot);
+			if (dot == 320) {
+				fetchSprites(nes);
+			}
+		} else if (dot <= 336) {
+			fetchTile(nes, dot);
+			shift(ppu);
+			if (!(dot & 7)) {
+				reload(ppu);
+				incrementX(ppu);
+			}
+		} else if (dot == 337 || dot == 339) {
+			busAddress(nes, 0x2000 | (ppu->v & 0xFFF));
+		}
+	}
+	ppu->dots += 84;
+}
+
 void fastRun(struct NES* nes, int dots) {
 	struct Ppu* ppu = &nes->ppu;
 	buildSpread();
@@ -619,8 +661,7 @@ void fastRun(struct NES* nes, int dots) {
 				ppu->oamAddr = 0;
 				dots -= n;
 				continue;
-			} else if (line < 240 && rendering(ppu) && !(line == 0 && ppu->skippedDot) &&
-				(ppu->hit || !ppu->lineHasZero)) {
+			} else if (line < 240 && rendering(ppu) && !(line == 0 && ppu->skippedDot)) {
 				// dot is the last one done, so tiles start on dots 1, 9, ... 249
 				if (dot < 256 && (dot & 7) == 0 && dots >= 8 &&
 					(!nes->watchPpuBus || (!ppu->bgTable && !(ppu->addressBus & 0x1000)))) {
@@ -628,8 +669,12 @@ void fastRun(struct NES* nes, int dots) {
 					dots -= 8;
 					continue;
 				}
-				if (dot == 256 && dots >= 84 && !nes->watchPpuBus) {
-					renderHblank(nes);
+				if (dot == 256 && dots >= 84) {
+					if (nes->watchPpuBus) {
+						renderHblankWatched(nes);
+					} else {
+						renderHblank(nes);
+					}
 					dots -= 84;
 					continue;
 				}
@@ -637,6 +682,18 @@ void fastRun(struct NES* nes, int dots) {
 		}
 		step(nes);
 		dots--;
+	}
+}
+
+// The rest of a register access: 7 master clocks in order, or when VBL can't change meanwhile just
+// the PPU run ahead
+static void untilEndOfAccess(struct NES* nes, int clocks) {
+	if (nes->ppuLag + clocks + nes->cpuPeriod < nes->ppuQuietTicks) {
+		nesPpuSyncAhead(nes, clocks);
+		return;
+	}
+	for (int i = 0; i < clocks; i++) {
+		nesTick(nes);
 	}
 }
 
@@ -676,9 +733,7 @@ uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 			ppu->read2002 = true;
 		}
 		ppu->vblank = false;
-		for (int i = 0; i < 7; i++) {
-			nesTick(nes);
-		}
+		untilEndOfAccess(nes, 7);
 		value |= (ppu->hit ? 0x40 : 0) | (ppu->overflow ? 0x20 : 0) | (openBus(ppu) & 0x1F);
 		ppu->w = false;
 		setBus(ppu, value, 0xE0);
@@ -700,9 +755,7 @@ uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 			value = ppu->readBuffer;
 		}
 		setBus(ppu, value, 0xFF);
-		for (int i = 0; i < 7; i++) {
-			nesTick(nes);
-		}
+		untilEndOfAccess(nes, 7);
 		ppu->vramReadStep = 1;
 		return value;
 	}
@@ -723,8 +776,7 @@ void fastWriteRegister(struct NES* nes, uint16_t address, uint8_t value, uint8_t
 		}
 		// The name table bits see the bus as it was, the rest of the write lands two clocks in
 		ppu->t = (ppu->t & 0x73FF) | ((busBefore & 3) << 10);
-		nesTick(nes);
-		nesTick(nes);
+		untilEndOfAccess(nes, 2);
 		ppu->nmiEnabled = value & 0x80;
 		ppu->increment32 = value & 0x04;
 		ppu->spriteTable = value & 0x08;
@@ -790,9 +842,7 @@ void fastWriteRegister(struct NES* nes, uint16_t address, uint8_t value, uint8_t
 		break;
 	case 7:
 		ppu->writeData = value;
-		for (int i = 0; i < 7; i++) {
-			nesTick(nes);
-		}
+		untilEndOfAccess(nes, 7);
 		ppu->vramWriteStep = 1;
 		break;
 	}
