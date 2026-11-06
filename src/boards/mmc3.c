@@ -158,7 +158,7 @@ void mmc3Reset(struct NES* nes, bool hard) {
 }
 
 #define MMC3_BOARD(var, label, variantData, writer) \
-	const struct Board var = { .name = label, .reset = mmc3Reset, .write = writer, .ppuBus = mmc3PpuBus, \
+	const struct Board var = { .name = label, .reset = mmc3Reset, .write = writer, .ppuBus = mmc3PpuBus, .busA12 = true, \
 		.irqQuietDots = mmc3IrqQuietDots, .sync = mmc3Sync, .stateSize = sizeof(struct Mmc3), .data = variantData }
 
 MMC3_BOARD(boardMmc3, "MMC3", NULL, mmc3Write);
@@ -385,6 +385,6 @@ static void ramboReset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardRambo = {
-	.name = "RAMBO-1", .reset = ramboReset, .write = ramboWrite, .ppuBus = ramboPpuBus, .cpuCycle = ramboCycle,
+	.name = "RAMBO-1", .reset = ramboReset, .write = ramboWrite, .ppuBus = ramboPpuBus, .busA12 = true, .cpuCycle = ramboCycle,
 	.irqQuietDots = mmc3IrqQuietDots, .sync = ramboSync, .stateSize = sizeof(struct Mmc3),
 };

@@ -207,8 +207,10 @@ struct Board {
 	void (*write)(struct NES*, uint16_t address, uint8_t value);
 	// Reads from pages set in readHooks (4 KB each)
 	uint8_t (*read)(struct NES*, uint16_t address);
-	// Every PPU bus address the PPU puts out, for boards set to watch it
+	// Every PPU bus address the PPU puts out, for boards set to watch it; busA12 for those that only
+	// act on A12 rising, so stretches with A12 low can go unwatched
 	void (*ppuBus)(struct NES*, uint16_t address);
+	bool busA12;
 	// Reads of the PPU's pattern and name tables, for boards that change data as it's fetched
 	uint8_t (*ppuRead)(struct NES*, uint16_t address);
 	void (*cpuCycle)(struct NES*);

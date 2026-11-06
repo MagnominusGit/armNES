@@ -260,7 +260,7 @@ static void fkReset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardFk23c = {
-	.name = "FK23C", .reset = fkReset, .write = fkWrite, .ppuBus = mmc3PpuBus, .irqQuietDots = mmc3IrqQuietDots,
+	.name = "FK23C", .reset = fkReset, .write = fkWrite, .ppuBus = mmc3PpuBus, .busA12 = true, .irqQuietDots = mmc3IrqQuietDots,
 	.sync = fkSync, .stateSize = sizeof(struct Fk23c),
 };
 
@@ -367,7 +367,7 @@ static void m268Reset(struct NES* nes, bool hard) {
 static const struct Mmc3Variant m268 = { m268Prg, m268Chr, m268Mirror, m268Wram };
 
 const struct Board boardCoolboy = {
-	.name = "COOLBOY/MINDKIDS", .reset = m268Reset, .write = m268Write, .ppuBus = mmc3PpuBus,
+	.name = "COOLBOY/MINDKIDS", .reset = m268Reset, .write = m268Write, .ppuBus = mmc3PpuBus, .busA12 = true,
 	.irqQuietDots = mmc3IrqQuietDots, .sync = mmc3Sync, .stateSize = sizeof(struct Mmc3), .data = &m268,
 };
 
@@ -460,6 +460,6 @@ static void m215Reset(struct NES* nes, bool hard) {
 static const struct Mmc3Variant m215 = { m215Prg, m215Chr, NULL, NULL };
 
 const struct Board board8237 = {
-	.name = "UNL-8237", .reset = m215Reset, .write = m215Write, .read = m215Read, .ppuBus = mmc3PpuBus,
+	.name = "UNL-8237", .reset = m215Reset, .write = m215Write, .read = m215Read, .ppuBus = mmc3PpuBus, .busA12 = true,
 	.irqQuietDots = mmc3IrqQuietDots, .sync = mmc3Sync, .stateSize = sizeof(struct Mmc3), .data = &m215,
 };

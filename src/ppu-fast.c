@@ -781,11 +781,11 @@ static void renderHblank(struct NES* nes) {
 	ppu->dotTick += 84 * nes->ppuPeriod;
 }
 
-// Dots 257-340 of a visible line for a board watching the bus: each dot shows it the address the
-// last one left
-static void renderHblankWatched(struct NES* nes) {
+// Dots of 257-340 of a visible line for a board watching the bus, n of them from where the PPU is:
+// each dot shows it the address the last one left
+static void renderHblankWatched(struct NES* nes, int n) {
 	struct Ppu* ppu = &nes->ppu;
-	for (int dot = 257; dot <= 340; dot++) {
+	for (int dot = ppu->dot + 1, end = ppu->dot + n; dot <= end; dot++) {
 		ppu->dotTick += nes->ppuPeriod;
 		nes->board->ppuBus(nes, ppu->addressBus);
 		ppu->dot = dot;
@@ -810,7 +810,7 @@ static void renderHblankWatched(struct NES* nes) {
 			busAddress(nes, 0x2000 | (ppu->v & 0xFFF));
 		}
 	}
-	ppu->dots += 84;
+	ppu->dots += n;
 }
 
 void fastRun(struct NES* nes, int dots) {
@@ -888,7 +888,14 @@ void fastRun(struct NES* nes, int dots) {
 					dots -= 8;
 					continue;
 				}
-				if (dot >= 1 && dot < 256 && ((dot & 7) || dots < 8) && !nes->watchPpuBus) {
+				if (dot >= 256 && dot < 340 && nes->watchPpuBus) {
+					int n = dots < 340 - dot ? dots : 340 - dot;
+					renderHblankWatched(nes, n);
+					dots -= n;
+					continue;
+				}
+				if (dot >= 1 && dot < 256 && ((dot & 7) || dots < 8) &&
+					(!nes->watchPpuBus || (nes->board->busA12 && !ppu->bgTable && !(ppu->addressBus & 0x1000)))) {
 					// Part of a tile, to its end or as far as asked
 					int n = 8 - (dot & 7);
 					n = dots < n ? dots : n;
@@ -898,7 +905,7 @@ void fastRun(struct NES* nes, int dots) {
 				}
 				if (dot == 256 && dots >= 84) {
 					if (nes->watchPpuBus) {
-						renderHblankWatched(nes);
+						renderHblankWatched(nes, 84);
 					} else {
 						renderHblank(nes);
 					}

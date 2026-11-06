@@ -518,6 +518,6 @@ static void yuxingReset(struct NES* nes, bool hard) {
 
 const struct Board boardYuxing = {
 	.name = "Yuxing", .reset = yuxingReset, .write = yuxingWrite, .read = yuxingRead, .ppuRead = yuxingPpuRead,
-	.ppuBus = yuxingPpuBus, .irqQuietDots = yuxingIrqQuietDots, .scanline = yuxingScanline, .sync = yuxingSync,
+	.ppuBus = yuxingPpuBus, .busA12 = true, .irqQuietDots = yuxingIrqQuietDots, .scanline = yuxingScanline, .sync = yuxingSync,
 	.stateSize = sizeof(struct Mmc3), .data = &yuxingVariant,
 };
