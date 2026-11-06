@@ -27,7 +27,8 @@ struct Cpu {
 	uint8_t a, x, y, s, p;
 	uint64_t cycles;
 	uint8_t irqLine;
-	bool nmiLine, nmiPrevLine;
+	bool nmiLine, nmiPrevLine, opcodeCycle;
+	bool irqSampled;
 	bool needNmi, prevNeedNmi;
 	bool runIrq, prevRunIrq;
 	bool jammed;
@@ -41,46 +42,65 @@ struct Cpu {
 	uint8_t openBus, internalBus;
 };
 
-struct SpriteLine {
-	uint8_t lo, hi, attr, x;
-};
-
+// The 2C02 as TriCNES models it: a full step every dot and a half step between, the $2007 latch
+// chain, the multiplexed address bus with its octal latch, and sprite evaluation dot by dot.
 struct Ppu {
 	int scanline, dot;
-	uint64_t frame;
-	bool oddFrame;
-	uint8_t ctrl, mask, status;
-	uint8_t oamAddr;
+	bool oddFrame, skippedDot;
+	uint64_t frame, dots;
+	bool resetting;
+
+	bool nmiEnabled, increment32, tall, spriteTable, bgTable;
+	bool showBg, showSprites, showBgLeft, showSpritesLeft, gray, emphRed, emphGreen, emphBlue;
+	bool showBgDelayed, showSpritesDelayed, showBgInstant, showSpritesInstant;
+	uint8_t renderingCounter;
+
+	bool vblank, hit, hitDelayed, pendingHit, pendingHit2, overflow, overflowDelayed, canHit;
+	bool vset, vsetLatch1, vsetLatch2, pendingVblank, read2002;
+
 	uint16_t v, t;
 	uint8_t fineX;
 	bool w;
 	uint8_t readBuffer;
-	uint8_t openBus;
-	uint8_t openBusAge[8];
-	uint16_t busAddress;
-	// Background fetches and shifters
-	uint8_t ntByte, atByte, bgLo, bgHi;
-	uint16_t shiftLo, shiftHi;
-	uint16_t attrLo, attrHi;
-	// Sprites on this line, found at the end of the last one
-	struct SpriteLine sprites[8];
-	int spriteCount;
-	bool spriteZeroLine;
-	uint8_t secondary[32];
-	int secondaryCount;
-	bool spriteZeroNext;
-	bool overflow;
-	// Writes to $2001 and the VBL flag read race
-	bool suppressVbl;
-	bool renderingEnabled;
-	int pendingMask;
-	uint8_t pendingMaskValue;
-	bool nmiOccurred;
-	uint8_t oam[256];
+	uint8_t bus;
+	uint64_t busRefresh[8];
+	uint16_t addressBus;
+	uint8_t octalLatch;
+	bool ale;
+
+	uint8_t delay2005, value2005, delay2006;
+	uint16_t value2006, value2006Before;
+	bool copyV;
+	uint8_t delay2001, delay2001Emphasis, delay2001Oam, value2001;
+	bool wasRendering2001;
+
+	// $2007: the read and write latch chains
+	bool rd, rdSR, rdL[5], pdRb, readAle, ppuRead;
+	bool wr, wrSR, wrL[5], dbPar, writeAle, tstepLatch, blnkLatch, paletteEnable, ppuWrite;
+	uint8_t writeData;
+
+	uint16_t parNt, parAt, parChr;
+	uint8_t renderTemp;
+	bool commitNt, commitAt, commitLo, commitHi;
+	uint8_t attribute, lowPlane, highPlane, attrLatch;
+	uint16_t bgL, bgH, atL, atH;
+
+	uint8_t oam[256], oam2[32];
+	uint8_t oamAddr, oam2Addr, oam2Reset;
+	bool oam2Overflowed;
+	uint8_t oamBufferIn, oamBuffer, oamLatch;
+	uint16_t verticalOffset;
+	uint8_t evalTick;
+	bool nineObjects, oamAddrOverflowed, corruptedOdd, nextHasZero, hasZero;
+	uint8_t spriteL[8], spriteH[8], spriteAttr[8], spriteX[8], spriteCounter[8];
+	uint8_t spritePattern, spriteAttrNow;
+
+	bool corruptOnDisable, corruptOnDisableInstant, corruptOnEnable, pendingCorrupt;
+	uint8_t corruptIndex;
+
+	uint8_t dotColor, prev1, prev2, prev3;
 	uint8_t palette[32];
 	uint8_t ntRam[0x800];
-	uint64_t clock;
-	int dotClocks;
 };
 
 struct Pulse {
@@ -173,6 +193,8 @@ struct Board {
 	// Reads of the PPU's pattern and name tables, for boards that change data as it's fetched
 	uint8_t (*ppuRead)(struct NES*, uint16_t address);
 	void (*cpuCycle)(struct NES*);
+	// M2 rising, partway through each CPU cycle
+	void (*m2Rise)(struct NES*);
 	// The board's own sound, mixed with the APU's
 	int (*audio)(struct NES*);
 	// Restore pointers from registers after a state load
@@ -210,9 +232,9 @@ struct NES {
 	uint8_t ram[0x800];
 	enum Region region;
 	uint64_t masterClock;
-	int cpuClocks;
-	int startClocks, endClocks;
-	int ppuOffset;
+	// Master clock phases: the CPU's (cpuPeriod long) and the PPU's (ppuPeriod long)
+	int cpuClock, ppuClock;
+	int cpuPeriod, ppuPeriod;
 
 	// $4020-$FFFF in 4 KB pages
 	uint8_t* prgPages[16];
@@ -259,6 +281,7 @@ void nesMapChr(struct NES*, uint16_t address, uint32_t size, int bank);
 void nesSetIrq(struct NES*, int source, bool on);
 
 // cpu.c
+void nesTick(struct NES*);
 void cpuReset(struct NES*, bool hard);
 void cpuStep(struct NES*);
 uint8_t cpuPeek(struct NES*, uint16_t address);
@@ -269,9 +292,11 @@ void busWrite(struct NES*, uint16_t address, uint8_t value);
 
 // ppu.c
 void ppuReset(struct NES*, bool hard);
-void ppuRun(struct NES*, uint64_t until);
+void ppuStep(struct NES*);
+void ppuHalfStep(struct NES*);
 uint8_t ppuReadRegister(struct NES*, uint16_t address);
-void ppuWriteRegister(struct NES*, uint16_t address, uint8_t value);
+void ppuWriteRegister(struct NES*, uint16_t address, uint8_t value, uint8_t busBefore);
+bool ppuNmiOutput(const struct NES*);
 uint8_t ppuBusRead(struct NES*, uint16_t address);
 
 // apu.c

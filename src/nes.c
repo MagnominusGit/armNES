@@ -130,19 +130,18 @@ static void setRegion(struct NES* nes, enum Region region) {
 	nes->region = region;
 	switch (region) {
 	case REGION_NTSC:
-		nes->startClocks = 6;
-		nes->endClocks = 6;
+		nes->cpuPeriod = 12;
+		nes->ppuPeriod = 4;
 		break;
 	case REGION_PAL:
-		nes->startClocks = 8;
-		nes->endClocks = 8;
+		nes->cpuPeriod = 16;
+		nes->ppuPeriod = 5;
 		break;
 	case REGION_DENDY:
-		nes->startClocks = 7;
-		nes->endClocks = 8;
+		nes->cpuPeriod = 15;
+		nes->ppuPeriod = 5;
 		break;
 	}
-	nes->cpuClocks = nes->startClocks + nes->endClocks;
 }
 
 bool nesLoad(struct NES* nes, const uint8_t* data, size_t size) {
@@ -175,8 +174,11 @@ void nesReset(struct NES* nes, bool hard) {
 		nes->apu.cycles = 0;
 	}
 	ppuReset(nes, hard);
-	nes->ppu.clock = nes->masterClock;
 	apuReset(nes, hard);
+	if (hard) {
+		nes->cpuClock = 0;
+		nes->ppuClock = 0;
+	}
 	if (hard) {
 		nesMapChr(nes, 0, 0x2000, 0);
 		nesSetMirroring(nes, nes->cart.mirroring);
@@ -185,8 +187,6 @@ void nesReset(struct NES* nes, bool hard) {
 		}
 	}
 	nes->board->reset(nes, hard);
-	// The PPU starts a little after the CPU on most consoles
-	nes->ppuOffset = 1;
 	cpuReset(nes, hard);
 }
 

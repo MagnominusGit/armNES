@@ -9,32 +9,66 @@
 
 enum { FLAG_C = 1, FLAG_Z = 2, FLAG_I = 4, FLAG_D = 8, FLAG_B = 16, FLAG_U = 32, FLAG_V = 64, FLAG_N = 128 };
 
-static inline void startCycle(struct NES* nes, bool forRead) {
-	nes->masterClock += forRead ? nes->startClocks - 1 : nes->startClocks + 1;
-	nes->cpu.cycles++;
-	ppuRun(nes, nes->masterClock - nes->ppuOffset);
+// One master clock besides the CPU's own access, in TriCNES's order: the NMI line at clock 4, the
+// IRQ line at 7 (M2 going low), the PPU's dot and half dot, then the APU in the CPU's slot.
+void nesTick(struct NES* nes) {
+	struct Cpu* cpu = &nes->cpu;
+	if (nes->cpuClock == 4) {
+		// The PPU raises the NMI line; it only drops again on an opcode fetch
+		bool out = ppuNmiOutput(nes);
+		cpu->nmiLine |= out;
+		if (cpu->opcodeCycle && !out) {
+			cpu->nmiLine = false;
+		}
+	} else if (nes->cpuClock == 7) {
+		apuLatchIrq(nes);
+		cpu->irqSampled = cpu->irqLine != 0;
+		if (nes->board->m2Rise) {
+			nes->board->m2Rise(nes);
+		}
+	}
+	if (nes->ppuClock == nes->ppuPeriod) {
+		nes->ppuClock = 0;
+		ppuStep(nes);
+	}
+	if (nes->ppuClock == 2) {
+		ppuHalfStep(nes);
+	}
+	if (nes->cpuClock == 0) {
+		apuCycle(nes);
+	}
+	nes->ppuClock++;
+	nes->cpuClock++;
+	nes->masterClock++;
 }
 
-static inline void endCycle(struct NES* nes, bool forRead) {
+static inline void startCycle(struct NES* nes) {
+	while (nes->cpuClock != nes->cpuPeriod) {
+		nesTick(nes);
+	}
+	nes->cpuClock = 0;
+	nes->cpu.cycles++;
+}
+
+static inline void endCycle(struct NES* nes) {
 	struct Cpu* cpu = &nes->cpu;
 	// A 1-cycle DMA that this cycle didn't run never runs
 	if (cpu->dmcDma && nes->apu.dmc.implicitAbort) {
 		nes->apu.dmc.implicitAbort = false;
 	}
-	apuCycle(nes);
 	if (nes->board->cpuCycle) {
 		nes->board->cpuCycle(nes);
 	}
-	apuLatchIrq(nes);
-	nes->masterClock += forRead ? nes->endClocks + 1 : nes->endClocks - 1;
-	ppuRun(nes, nes->masterClock - nes->ppuOffset);
+	do {
+		nesTick(nes);
+	} while (nes->cpuClock != nes->cpuPeriod);
 	cpu->prevNeedNmi = cpu->needNmi;
 	if (!cpu->nmiPrevLine && cpu->nmiLine) {
 		cpu->needNmi = true;
 	}
 	cpu->nmiPrevLine = cpu->nmiLine;
 	cpu->prevRunIrq = cpu->runIrq;
-	cpu->runIrq = cpu->irqLine && !(cpu->p & FLAG_I);
+	cpu->runIrq = cpu->irqSampled && !(cpu->p & FLAG_I);
 }
 
 // The DMA unit (after TriCNES): while a sprite or sample transfer is pending the CPU halts on its
@@ -67,8 +101,7 @@ static void oamPut(struct NES* nes) {
 static void dmaCycle(struct NES* nes) {
 	struct Cpu* cpu = &nes->cpu;
 	bool put = nes->apu.putCycle;
-	bool write = put && cpu->oamDma && !cpu->oamHalt && cpu->oamAligned && !(cpu->dmcDma && cpu->dmcHalt && cpu->oamHalt);
-	startCycle(nes, !write);
+	startCycle(nes);
 	if (cpu->oamDma && cpu->oamFirst) {
 		cpu->oamFirst = false;
 		if (!put) {
@@ -113,7 +146,7 @@ static void dmaCycle(struct NES* nes) {
 		cpu->dmcHalt = false;
 		cpu->oamHalt = false;
 	}
-	endCycle(nes, !write);
+	endCycle(nes);
 }
 
 static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
@@ -121,17 +154,17 @@ static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
 	while (__builtin_expect(dmaPending(nes), 0)) {
 		dmaCycle(nes);
 	}
-	startCycle(nes, true);
+	startCycle(nes);
 	uint8_t value = busRead(nes, address);
-	endCycle(nes, true);
+	endCycle(nes);
 	return value;
 }
 
 static inline void writeCycle(struct NES* nes, uint16_t address, uint8_t value) {
 	nes->cpu.addressBus = address;
-	startCycle(nes, false);
+	startCycle(nes);
 	busWrite(nes, address, value);
-	endCycle(nes, false);
+	endCycle(nes);
 }
 
 static inline uint8_t fetch(struct NES* nes) {
@@ -536,7 +569,9 @@ void cpuStep(struct NES* nes) {
 		readCycle(nes, 0xFFFF);
 		return;
 	}
+	cpu->opcodeCycle = true;
 	uint8_t opcode = fetch(nes);
+	cpu->opcodeCycle = false;
 	switch (opcode) {
 	// Loads, arithmetic and compares
 	case 0x09: READ(OP_ORA, cpu->pc++);
@@ -832,7 +867,9 @@ void cpuStep(struct NES* nes) {
 	}
 
 	if (cpu->prevNeedNmi || cpu->prevRunIrq) {
+		cpu->opcodeCycle = true;
 		dummyFetch(nes);
+		cpu->opcodeCycle = false;
 		dummyFetch(nes);
 		interrupt(nes, false);
 	}

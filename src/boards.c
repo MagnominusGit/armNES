@@ -210,7 +210,7 @@ struct Mmc3 {
 	uint8_t latch, counter;
 	bool reload, irqEnabled;
 	bool a12;
-	uint64_t a12LowSince;
+	uint8_t m2Filter;
 };
 
 static void mmc3Sync(struct NES* nes) {
@@ -275,31 +275,40 @@ static void mmc3Write(struct NES* nes, uint16_t address, uint8_t value) {
 	mmc3Sync(nes);
 }
 
-static void mmc3Clock(struct NES* nes) {
+static void mmc3Irq(struct NES* nes) {
 	struct Mmc3* m = STATE(Mmc3);
-	if (m->counter == 0 || m->reload) {
-		m->counter = m->latch;
-	} else {
-		m->counter--;
-	}
-	m->reload = false;
 	if (m->counter == 0 && m->irqEnabled) {
 		nesSetIrq(nes, IRQ_MAPPER, true);
 	}
 }
 
+// A12 rising after three M2 rises with it low clocks the counter (after TriCNES)
 static void mmc3PpuBus(struct NES* nes, uint16_t address) {
 	struct Mmc3* m = STATE(Mmc3);
 	bool a12 = address & 0x1000;
-	if (a12 && !m->a12) {
-		// A12 must have been low for a few CPU cycles; the fetches within a tile don't count
-		if (nes->cpu.cycles - m->a12LowSince >= 3) {
-			mmc3Clock(nes);
+	if (!m->a12 && a12 && m->m2Filter == 3) {
+		if (m->reload) {
+			m->counter = m->latch;
+			m->reload = false;
+			mmc3Irq(nes);
+		} else if (--m->counter == 0) {
+			mmc3Irq(nes);
+		} else if (m->counter == 255) {
+			m->counter = m->latch;
+			mmc3Irq(nes);
 		}
-	} else if (!a12 && m->a12) {
-		m->a12LowSince = nes->cpu.cycles;
+	}
+	if (a12) {
+		m->m2Filter = 0;
 	}
 	m->a12 = a12;
+}
+
+static void mmc3M2Rise(struct NES* nes) {
+	struct Mmc3* m = STATE(Mmc3);
+	if (!(nes->ppu.addressBus & 0x1000) && m->m2Filter < 3) {
+		m->m2Filter++;
+	}
 }
 
 static void mmc3Reset(struct NES* nes, bool hard) {
@@ -314,7 +323,8 @@ static void mmc3Reset(struct NES* nes, bool hard) {
 }
 
 static const struct Board mmc3 = {
-	.name = "MMC3", .reset = mmc3Reset, .write = mmc3Write, .ppuBus = mmc3PpuBus, .sync = mmc3Sync,
+	.name = "MMC3", .reset = mmc3Reset, .write = mmc3Write, .ppuBus = mmc3PpuBus, .m2Rise = mmc3M2Rise,
+	.sync = mmc3Sync,
 	.stateSize = sizeof(struct Mmc3),
 };
 

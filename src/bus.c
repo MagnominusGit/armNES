@@ -34,12 +34,13 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 }
 
 void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
+	uint8_t before = nes->cpu.openBus;
 	nes->cpu.openBus = value;
 	nes->cpu.internalBus = value;
 	if (address < 0x2000) {
 		nes->ram[address & 0x7FF] = value;
 	} else if (address < 0x4000) {
-		ppuWriteRegister(nes, address, value);
+		ppuWriteRegister(nes, address, value, before);
 	} else if (address < 0x4020) {
 		apuWrite(nes, address, value);
 	} else {

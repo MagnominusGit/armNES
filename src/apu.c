@@ -688,7 +688,7 @@ void apuReset(struct NES* nes, bool hard) {
 	apu->padShiftDelay[0] = apu->padShiftDelay[1] = 0;
 	apu->irqDetector = false;
 	if (hard) {
-		apu->putCycle = false;
+		apu->putCycle = true;
 	}
 	nesSetIrq(nes, IRQ_FRAME | IRQ_DMC, false);
 }
