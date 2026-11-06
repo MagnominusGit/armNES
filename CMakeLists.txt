@@ -18,6 +18,7 @@ set(CORE_SOURCES
 	src/boards/discrete.c
 	src/boards/list.c
 	src/boards/mmc3.c
+	src/boards/multicart.c
 	src/bus.c
 	src/cart.c
 	src/cpu.c

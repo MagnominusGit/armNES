@@ -88,6 +88,10 @@ BOARD(boardSs88006);
 BOARD(boardNamco163);
 BOARD(boardNamco175);
 
+// multicart.c
+BOARD(boardFk23c);
+BOARD(boardCoolboy);
+
 // discrete.c
 const struct Board* discreteFind(int mapper, int submapper);
 
