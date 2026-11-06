@@ -20,6 +20,7 @@ set(CORE_SOURCES
 	src/nes.c
 	src/ppu.c
 	src/ppu-fast.c
+	src/state.c
 )
 add_library(armnes STATIC ${CORE_SOURCES})
 target_include_directories(armnes PUBLIC src)
@@ -39,3 +40,18 @@ target_link_libraries(nesrun armnes m)
 # Checks the PPU's catch-up and fast paths against clocking it every master clock
 add_executable(selfdiff tests/selfdiff.c)
 target_link_libraries(selfdiff armnes)
+
+# The libretro core, with Armulators' libretro pieces (libretro.h, core options)
+add_subdirectory(armulators)
+add_library(armnes_libretro SHARED libretro/libretro.c)
+if(ANDROID)
+	set_target_properties(armnes_libretro PROPERTIES OUTPUT_NAME armnes_libretro_android)
+endif()
+target_link_libraries(armnes_libretro armnes armulators-libretro m)
+set_target_properties(armnes_libretro PROPERTIES PREFIX "")
+target_link_options(armnes_libretro PRIVATE -Wl,--version-script=${ARMULATORS_LINK_SCRIPT} -Wl,--no-undefined)
+
+# Drives the libretro core like a frontend and checks save states replay exactly
+add_executable(coretest tests/coretest.c)
+target_include_directories(coretest PRIVATE armulators/libretro)
+target_link_libraries(coretest ZLIB::ZLIB dl)

@@ -314,6 +314,12 @@ bool nesLoad(struct NES*, const uint8_t* data, size_t size);
 void nesReset(struct NES*, bool hard);
 void nesRunFrame(struct NES*);
 void nesFree(struct NES*);
+void nesSetRegion(struct NES*, enum Region);
+
+// state.c
+size_t nesStateSize(const struct NES*);
+bool nesSaveState(struct NES*, void* data, size_t size);
+bool nesLoadState(struct NES*, const void* data, size_t size);
 void nesSetMirroring(struct NES*, enum Mirroring);
 void nesSetNametable(struct NES*, int index, uint8_t* page);
 // Banks in units of size bytes, counted from the start of PRG ROM, CHR (ROM or RAM) or work RAM

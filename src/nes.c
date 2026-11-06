@@ -126,7 +126,7 @@ void nesSetMirroring(struct NES* nes, enum Mirroring mirroring) {
 	}
 }
 
-static void setRegion(struct NES* nes, enum Region region) {
+void nesSetRegion(struct NES* nes, enum Region region) {
 	nes->region = region;
 	switch (region) {
 	case REGION_NTSC:
@@ -153,7 +153,7 @@ bool nesLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		cartFree(nes);
 		return false;
 	}
-	setRegion(nes, nes->cart.region);
+	nesSetRegion(nes, nes->cart.region);
 	nesReset(nes, true);
 	return true;
 }
