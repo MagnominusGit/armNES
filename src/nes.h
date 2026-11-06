@@ -107,6 +107,8 @@ struct Ppu {
 	uint8_t nextCount;
 	bool nextZero;
 	uint8_t hitDelay;
+	// The master clock of the dot being stepped
+	uint64_t dotTick;
 	// $2007 reads and writes going through the PPU: how many dots in (0 for none) and the address
 	uint8_t vramReadStep, vramWriteStep;
 	uint16_t vramReadAddress, vramWriteAddress;
@@ -190,6 +192,9 @@ struct Apu {
 	uint8_t padShiftDelay[2];
 	uint64_t cycles;
 	int32_t expansion;
+	// The mix only changes when a channel's output can
+	bool mixDirty;
+	int32_t lastMix;
 };
 
 // A board: which parts of the cartridge the CPU and PPU see, and its registers.
@@ -207,6 +212,8 @@ struct Board {
 	void (*cpuCycle)(struct NES*);
 	// M2 rising, partway through each CPU cycle
 	void (*m2Rise)(struct NES*);
+	// PPU dots during which the board's IRQ line can't change on its own
+	int (*irqQuietDots)(struct NES*);
 	// The board's own sound, mixed with the APU's
 	int (*audio)(struct NES*);
 	// Restore pointers from registers after a state load
@@ -249,8 +256,11 @@ struct NES {
 	// ppuCpuClock the CPU's phase at the clock the PPU is on.
 	int cpuClock, ppuClock, ppuCpuClock;
 	int cpuPeriod, ppuPeriod;
-	int ppuLag, ppuQuietTicks;
+	int ppuLag, ppuQuietTicks, mapperQuietTicks;
 	bool ppuEveryCycle;
+	// The master clock of this CPU cycle's access, for boards that count M2 from the PPU's side, and
+	// the next master clock the PPU hasn't run
+	uint64_t slotTick, ppuTick;
 	// Every master clock in order, as the reference for the catch-up (tests/selfdiff.c)
 	bool exactTiming;
 	// The half-dot PPU (ppu.c) instead of the fast one (ppu-fast.c)

@@ -181,6 +181,7 @@ void nesReset(struct NES* nes, bool hard) {
 		nes->ppuCpuClock = 0;
 		nes->ppuLag = 0;
 		nes->ppuQuietTicks = 0;
+		nes->ppuTick = nes->masterClock;
 	}
 	if (hard) {
 		nesMapChr(nes, 0, 0x2000, 0);
@@ -190,7 +191,8 @@ void nesReset(struct NES* nes, bool hard) {
 		}
 	}
 	nes->board->reset(nes, hard);
-	nes->ppuEveryCycle = nes->watchPpuBus || nes->board->m2Rise;
+	nes->ppuEveryCycle = nes->board->m2Rise != NULL;
+	nes->mapperQuietTicks = 0;
 	cpuReset(nes, hard);
 }
 

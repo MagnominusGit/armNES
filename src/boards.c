@@ -210,7 +210,7 @@ struct Mmc3 {
 	uint8_t latch, counter;
 	bool reload, irqEnabled;
 	bool a12;
-	uint8_t m2Filter;
+	uint64_t a12LowSince;
 };
 
 static void mmc3Sync(struct NES* nes) {
@@ -282,11 +282,26 @@ static void mmc3Irq(struct NES* nes) {
 	}
 }
 
+// M2 rises (clock 7 of each CPU cycle) in (from, to]
+static int m2Rises(struct NES* nes, uint64_t from, uint64_t to) {
+	int64_t period = nes->cpuPeriod;
+	int64_t origin = (int64_t) nes->slotTick + 7;
+	int64_t a = (int64_t) from - origin, b = (int64_t) to - origin;
+	int64_t fa = a >= 0 ? a / period : -((-a + period - 1) / period);
+	int64_t fb = b >= 0 ? b / period : -((-b + period - 1) / period);
+	return fb - fa;
+}
+
 // A12 rising after three M2 rises with it low clocks the counter (after TriCNES)
 static void mmc3PpuBus(struct NES* nes, uint16_t address) {
 	struct Mmc3* m = STATE(Mmc3);
 	bool a12 = address & 0x1000;
-	if (!m->a12 && a12 && m->m2Filter == 3) {
+	if (a12 == m->a12) {
+		return;
+	}
+	if (!a12) {
+		m->a12LowSince = nes->ppu.dotTick;
+	} else if (m2Rises(nes, m->a12LowSince, nes->ppu.dotTick) >= 3) {
 		if (m->reload) {
 			m->counter = m->latch;
 			m->reload = false;
@@ -298,17 +313,17 @@ static void mmc3PpuBus(struct NES* nes, uint16_t address) {
 			mmc3Irq(nes);
 		}
 	}
-	if (a12) {
-		m->m2Filter = 0;
-	}
 	m->a12 = a12;
 }
 
-static void mmc3M2Rise(struct NES* nes) {
+// Each counter clock needs A12 low for three M2 rises, so at least eight dots apart
+static int mmc3IrqQuietDots(struct NES* nes) {
 	struct Mmc3* m = STATE(Mmc3);
-	if (!(nes->ppu.addressBus & 0x1000) && m->m2Filter < 3) {
-		m->m2Filter++;
+	if (!m->irqEnabled) {
+		return 1 << 20;
 	}
+	int safe = (m->reload || m->counter == 0) ? m->latch : m->counter - 1;
+	return safe * 8;
 }
 
 static void mmc3Reset(struct NES* nes, bool hard) {
@@ -323,7 +338,7 @@ static void mmc3Reset(struct NES* nes, bool hard) {
 }
 
 static const struct Board mmc3 = {
-	.name = "MMC3", .reset = mmc3Reset, .write = mmc3Write, .ppuBus = mmc3PpuBus, .m2Rise = mmc3M2Rise,
+	.name = "MMC3", .reset = mmc3Reset, .write = mmc3Write, .ppuBus = mmc3PpuBus, .irqQuietDots = mmc3IrqQuietDots,
 	.sync = mmc3Sync,
 	.stateSize = sizeof(struct Mmc3),
 };

@@ -20,17 +20,23 @@ static void ppuCatchUp(struct NES* nes) {
 		// Whole dots only: the fast PPU has no half steps
 		int c = nes->ppuClock, period = nes->ppuPeriod;
 		int dots = (lag + c - 1) / period;
+		nes->ppu.dotTick = nes->ppuTick + (c ? period - c : period) - period;
+		nes->ppuTick += lag;
 		nes->ppuClock = dots ? (lag + c - 1) % period + 1 : c + lag;
 		nes->ppuCpuClock = (nes->ppuCpuClock + lag) % nes->cpuPeriod;
 		fastRun(nes, dots);
 		nes->ppuQuietTicks = ppuQuietDots(nes) * period;
+		nes->mapperQuietTicks = nes->board->irqQuietDots ? nes->board->irqQuietDots(nes) * period : 1 << 30;
 		return;
 	}
+	uint64_t tickNow = nes->ppuTick;
+	nes->ppuTick += lag;
 	int clock = nes->ppuClock, cpuClock = nes->ppuCpuClock;
 	for (; lag; lag--) {
 		nes->ppuCpuClock = cpuClock;
 		if (clock == nes->ppuPeriod) {
 			clock = nes->ppuClock = 0;
+			nes->ppu.dotTick = tickNow;
 			ppuStep(nes);
 		}
 		if (clock == 2) {
@@ -38,6 +44,7 @@ static void ppuCatchUp(struct NES* nes) {
 			ppuHalfStep(nes);
 		}
 		clock++;
+		tickNow++;
 		if (++cpuClock == nes->cpuPeriod) {
 			cpuClock = 0;
 		}
@@ -45,6 +52,7 @@ static void ppuCatchUp(struct NES* nes) {
 	nes->ppuClock = clock;
 	nes->ppuCpuClock = cpuClock;
 	nes->ppuQuietTicks = ppuQuietDots(nes) * nes->ppuPeriod;
+	nes->mapperQuietTicks = nes->board->irqQuietDots ? nes->board->irqQuietDots(nes) * nes->ppuPeriod : 1 << 30;
 }
 
 void nesPpuSync(struct NES* nes) {
@@ -58,30 +66,38 @@ void nesPpuSyncAhead(struct NES* nes, int clocks) {
 	nes->ppuLag = -clocks;
 }
 
+static inline void nmiSample(struct NES* nes) {
+	struct Cpu* cpu = &nes->cpu;
+	if (nes->ppuLag >= nes->ppuQuietTicks || nes->ppuEveryCycle) {
+		ppuCatchUp(nes);
+	}
+	bool out = ppuNmiOutput(nes);
+	cpu->nmiLine |= out;
+	if (cpu->opcodeCycle && !out) {
+		cpu->nmiLine = false;
+	}
+}
+
+static inline void irqSample(struct NES* nes) {
+	struct Cpu* cpu = &nes->cpu;
+	if (nes->ppuEveryCycle || nes->ppuLag >= nes->mapperQuietTicks) {
+		ppuCatchUp(nes);
+	}
+	apuLatchIrq(nes);
+	cpu->irqSampled = cpu->irqLine != 0;
+	if (nes->board->m2Rise) {
+		nes->board->m2Rise(nes);
+	}
+}
+
 // One master clock, in TriCNES's order: the NMI line at clock 4, the IRQ line at 7 (M2 going low),
 // the PPU's dot and half dot, then the APU in the CPU's slot. The PPU's part is left for
 // ppuCatchUp() unless something here needs it now.
 static inline __attribute__((always_inline)) void tick(struct NES* nes) {
-	struct Cpu* cpu = &nes->cpu;
 	if (nes->cpuClock == 4) {
-		if (nes->ppuLag >= nes->ppuQuietTicks || nes->ppuEveryCycle) {
-			ppuCatchUp(nes);
-		}
-		// The PPU raises the NMI line; it only drops again on an opcode fetch
-		bool out = ppuNmiOutput(nes);
-		cpu->nmiLine |= out;
-		if (cpu->opcodeCycle && !out) {
-			cpu->nmiLine = false;
-		}
+		nmiSample(nes);
 	} else if (nes->cpuClock == 7) {
-		if (nes->ppuEveryCycle) {
-			ppuCatchUp(nes);
-		}
-		apuLatchIrq(nes);
-		cpu->irqSampled = cpu->irqLine != 0;
-		if (nes->board->m2Rise) {
-			nes->board->m2Rise(nes);
-		}
+		irqSample(nes);
 	}
 	nes->ppuLag++;
 	if (nes->exactTiming) {
@@ -105,7 +121,30 @@ static inline void startCycle(struct NES* nes) {
 		tick(nes);
 	}
 	nes->cpuClock = 0;
+	nes->slotTick = nes->masterClock;
 	nes->cpu.cycles++;
+}
+
+// The rest of the CPU cycle: the APU at clock 0, the NMI line at 4, the IRQ line at 7, with the
+// PPU's clocks left for ppuCatchUp()
+static inline void finishCycle(struct NES* nes) {
+	int c = nes->cpuClock, period = nes->cpuPeriod;
+	nes->masterClock += period - c;
+	if (c == 0) {
+		apuCycle(nes);
+	}
+	if (c <= 4) {
+		nes->ppuLag += 4 - c;
+		c = 4;
+		nmiSample(nes);
+	}
+	if (c <= 7) {
+		nes->ppuLag += 7 - c;
+		c = 7;
+		irqSample(nes);
+	}
+	nes->ppuLag += period - c;
+	nes->cpuClock = period;
 }
 
 static inline void endCycle(struct NES* nes) {
@@ -117,9 +156,13 @@ static inline void endCycle(struct NES* nes) {
 	if (nes->board->cpuCycle) {
 		nes->board->cpuCycle(nes);
 	}
-	do {
-		tick(nes);
-	} while (nes->cpuClock != nes->cpuPeriod);
+	if (nes->exactTiming) {
+		do {
+			tick(nes);
+		} while (nes->cpuClock != nes->cpuPeriod);
+	} else {
+		finishCycle(nes);
+	}
 	cpu->prevNeedNmi = cpu->needNmi;
 	if (!cpu->nmiPrevLine && cpu->nmiLine) {
 		cpu->needNmi = true;

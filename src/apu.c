@@ -132,6 +132,7 @@ static bool pulseMuted(struct Pulse* p) {
 }
 
 static void quarterFrame(struct Apu* apu) {
+	apu->mixDirty = true;
 	for (int i = 0; i < 2; i++) {
 		struct Pulse* p = &apu->pulse[i];
 		clockEnvelope(&p->envelopeStart, &p->envelopeDivider, &p->envelopeDecay, p->volume, p->lengthHalt);
@@ -150,6 +151,7 @@ static void quarterFrame(struct Apu* apu) {
 }
 
 static void sweeps(struct Apu* apu) {
+	apu->mixDirty = true;
 	for (int i = 0; i < 2; i++) {
 		struct Pulse* p = &apu->pulse[i];
 		if (p->sweepCounter == 0 && p->sweepEnabled && p->sweepShift && !pulseMuted(p)) {
@@ -166,6 +168,7 @@ static void sweeps(struct Apu* apu) {
 
 // Length counters: a reload written this cycle wins over a half-frame clock only from zero
 static void lengthCounters(struct Apu* apu, bool half) {
+	apu->mixDirty = true;
 	for (int i = 0; i < 4; i++) {
 		uint8_t* length = lengthCounter(apu, i);
 		if (half) {
@@ -189,6 +192,7 @@ static void lengthCounters(struct Apu* apu, bool half) {
 
 // Halt bits written this cycle take effect after its length counter clock
 static void applyHalts(struct Apu* apu) {
+	apu->mixDirty = true;
 	apu->haltPending = false;
 	apu->pulse[0].lengthHalt = apu->registers[0x0] & 0x20;
 	apu->pulse[1].lengthHalt = apu->registers[0x4] & 0x20;
@@ -211,9 +215,11 @@ static void dmcStepSample(struct NES* nes) {
 	if (d->shifter & 1) {
 		if (d->output <= 125) {
 			d->output += 2;
+			nes->apu.mixDirty = true;
 		}
 	} else if (d->output >= 2) {
 		d->output -= 2;
+		nes->apu.mixDirty = true;
 	}
 	d->shifter >>= 1;
 	if (--d->bitsRemaining == 0) {
@@ -427,6 +433,7 @@ void apuCycle(struct NES* nes) {
 			if (p->timer == 0) {
 				p->timer = p->timerPeriod;
 				p->dutyStep = (p->dutyStep - 1) & 7;
+				apu->mixDirty = true;
 			} else {
 				p->timer--;
 			}
@@ -436,6 +443,7 @@ void apuCycle(struct NES* nes) {
 			n->timer = n->timerPeriod;
 			uint16_t feedback = (n->shift ^ (n->shift >> (n->mode ? 6 : 1))) & 1;
 			n->shift = (n->shift >> 1) | (feedback << 14);
+			apu->mixDirty = true;
 		} else {
 			n->timer--;
 		}
@@ -457,6 +465,7 @@ void apuCycle(struct NES* nes) {
 		}
 	}
 	if (d->enableDelay && --d->enableDelay == 0) {
+		apu->mixDirty = true;
 		d->enabled = d->enabledPending;
 		if (!d->enabled) {
 			d->bytesRemaining = 0;
@@ -468,6 +477,7 @@ void apuCycle(struct NES* nes) {
 		t->timer = t->timerPeriod;
 		if (t->lengthCounter && t->linearCounter && t->timerPeriod >= 2) {
 			t->step = (t->step + 1) & 31;
+			apu->mixDirty = true;
 		}
 	} else {
 		t->timer--;
@@ -475,7 +485,11 @@ void apuCycle(struct NES* nes) {
 
 	frameCounter(nes);
 	apu->putCycle = !apu->putCycle;
-	outputSample(nes, mix(nes));
+	if (apu->mixDirty || nes->board->audio) {
+		apu->mixDirty = false;
+		apu->lastMix = mix(nes);
+	}
+	outputSample(nes, apu->lastMix);
 }
 
 // A read while the CPU's address bus is on $4000-$401F also reaches the APU's registers, by the low
@@ -518,6 +532,7 @@ uint8_t apuConflictRead(struct NES* nes, uint8_t value, uint16_t address, bool d
 void apuWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Apu* apu = &nes->apu;
 	struct Dmc* d = &apu->dmc;
+	apu->mixDirty = true;
 	if (address == 0x4016) {
 		apu->strobing = value & 1;
 		if (!apu->strobing) {
@@ -700,6 +715,7 @@ void apuReset(struct NES* nes, bool hard) {
 	apu->strobing = apu->strobed = false;
 	apu->padShiftDelay[0] = apu->padShiftDelay[1] = 0;
 	apu->irqDetector = false;
+	apu->mixDirty = true;
 	if (hard) {
 		apu->putCycle = true;
 	}

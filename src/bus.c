@@ -56,6 +56,8 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		}
 		if (nes->board->write) {
 			nes->board->write(nes, address, value);
+			// The write may have armed the board's IRQ
+			nes->mapperQuietTicks = 0;
 		}
 	}
 }
