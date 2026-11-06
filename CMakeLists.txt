@@ -13,7 +13,10 @@ find_package(ZLIB REQUIRED)
 
 set(CORE_SOURCES
 	src/apu.c
-	src/boards.c
+	src/boards/basic.c
+	src/boards/discrete.c
+	src/boards/list.c
+	src/boards/mmc3.c
 	src/bus.c
 	src/cart.c
 	src/cpu.c
@@ -23,7 +26,7 @@ set(CORE_SOURCES
 	src/state.c
 )
 add_library(armnes STATIC ${CORE_SOURCES})
-target_include_directories(armnes PUBLIC src)
+target_include_directories(armnes PUBLIC src src/boards)
 target_link_libraries(armnes PUBLIC ZLIB::ZLIB)
 target_compile_options(armnes PRIVATE -O3)
 # The core's parts call each other every master clock: let the compiler inline across its files

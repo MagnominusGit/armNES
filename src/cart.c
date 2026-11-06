@@ -45,6 +45,8 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		if (!cart->chrSize) {
 			cart->chrSize = chrRam + chrNvram;
 			cart->chrRam = true;
+		} else if (chrRam + chrNvram) {
+			cart->vramSize = chrRam + chrNvram;
 		}
 		if (!cart->wramSize && cart->battery) {
 			cart->wramSize = 0x2000;
@@ -111,6 +113,13 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		cart->chrSize = chrAlloc;
 	}
 
+	// TQROM has 8 KB of CHR RAM beside its ROM even under an old header
+	if (!cart->vramSize && cart->mapper == 119) {
+		cart->vramSize = 0x2000;
+	}
+	if (cart->vramSize) {
+		cart->vram = calloc(1, cart->vramSize);
+	}
 	if (cart->wramSize < 0x2000 && !nes2) {
 		cart->wramSize = 0x2000;
 	}
@@ -124,5 +133,6 @@ void cartFree(struct NES* nes) {
 	free(nes->cart.prg);
 	free(nes->cart.chr);
 	free(nes->cart.wram);
-	nes->cart.prg = nes->cart.chr = nes->cart.wram = NULL;
+	free(nes->cart.vram);
+	nes->cart.prg = nes->cart.chr = nes->cart.wram = nes->cart.vram = NULL;
 }

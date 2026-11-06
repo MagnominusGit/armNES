@@ -84,6 +84,21 @@ void nesMapChr(struct NES* nes, uint16_t address, uint32_t size, int bank) {
 	}
 }
 
+void nesMapVram(struct NES* nes, uint16_t address, uint32_t size, int bank) {
+	struct Cart* cart = &nes->cart;
+	if (!cart->vram) {
+		nesMapChr(nes, address, size, bank);
+		return;
+	}
+	bank = wrapBank(bank, bankCount(cart->vramSize, size));
+	uint32_t offset = bank * size;
+	for (uint32_t i = 0; i < size; i += 0x400) {
+		int page = (address + i) >> 10;
+		nes->chrPages[page] = cart->vram + (offset + i) % cart->vramSize;
+		nes->chrWritable[page] = true;
+	}
+}
+
 void nesSetNametable(struct NES* nes, int index, uint8_t* page) {
 	nes->chrPages[8 + index] = page;
 	nes->chrPages[12 + index] = page;

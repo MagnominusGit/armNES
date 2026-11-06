@@ -14,7 +14,7 @@ struct StateHeader {
 	uint32_t magic, version, size, prgCrc;
 };
 
-enum Buffer { BUF_NONE, BUF_PRG, BUF_CHR, BUF_WRAM, BUF_NT, BUF_EXTRA_NT, BUF_RAM };
+enum Buffer { BUF_NONE, BUF_PRG, BUF_CHR, BUF_WRAM, BUF_NT, BUF_EXTRA_NT, BUF_RAM, BUF_VRAM };
 
 static uint32_t encode(struct NES* nes, const uint8_t* p) {
 	struct {
@@ -28,6 +28,7 @@ static uint32_t encode(struct NES* nes, const uint8_t* p) {
 		{ nes->ppu.ntRam, sizeof(nes->ppu.ntRam) },
 		{ nes->cart.extraNt, sizeof(nes->cart.extraNt) },
 		{ nes->ram, sizeof(nes->ram) },
+		{ nes->cart.vram, nes->cart.vramSize },
 	};
 	if (!p) {
 		return 0;
@@ -55,6 +56,8 @@ static uint8_t* decode(struct NES* nes, uint32_t tag) {
 		return nes->cart.extraNt + offset;
 	case BUF_RAM:
 		return nes->ram + offset;
+	case BUF_VRAM:
+		return nes->cart.vram + offset;
 	default:
 		return NULL;
 	}
@@ -66,7 +69,7 @@ static size_t wramSize(const struct NES* nes) {
 
 size_t nesStateSize(const struct NES* nes) {
 	return sizeof(struct StateHeader) + sizeof(struct NES) + 32 * sizeof(uint32_t) + wramSize(nes) +
-		(nes->cart.chrRam ? nes->cart.chrSize : 0);
+		(nes->cart.chrRam ? nes->cart.chrSize : 0) + nes->cart.vramSize;
 }
 
 bool nesSaveState(struct NES* nes, void* data, size_t size) {
@@ -90,6 +93,10 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	out += wramSize(nes);
 	if (nes->cart.chrRam) {
 		memcpy(out, nes->cart.chr, nes->cart.chrSize);
+		out += nes->cart.chrSize;
+	}
+	if (nes->cart.vram) {
+		memcpy(out, nes->cart.vram, nes->cart.vramSize);
 	}
 	return true;
 }
@@ -121,6 +128,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->cart.prg = cart.prg;
 	nes->cart.chr = cart.chr;
 	nes->cart.wram = cart.wram;
+	nes->cart.vram = cart.vram;
 	nes->board = board;
 	nes->frameBuffer = frameBuffer;
 	nes->audioOut = audioOut;
@@ -141,6 +149,10 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	in += wramSize(nes);
 	if (nes->cart.chrRam) {
 		memcpy(nes->cart.chr, in, nes->cart.chrSize);
+		in += nes->cart.chrSize;
+	}
+	if (nes->cart.vram) {
+		memcpy(nes->cart.vram, in, nes->cart.vramSize);
 	}
 	return true;
 }

@@ -154,6 +154,14 @@ int main(int argc, char** argv) {
 		}
 	}
 	uint32_t hash = crc32(0, (uint8_t*) nes.frameBuffer, NES_WIDTH * NES_HEIGHT * 2);
-	printf("FRAME %08x pc=%04x%s\n", hash, nes.cpu.pc, nes.cpu.jammed ? " jammed" : "");
+	bool seen[512] = { false };
+	int colors = 0;
+	for (int i = 0; i < NES_WIDTH * NES_HEIGHT; i++) {
+		if (!seen[nes.frameBuffer[i] & 0x1FF]) {
+			seen[nes.frameBuffer[i] & 0x1FF] = true;
+			colors++;
+		}
+	}
+	printf("FRAME %08x pc=%04x colors=%d%s\n", hash, nes.cpu.pc, colors, nes.cpu.jammed ? " jammed" : "");
 	return 4;
 }

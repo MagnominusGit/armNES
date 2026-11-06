@@ -219,6 +219,8 @@ struct Board {
 	// Restore pointers from registers after a state load
 	void (*sync)(struct NES*);
 	size_t stateSize;
+	// A variant's description, for boards that share their code
+	const void* data;
 };
 
 struct Cart {
@@ -227,6 +229,9 @@ struct Cart {
 	uint8_t* chr;
 	uint32_t chrSize;
 	bool chrRam;
+	// CHR RAM beside CHR ROM, on boards that have both
+	uint8_t* vram;
+	uint32_t vramSize;
 	uint8_t* wram;
 	uint32_t wramSize;
 	uint32_t batterySize;
@@ -327,6 +332,7 @@ void nesMapPrg(struct NES*, uint16_t address, uint32_t size, int bank);
 void nesMapWram(struct NES*, uint16_t address, uint32_t size, int bank, bool writable);
 void nesUnmapPrg(struct NES*, uint16_t address, uint32_t size);
 void nesMapChr(struct NES*, uint16_t address, uint32_t size, int bank);
+void nesMapVram(struct NES*, uint16_t address, uint32_t size, int bank);
 void nesSetIrq(struct NES*, int source, bool on);
 
 // cpu.c
