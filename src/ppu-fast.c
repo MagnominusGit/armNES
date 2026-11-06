@@ -510,6 +510,96 @@ static void buildSpread(void) {
 	}
 }
 
+// Eight pixels from their background indices and sprite pixels (or none): palette entries 0, 4,
+// 8 and 12 show the backdrop, sprites win where opaque unless behind an opaque background
+static inline void drawTileScalar(uint16_t* out, uint64_t pixels, const uint8_t* sprites, const uint8_t* palette,
+	uint8_t grayMask, uint16_t emphasis) {
+	for (int i = 0; i < 8; i++) {
+		uint8_t bg = pixels >> (i * 8);
+		uint8_t index = bg & 3 ? bg : 0;
+		if (sprites) {
+			uint8_t sprite = sprites[i];
+			if ((sprite & SPRITE_OPAQUE) && (!(bg & 3) || !(sprite & SPRITE_BEHIND))) {
+				index = 0x10 | (sprite & 0x0F);
+			}
+		}
+		out[i] = (palette[index] & grayMask) | emphasis;
+	}
+}
+
+#if defined(__aarch64__) || defined(__ARM_NEON)
+#include <arm_neon.h>
+
+static inline uint8x8_t lookup32(const uint8_t* palette, uint8x8_t index) {
+#ifdef __aarch64__
+	uint8x16x2_t table = { { vld1q_u8(palette), vld1q_u8(palette + 16) } };
+	return vqtbl2_u8(table, index);
+#else
+	uint8x8x4_t table = { { vld1_u8(palette), vld1_u8(palette + 8), vld1_u8(palette + 16), vld1_u8(palette + 24) } };
+	return vtbl4_u8(table, index);
+#endif
+}
+
+static void drawTile(uint16_t* out, uint64_t pixels, const uint8_t* sprites, const uint8_t* palette,
+	uint8_t grayMask, uint16_t emphasis) {
+	uint8x8_t bg = vcreate_u8(pixels);
+	uint8x8_t bgOpaque = vtst_u8(bg, vdup_n_u8(3));
+	uint8x8_t index = vand_u8(bg, bgOpaque);
+	if (sprites) {
+		uint8x8_t sprite = vld1_u8(sprites);
+		uint8x8_t opaque = vtst_u8(sprite, vdup_n_u8(SPRITE_OPAQUE));
+		uint8x8_t behind = vtst_u8(sprite, vdup_n_u8(SPRITE_BEHIND));
+		uint8x8_t show = vand_u8(opaque, vorr_u8(vmvn_u8(bgOpaque), vmvn_u8(behind)));
+		uint8x8_t spriteIndex = vorr_u8(vand_u8(sprite, vdup_n_u8(0x0F)), vdup_n_u8(0x10));
+		index = vbsl_u8(show, spriteIndex, index);
+	}
+	uint8x8_t color = vand_u8(lookup32(palette, index), vdup_n_u8(grayMask));
+	vst1q_u16(out, vorrq_u16(vmovl_u8(color), vdupq_n_u16(emphasis)));
+}
+#elif defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+
+__attribute__((target("sse4.1"))) static void drawTileSse(uint16_t* out, uint64_t pixels, const uint8_t* sprites,
+	const uint8_t* palette, uint8_t grayMask, uint16_t emphasis) {
+	__m128i zero = _mm_setzero_si128();
+	__m128i bg = _mm_cvtsi64_si128((long long) pixels);
+	__m128i bgClear = _mm_cmpeq_epi8(_mm_and_si128(bg, _mm_set1_epi8(3)), zero);
+	__m128i index = _mm_andnot_si128(bgClear, bg);
+	if (sprites) {
+		uint64_t raw;
+		memcpy(&raw, sprites, 8);
+		__m128i sprite = _mm_cvtsi64_si128((long long) raw);
+		__m128i opaque = _mm_cmpeq_epi8(_mm_and_si128(sprite, _mm_set1_epi8(SPRITE_OPAQUE)), _mm_set1_epi8(SPRITE_OPAQUE));
+		__m128i front = _mm_cmpeq_epi8(_mm_and_si128(sprite, _mm_set1_epi8(SPRITE_BEHIND)), zero);
+		__m128i show = _mm_and_si128(opaque, _mm_or_si128(bgClear, front));
+		__m128i spriteIndex = _mm_or_si128(_mm_and_si128(sprite, _mm_set1_epi8(0x0F)), _mm_set1_epi8(0x10));
+		index = _mm_blendv_epi8(index, spriteIndex, show);
+	}
+	// Two 16-entry lookups, the upper half chosen by bit 4
+	__m128i low = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*) palette), _mm_and_si128(index, _mm_set1_epi8(0x0F)));
+	__m128i high =
+		_mm_shuffle_epi8(_mm_loadu_si128((const __m128i*) (palette + 16)), _mm_and_si128(index, _mm_set1_epi8(0x0F)));
+	__m128i upper = _mm_cmpeq_epi8(_mm_and_si128(index, _mm_set1_epi8(0x10)), _mm_set1_epi8(0x10));
+	__m128i color = _mm_and_si128(_mm_blendv_epi8(low, high, upper), _mm_set1_epi8(grayMask));
+	_mm_storeu_si128((__m128i*) out, _mm_or_si128(_mm_cvtepu8_epi16(color), _mm_set1_epi16(emphasis)));
+}
+
+static void drawTile(uint16_t* out, uint64_t pixels, const uint8_t* sprites, const uint8_t* palette,
+	uint8_t grayMask, uint16_t emphasis) {
+	static int sse = -1;
+	if (sse < 0) {
+		sse = __builtin_cpu_supports("sse4.1");
+	}
+	if (sse) {
+		drawTileSse(out, pixels, sprites, palette, grayMask, emphasis);
+	} else {
+		drawTileScalar(out, pixels, sprites, palette, grayMask, emphasis);
+	}
+}
+#else
+#define drawTile drawTileScalar
+#endif
+
 // Eight dots of a visible line with nothing else going on: a whole tile
 static void renderTile(struct NES* nes) {
 	struct Ppu* ppu = &nes->ppu;
@@ -525,33 +615,26 @@ static void renderTile(struct NES* nes) {
 		uint64_t opaque = ((color | color >> 1) & 0x0101010101010101ull) * 0xFF;
 		pixels = color | (palette & opaque);
 	}
+	const uint8_t* sprites = NULL;
 	if (ppu->showSprites && (x >= 8 || ppu->showSpritesLeft) && ppu->lineHasSprites) {
-		for (int i = 0; i < 8; i++) {
-			uint8_t sprite = ppu->lineSprites[x + i];
-			uint8_t bg = pixels >> (i * 8);
-			if ((sprite & SPRITE_ZERO) && (bg & 3) && ppu->showBg && x + i != 255 && !ppu->hit && !ppu->pendingHit) {
-				// The flag shows three dots after the pixel's; this tile has run 7 - i of them
-				int delay = 3 - (7 - i);
-				if (delay <= 0) {
-					ppu->hit = true;
-				} else {
-					ppu->pendingHit = true;
-					ppu->hitDelay = delay;
+		sprites = &ppu->lineSprites[x];
+		if (ppu->lineHasZero && !ppu->hit && !ppu->pendingHit && ppu->showBg) {
+			for (int i = 0; i < 8; i++) {
+				if ((sprites[i] & SPRITE_ZERO) && ((pixels >> (i * 8)) & 3) && x + i != 255) {
+					// The flag shows three dots after the pixel's; this tile has run 7 - i of them
+					int delay = 3 - (7 - i);
+					if (delay <= 0) {
+						ppu->hit = true;
+					} else {
+						ppu->pendingHit = true;
+						ppu->hitDelay = delay;
+					}
+					break;
 				}
 			}
-			if ((sprite & SPRITE_OPAQUE) && (!(bg & 3) || !(sprite & SPRITE_BEHIND))) {
-				uint8_t index = 0x10 | (sprite & 0x0F);
-				out[i] = (ppu->palette[index] & grayMask) | emphasis;
-			} else {
-				out[i] = (ppu->palette[bg & 3 ? bg : 0] & grayMask) | emphasis;
-			}
-		}
-	} else {
-		for (int i = 0; i < 8; i++) {
-			uint8_t bg = pixels >> (i * 8);
-			out[i] = (ppu->palette[bg & 3 ? bg : 0] & grayMask) | emphasis;
 		}
 	}
+	drawTile(out, pixels, sprites, ppu->palette, grayMask, emphasis);
 	ppu->bgL <<= 8;
 	ppu->bgH <<= 8;
 	ppu->atL <<= 8;
