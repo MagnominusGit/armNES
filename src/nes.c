@@ -178,6 +178,9 @@ void nesReset(struct NES* nes, bool hard) {
 	if (hard) {
 		nes->cpuClock = 0;
 		nes->ppuClock = 0;
+		nes->ppuCpuClock = 0;
+		nes->ppuLag = 0;
+		nes->ppuQuietTicks = 0;
 	}
 	if (hard) {
 		nesMapChr(nes, 0, 0x2000, 0);
@@ -187,6 +190,7 @@ void nesReset(struct NES* nes, bool hard) {
 		}
 	}
 	nes->board->reset(nes, hard);
+	nes->ppuEveryCycle = nes->watchPpuBus || nes->board->m2Rise;
 	cpuReset(nes, hard);
 }
 
@@ -195,5 +199,9 @@ void nesRunFrame(struct NES* nes) {
 	nes->audioCount = 0;
 	while (!nes->frameDone) {
 		cpuStep(nes);
+		// The frame ends on the instruction during which VBL starts
+		if (nes->ppuLag >= nes->ppuQuietTicks) {
+			nesPpuSync(nes);
+		}
 	}
 }

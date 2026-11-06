@@ -99,6 +99,18 @@ struct Ppu {
 	uint8_t corruptIndex;
 
 	uint8_t dotColor, prev1, prev2, prev3;
+
+	// The fast model (ppu-fast.c): tile latches, and the next line's sprites as pixels
+	uint8_t ntLatch, atLatch, loLatch, hiLatch;
+	uint8_t lineSprites[256];
+	bool lineHasSprites, lineHasZero;
+	uint8_t nextCount;
+	bool nextZero;
+	uint8_t hitDelay;
+	// $2007 reads and writes going through the PPU: how many dots in (0 for none) and the address
+	uint8_t vramReadStep, vramWriteStep;
+	uint16_t vramReadAddress, vramWriteAddress;
+
 	uint8_t palette[32];
 	uint8_t ntRam[0x800];
 };
@@ -232,9 +244,17 @@ struct NES {
 	uint8_t ram[0x800];
 	enum Region region;
 	uint64_t masterClock;
-	// Master clock phases: the CPU's (cpuPeriod long) and the PPU's (ppuPeriod long)
-	int cpuClock, ppuClock;
+	// Master clock phases: the CPU's (cpuPeriod long) and the PPU's (ppuPeriod long). The PPU runs
+	// behind the CPU by ppuLag master clocks and catches up when something could observe it, with
+	// ppuCpuClock the CPU's phase at the clock the PPU is on.
+	int cpuClock, ppuClock, ppuCpuClock;
 	int cpuPeriod, ppuPeriod;
+	int ppuLag, ppuQuietTicks;
+	bool ppuEveryCycle;
+	// Every master clock in order, as the reference for the catch-up (tests/selfdiff.c)
+	bool exactTiming;
+	// The half-dot PPU (ppu.c) instead of the fast one (ppu-fast.c)
+	bool exactPpu;
 
 	// $4020-$FFFF in 4 KB pages
 	uint8_t* prgPages[16];
@@ -282,6 +302,8 @@ void nesSetIrq(struct NES*, int source, bool on);
 
 // cpu.c
 void nesTick(struct NES*);
+void nesPpuSync(struct NES*);
+void nesPpuSyncAhead(struct NES*, int clocks);
 void cpuReset(struct NES*, bool hard);
 void cpuStep(struct NES*);
 uint8_t cpuPeek(struct NES*, uint16_t address);
@@ -297,6 +319,12 @@ void ppuHalfStep(struct NES*);
 uint8_t ppuReadRegister(struct NES*, uint16_t address);
 void ppuWriteRegister(struct NES*, uint16_t address, uint8_t value, uint8_t busBefore);
 bool ppuNmiOutput(const struct NES*);
+int ppuQuietDots(const struct NES*);
+
+// ppu-fast.c
+void fastRun(struct NES*, int dots);
+uint8_t fastReadRegister(struct NES*, uint16_t address);
+void fastWriteRegister(struct NES*, uint16_t address, uint8_t value, uint8_t busBefore);
 uint8_t ppuBusRead(struct NES*, uint16_t address);
 
 // apu.c

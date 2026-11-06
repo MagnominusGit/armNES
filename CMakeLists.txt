@@ -19,6 +19,7 @@ set(CORE_SOURCES
 	src/cpu.c
 	src/nes.c
 	src/ppu.c
+	src/ppu-fast.c
 )
 add_library(armnes STATIC ${CORE_SOURCES})
 target_include_directories(armnes PUBLIC src)
@@ -34,3 +35,7 @@ endif()
 # Headless runner for test ROMs and library sweeps
 add_executable(nesrun tests/nesrun.c)
 target_link_libraries(nesrun armnes m)
+
+# Checks the PPU's catch-up and fast paths against clocking it every master clock
+add_executable(selfdiff tests/selfdiff.c)
+target_link_libraries(selfdiff armnes)

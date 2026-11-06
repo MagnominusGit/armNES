@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
 	static int16_t audio[8192];
 	nes.audioOut = audio;
 	nes.audioCapacity = 8192;
+	nes.exactPpu = getenv("NESRUN_EXACT") != NULL;
 	if (!nesLoad(&nes, data, size)) {
 		printf("UNSUPPORTED mapper %d.%d\n", nes.cart.mapper, nes.cart.submapper);
 		return 3;

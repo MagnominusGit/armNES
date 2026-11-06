@@ -9,11 +9,64 @@
 
 enum { FLAG_C = 1, FLAG_Z = 2, FLAG_I = 4, FLAG_D = 8, FLAG_B = 16, FLAG_U = 32, FLAG_V = 64, FLAG_N = 128 };
 
-// One master clock besides the CPU's own access, in TriCNES's order: the NMI line at clock 4, the
-// IRQ line at 7 (M2 going low), the PPU's dot and half dot, then the APU in the CPU's slot.
+// Runs the PPU through the master clocks the CPU has passed.
+static void ppuCatchUp(struct NES* nes) {
+	int lag = nes->ppuLag;
+	if (lag <= 0) {
+		return;
+	}
+	nes->ppuLag = 0;
+	if (!nes->exactPpu) {
+		// Whole dots only: the fast PPU has no half steps
+		int c = nes->ppuClock, period = nes->ppuPeriod;
+		int dots = (lag + c - 1) / period;
+		nes->ppuClock = dots ? (lag + c - 1) % period + 1 : c + lag;
+		nes->ppuCpuClock = (nes->ppuCpuClock + lag) % nes->cpuPeriod;
+		fastRun(nes, dots);
+		nes->ppuQuietTicks = ppuQuietDots(nes) * period;
+		return;
+	}
+	int clock = nes->ppuClock, cpuClock = nes->ppuCpuClock;
+	for (; lag; lag--) {
+		nes->ppuCpuClock = cpuClock;
+		if (clock == nes->ppuPeriod) {
+			clock = nes->ppuClock = 0;
+			ppuStep(nes);
+		}
+		if (clock == 2) {
+			nes->ppuClock = 2;
+			ppuHalfStep(nes);
+		}
+		clock++;
+		if (++cpuClock == nes->cpuPeriod) {
+			cpuClock = 0;
+		}
+	}
+	nes->ppuClock = clock;
+	nes->ppuCpuClock = cpuClock;
+	nes->ppuQuietTicks = ppuQuietDots(nes) * nes->ppuPeriod;
+}
+
+void nesPpuSync(struct NES* nes) {
+	ppuCatchUp(nes);
+}
+
+// Runs the PPU a few master clocks past the CPU, to where a register access lands
+void nesPpuSyncAhead(struct NES* nes, int clocks) {
+	nes->ppuLag += clocks;
+	ppuCatchUp(nes);
+	nes->ppuLag = -clocks;
+}
+
+// One master clock, in TriCNES's order: the NMI line at clock 4, the IRQ line at 7 (M2 going low),
+// the PPU's dot and half dot, then the APU in the CPU's slot. The PPU's part is left for
+// ppuCatchUp() unless something here needs it now.
 static inline __attribute__((always_inline)) void tick(struct NES* nes) {
 	struct Cpu* cpu = &nes->cpu;
 	if (nes->cpuClock == 4) {
+		if (nes->ppuLag >= nes->ppuQuietTicks || nes->ppuEveryCycle) {
+			ppuCatchUp(nes);
+		}
 		// The PPU raises the NMI line; it only drops again on an opcode fetch
 		bool out = ppuNmiOutput(nes);
 		cpu->nmiLine |= out;
@@ -21,29 +74,30 @@ static inline __attribute__((always_inline)) void tick(struct NES* nes) {
 			cpu->nmiLine = false;
 		}
 	} else if (nes->cpuClock == 7) {
+		if (nes->ppuEveryCycle) {
+			ppuCatchUp(nes);
+		}
 		apuLatchIrq(nes);
 		cpu->irqSampled = cpu->irqLine != 0;
 		if (nes->board->m2Rise) {
 			nes->board->m2Rise(nes);
 		}
 	}
-	if (nes->ppuClock == nes->ppuPeriod) {
-		nes->ppuClock = 0;
-		ppuStep(nes);
-	}
-	if (nes->ppuClock == 2) {
-		ppuHalfStep(nes);
+	nes->ppuLag++;
+	if (nes->exactTiming) {
+		ppuCatchUp(nes);
 	}
 	if (nes->cpuClock == 0) {
 		apuCycle(nes);
 	}
-	nes->ppuClock++;
 	nes->cpuClock++;
 	nes->masterClock++;
 }
 
+// A clock inside a register access: the PPU keeps up
 void nesTick(struct NES* nes) {
 	tick(nes);
+	ppuCatchUp(nes);
 }
 
 static inline void startCycle(struct NES* nes) {

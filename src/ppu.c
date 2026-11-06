@@ -819,7 +819,7 @@ void ppuStep(struct NES* nes) {
 		}
 	}
 
-	if ((nes->cpuClock & 3) != 3) {
+	if ((nes->ppuCpuClock & 3) != 3) {
 		ppu->showBgDelayed = ppu->showBg;
 		ppu->showSpritesDelayed = ppu->showSprites;
 	}
@@ -841,7 +841,7 @@ void ppuStep(struct NES* nes) {
 			ppu->oam2Reset = 3;
 		}
 	}
-	if ((nes->cpuClock & 3) == 3) {
+	if ((nes->ppuCpuClock & 3) == 3) {
 		ppu->showBgDelayed = ppu->showBg;
 		ppu->showSpritesDelayed = ppu->showSprites;
 	}
@@ -945,6 +945,9 @@ static uint8_t readOam(struct NES* nes) {
 }
 
 uint8_t ppuReadRegister(struct NES* nes, uint16_t address) {
+	if (!nes->exactPpu) {
+		return fastReadRegister(nes, address);
+	}
 	struct Ppu* ppu = &nes->ppu;
 	uint8_t value;
 	switch (address & 7) {
@@ -983,6 +986,10 @@ uint8_t ppuReadRegister(struct NES* nes, uint16_t address) {
 }
 
 void ppuWriteRegister(struct NES* nes, uint16_t address, uint8_t value, uint8_t busBefore) {
+	if (!nes->exactPpu) {
+		fastWriteRegister(nes, address, value, busBefore);
+		return;
+	}
 	struct Ppu* ppu = &nes->ppu;
 	int phase = nes->ppuClock & 3;
 	setBus(ppu, value, 0xFF);
@@ -1081,6 +1088,20 @@ void ppuWriteRegister(struct NES* nes, uint16_t address, uint8_t value, uint8_t 
 		ppu->wrSR = true;
 		break;
 	}
+}
+
+// Dots from here before the VBL flag can change on its own (none while a change is under way)
+int ppuQuietDots(const struct NES* nes) {
+	const struct Ppu* ppu = &nes->ppu;
+	if (ppu->read2002 || ppu->vset || ppu->pendingVblank) {
+		return 0;
+	}
+	int lines = preLine(nes) + 1;
+	int here = ppu->scanline * 341 + ppu->dot;
+	int toVbl = (vblankLine(nes) * 341 - here + lines * 341) % (lines * 341);
+	int toPre = (preLine(nes) * 341 - here + lines * 341) % (lines * 341);
+	int quiet = toVbl < toPre ? toVbl : toPre;
+	return quiet > 4 ? quiet - 4 : 0;
 }
 
 bool ppuNmiOutput(const struct NES* nes) {

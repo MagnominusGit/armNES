@@ -12,8 +12,10 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 	if (address < 0x2000) {
 		value = nes->ram[address & 0x7FF];
 	} else if (address < 0x4000) {
+		nesPpuSync(nes);
 		value = ppuReadRegister(nes, address);
 	} else if (nes->readHooks & (1 << (address >> 12))) {
+		nesPpuSync(nes);
 		value = nes->board->read(nes, address);
 	} else {
 		uint8_t* page = address >= 0x4020 ? nes->prgPages[address >> 12] : NULL;
@@ -40,11 +42,15 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address < 0x2000) {
 		nes->ram[address & 0x7FF] = value;
 	} else if (address < 0x4000) {
+		nesPpuSync(nes);
 		ppuWriteRegister(nes, address, value, before);
 	} else if (address < 0x4020) {
 		apuWrite(nes, address, value);
 	} else {
 		int page = address >> 12;
+		if (nes->board->write) {
+			nesPpuSync(nes);
+		}
 		if (nes->prgWritable[page] && nes->prgPages[page]) {
 			nes->prgPages[page][address & 0xFFF] = value;
 		}
