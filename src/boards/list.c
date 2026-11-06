@@ -98,7 +98,9 @@ const struct Board* boardFind(int mapper, int submapper) {
 		return &boardNamco108;
 	case 210:
 		return &boardNamco175;
-	default:
-		return discreteFind(mapper, submapper);
+	default: {
+		const struct Board* board = discreteFind(mapper, submapper);
+		return board ? board : fceuFind(mapper);
+	}
 	}
 }

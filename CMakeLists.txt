@@ -32,8 +32,12 @@ set(CORE_SOURCES
 	src/ppu-fast.c
 	src/state.c
 )
-add_library(armnes STATIC ${CORE_SOURCES})
+# FCEUmm's board files, for the mappers without a board of armNES's own
+file(GLOB FCEU_BOARDS src/fceu/boards/*.c)
+set_source_files_properties(${FCEU_BOARDS} PROPERTIES COMPILE_OPTIONS "-w")
+add_library(armnes STATIC ${CORE_SOURCES} src/fceu/bridge.c ${FCEU_BOARDS})
 target_include_directories(armnes PUBLIC src src/boards)
+target_include_directories(armnes PRIVATE src/fceu src/fceu/boards armulators/libretro)
 target_link_libraries(armnes PUBLIC ZLIB::ZLIB m)
 target_compile_options(armnes PRIVATE -O3)
 set_source_files_properties(src/sound/emu2413.c PROPERTIES COMPILE_OPTIONS "-w")

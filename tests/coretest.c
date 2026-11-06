@@ -28,7 +28,30 @@ static bool environment(unsigned cmd, void* data) {
 	}
 }
 
+static unsigned frame;
+
+// CORETEST_PPM=<file>: the picture at frame 599, for comparing cores by eye
+static void dumpFrame(const void* data, unsigned width, unsigned height, size_t pitch) {
+	const char* path = getenv("CORETEST_PPM");
+	FILE* f = path ? fopen(path, "wb") : NULL;
+	if (!f) {
+		return;
+	}
+	fprintf(f, "P6\n%u %u\n255\n", width, height);
+	for (unsigned y = 0; y < height; y++) {
+		const uint16_t* row = (const uint16_t*) ((const uint8_t*) data + y * pitch);
+		for (unsigned x = 0; x < width; x++) {
+			uint8_t rgb[3] = { (row[x] >> 11) << 3, ((row[x] >> 5) & 0x3F) << 2, (row[x] & 0x1F) << 3 };
+			fwrite(rgb, 1, 3, f);
+		}
+	}
+	fclose(f);
+}
+
 static void video(const void* data, unsigned width, unsigned height, size_t pitch) {
+	if (frame == 599 && data) {
+		dumpFrame(data, width, height, pitch);
+	}
 	frameWidth = width;
 	frameHeight = height;
 	for (unsigned y = 0; y < height; y++) {
@@ -49,8 +72,6 @@ static void audioSample(int16_t l, int16_t r) {
 
 static void inputPoll(void) {
 }
-
-static unsigned frame;
 
 static int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) {
 	(void) device;

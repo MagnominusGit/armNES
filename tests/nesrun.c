@@ -78,6 +78,13 @@ int main(int argc, char** argv) {
 		printf("UNSUPPORTED mapper %d.%d\n", nes.cart.mapper, nes.cart.submapper);
 		return 3;
 	}
+	// NESRUN_INFO: the header as read, then stop
+	if (getenv("NESRUN_INFO")) {
+		printf("INFO %d.%d mirror=%d battery=%d prg=%u chr=%u%s wram=%u vram=%u region=%d\n", nes.cart.mapper, nes.cart.submapper,
+			nes.cart.mirroring, nes.cart.battery, nes.cart.prgSize, nes.cart.chrSize, nes.cart.chrRam ? "ram" : "",
+			nes.cart.wramSize, nes.cart.vramSize, nes.cart.region);
+		return 0;
+	}
 	int resetAt = -1;
 	bool seenRunning = false;
 	// NESRUN_PRESS="frame:mask[:frames],...": hold pad 1 buttons (bit 0 A ... bit 7 Right)

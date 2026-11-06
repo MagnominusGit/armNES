@@ -67,9 +67,13 @@ static size_t wramSize(const struct NES* nes) {
 	return nes->cart.wramSize ? nes->cart.wramSize : 0x2000;
 }
 
+static size_t extraSize(const struct NES* nes) {
+	return nes->board->saveExtra ? nes->board->saveExtra((struct NES*) nes, NULL) : 0;
+}
+
 size_t nesStateSize(const struct NES* nes) {
 	return sizeof(struct StateHeader) + sizeof(struct NES) + 32 * sizeof(uint32_t) + wramSize(nes) +
-		(nes->cart.chrRam ? nes->cart.chrSize : 0) + nes->cart.vramSize;
+		(nes->cart.chrRam ? nes->cart.chrSize : 0) + nes->cart.vramSize + extraSize(nes);
 }
 
 bool nesSaveState(struct NES* nes, void* data, size_t size) {
@@ -97,6 +101,10 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	}
 	if (nes->cart.vram) {
 		memcpy(out, nes->cart.vram, nes->cart.vramSize);
+		out += nes->cart.vramSize;
+	}
+	if (nes->board->saveExtra) {
+		nes->board->saveExtra(nes, out);
 	}
 	return true;
 }
@@ -129,6 +137,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->cart.chr = cart.chr;
 	nes->cart.wram = cart.wram;
 	nes->cart.vram = cart.vram;
+	nes->cart.misc = cart.misc;
 	nes->board = board;
 	nes->frameBuffer = frameBuffer;
 	nes->audioOut = audioOut;
@@ -153,6 +162,10 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	}
 	if (nes->cart.vram) {
 		memcpy(nes->cart.vram, in, nes->cart.vramSize);
+		in += nes->cart.vramSize;
+	}
+	if (nes->board->loadExtra) {
+		nes->board->loadExtra(nes, in);
 	}
 	return true;
 }

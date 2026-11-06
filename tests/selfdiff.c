@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Magnominus
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
-#include "nes.h"
+#include "board.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,6 +91,11 @@ int main(int argc, char** argv) {
 	b.exactTiming = getenv("SELFDIFF_FAST_EXACT_TIMING") != NULL;
 	if (!nesLoad(&a, data, size) || !nesLoad(&b, data, size)) {
 		printf("UNSUPPORTED\n");
+		return 3;
+	}
+	// FCEUmm's boards keep one state between them both
+	if (a.board == &boardFceu || a.board == &boardFceuCycle) {
+		printf("SKIPPED FCEUmm board\n");
 		return 3;
 	}
 	// A fixed button script: Start, then A and directions in turn

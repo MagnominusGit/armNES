@@ -223,6 +223,9 @@ struct Board {
 	// Restore pointers from registers after a state load
 	void (*sync)(struct NES*);
 	size_t stateSize;
+	// State kept outside boardState: written to out, or with out NULL only measured
+	size_t (*saveExtra)(struct NES*, uint8_t* out);
+	void (*loadExtra)(struct NES*, const uint8_t* in);
 	// A variant's description, for boards that share their code
 	const void* data;
 };
@@ -238,12 +241,18 @@ struct Cart {
 	uint32_t vramSize;
 	uint8_t* wram;
 	uint32_t wramSize;
+	// NES 2.0's miscellaneous ROM, such as a protection chip's program
+	uint8_t* misc;
+	uint32_t miscSize;
 	uint32_t batterySize;
 	bool battery;
 	int mapper, submapper;
+	// An NES 2.0 header, or sizes and submapper from the list of fixed headers
+	bool nes2;
 	enum Mirroring mirroring;
 	enum Region region;
 	uint32_t prgCrc;
+	uint8_t header[16];
 	uint8_t trainer[512];
 	bool hasTrainer;
 	uint8_t extraNt[0x800];

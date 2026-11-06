@@ -116,4 +116,9 @@ BOARD(boardMmc5);
 // discrete.c
 const struct Board* discreteFind(int mapper, int submapper);
 
+// fceu/bridge.c: FCEUmm's boards, for the rest
+BOARD(boardFceu);
+BOARD(boardFceuCycle);
+const struct Board* fceuFind(int mapper);
+
 #endif
