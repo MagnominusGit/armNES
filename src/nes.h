@@ -422,6 +422,7 @@ int ppuQuietDots(const struct NES*);
 void fastRun(struct NES*, int dots);
 uint8_t fastReadRegister(struct NES*, uint16_t address);
 bool fastStatusAhead(struct NES*, uint8_t* out);
+bool fastOamWriteAhead(struct NES*, uint8_t value);
 void fastWriteRegister(struct NES*, uint16_t address, uint8_t value, uint8_t busBefore);
 uint8_t ppuBusRead(struct NES*, uint16_t address);
 

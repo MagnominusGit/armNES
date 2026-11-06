@@ -1002,6 +1002,23 @@ bool fastStatusAhead(struct NES* nes, uint8_t* out) {
 	return true;
 }
 
+// $2004 with the PPU behind, when it's in vblank (or not rendering) all the way to the write: the
+// byte goes into OAM without the PPU catching up
+bool fastOamWriteAhead(struct NES* nes, uint8_t value) {
+	struct Ppu* ppu = &nes->ppu;
+	int ticks = nes->ppuLag;
+	if (ticks < 0 || ticks + 4 * nes->ppuPeriod >= nes->ppuQuietTicks || !quiet(nes) ||
+		(rendering(ppu) && (ppu->scanline <= 240 || ppu->scanline == preLine(nes)))) {
+		return false;
+	}
+	setBusAt(ppu, value, 0xFF, ppu->dots + ticks / nes->ppuPeriod);
+	if ((ppu->oamAddr & 3) == 2) {
+		value &= 0xE3;
+	}
+	ppu->oam[ppu->oamAddr++] = value;
+	return true;
+}
+
 uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 	struct Ppu* ppu = &nes->ppu;
 	uint8_t value;

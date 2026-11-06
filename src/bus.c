@@ -50,8 +50,10 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address < 0x2000) {
 		nes->ram[address & 0x7FF] = value;
 	} else if (address < 0x4000) {
-		nesPpuSync(nes);
-		ppuWriteRegister(nes, address, value, before);
+		if ((address & 7) != 4 || nes->exactPpu || !fastOamWriteAhead(nes, value)) {
+			nesPpuSync(nes);
+			ppuWriteRegister(nes, address, value, before);
+		}
 	} else if (address < 0x4020) {
 		nesApuSync(nes);
 		apuWrite(nes, address, value);
