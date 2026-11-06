@@ -12,8 +12,10 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 	if (address < 0x2000) {
 		value = nes->ram[address & 0x7FF];
 	} else if (address < 0x4000) {
-		nesPpuSync(nes);
-		value = ppuReadRegister(nes, address);
+		if ((address & 7) != 2 || nes->exactPpu || !fastStatusAhead(nes, &value)) {
+			nesPpuSync(nes);
+			value = ppuReadRegister(nes, address);
+		}
 	} else if (nes->readHooks & (1 << (address >> 12))) {
 		nesPpuSync(nes);
 		value = nes->board->read(nes, address);

@@ -931,27 +931,75 @@ static void untilEndOfAccess(struct NES* nes, int clocks) {
 	}
 }
 
-static uint8_t openBus(struct Ppu* ppu) {
+static uint8_t openBusAt(struct Ppu* ppu, uint64_t now) {
 	for (int i = 0; i < 8; i++) {
-		if ((ppu->bus & (1 << i)) && ppu->dots - ppu->busRefresh[i] >= 1786830) {
+		if ((ppu->bus & (1 << i)) && now - ppu->busRefresh[i] >= 1786830) {
 			ppu->bus &= ~(1 << i);
 		}
 	}
 	return ppu->bus;
 }
 
-static void setBus(struct Ppu* ppu, uint8_t value, uint8_t bits) {
-	openBus(ppu);
+static uint8_t openBus(struct Ppu* ppu) {
+	return openBusAt(ppu, ppu->dots);
+}
+
+static void setBusAt(struct Ppu* ppu, uint8_t value, uint8_t bits, uint64_t now) {
+	openBusAt(ppu, now);
 	ppu->bus = (ppu->bus & ~bits) | (value & bits);
 	for (int i = 0; i < 8; i++) {
 		if (bits & (1 << i)) {
-			ppu->busRefresh[i] = ppu->dots;
+			ppu->busRefresh[i] = now;
 		}
 	}
 }
 
+static void setBus(struct Ppu* ppu, uint8_t value, uint8_t bits) {
+	setBusAt(ppu, value, bits, ppu->dots);
+}
+
 static inline bool renderingLine(const struct NES* nes) {
 	return rendering(&nes->ppu) && (nes->ppu.scanline < 240 || nes->ppu.scanline == preLine(nes));
+}
+
+// $2002 with the PPU behind: when none of its flags can change before the read lands, the PPU needn't
+// catch up for it. VBL and the pre-render line are past the quiet window; on a rendering line the
+// sprite flags change no sooner than its first sprite 0 pixel or the sprite search at dot 256, or the
+// next line's.
+bool fastStatusAhead(struct NES* nes, uint8_t* out) {
+	struct Ppu* ppu = &nes->ppu;
+	int period = nes->ppuPeriod;
+	int ticks = nes->ppuLag + 7;
+	if (ticks < 0 || ticks + 4 * period >= nes->ppuQuietTicks || !quiet(nes)) {
+		return false;
+	}
+	int ahead = ticks / period + 2;
+	int line = ppu->scanline, dot = ppu->dot;
+	if (rendering(ppu) && (line < 240 || line == preLine(nes))) {
+		int horizon = 341 - dot;
+		if (line < 240 && dot < 256) {
+			horizon = 256 - dot;
+			if (ppu->lineHasZero && !ppu->hit) {
+				for (int x = dot; x < 256 && x - dot + 1 < horizon; x++) {
+					if (ppu->lineSprites[x] & SPRITE_ZERO) {
+						horizon = x - dot + 1;
+						break;
+					}
+				}
+			}
+		}
+		if (ahead >= horizon) {
+			return false;
+		}
+	}
+	uint64_t now = ppu->dots + ticks / period;
+	uint8_t value = (ppu->vblank ? 0x80 : 0) | (ppu->hit ? 0x40 : 0) | (ppu->overflow ? 0x20 : 0) |
+		(openBusAt(ppu, now) & 0x1F);
+	ppu->vblank = false;
+	ppu->w = false;
+	setBusAt(ppu, value, 0xE0, now);
+	*out = value;
+	return true;
 }
 
 uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
