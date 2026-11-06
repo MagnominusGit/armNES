@@ -27,4 +27,4 @@ target_compile_options(armnes PRIVATE -O3)
 
 # Headless runner for test ROMs and library sweeps
 add_executable(nesrun tests/nesrun.c)
-target_link_libraries(nesrun armnes)
+target_link_libraries(nesrun armnes m)

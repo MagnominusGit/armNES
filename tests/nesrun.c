@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <zlib.h>
 
 // nesrun <rom> [frames]: runs a test ROM headless. ROMs that report through $6000 (blargg's
@@ -26,6 +27,33 @@ static uint8_t* readFile(const char* path, size_t* size) {
 	}
 	fclose(f);
 	return data;
+}
+
+// A palette from the NTSC signal levels (Bisqwit's method), good enough to look at frames
+static void paletteRgb(int index, uint8_t rgb[3]) {
+	static const float low[4] = { 0.350f, 0.518f, 0.962f, 1.550f };
+	static const float high[4] = { 1.094f, 1.506f, 1.962f, 1.962f };
+	const float black = 0.518f, white = 1.962f;
+	int color = index & 15, level = (index >> 4) & 3;
+	if (color >= 14) {
+		rgb[0] = rgb[1] = rgb[2] = 0;
+		return;
+	}
+	float y = 0, i = 0, q = 0;
+	for (int p = 0; p < 12; p++) {
+		bool on = (color + p) % 12 < 6;
+		float v = color == 0 ? high[level] : color == 13 ? low[level] : on ? high[level] : low[level];
+		v = (v - black) / (white - black);
+		y += v / 12;
+		i += v * cosf(3.14159265f * (p + 3) / 6) / 12;
+		q += v * sinf(3.14159265f * (p + 3) / 6) / 12;
+	}
+	float out[3] = { y + 0.946882f * i + 0.623557f * q, y - 0.274788f * i - 0.635691f * q,
+		y - 1.108545f * i + 1.709007f * q };
+	for (int c = 0; c < 3; c++) {
+		float v = out[c] < 0 ? 0 : out[c] > 1 ? 1 : out[c];
+		rgb[c] = (uint8_t) (255 * powf(v, 1 / 2.2f) + 0.5f);
+	}
 }
 
 int main(int argc, char** argv) {
@@ -83,6 +111,19 @@ int main(int argc, char** argv) {
 		} else if (seenRunning || status < 0x80) {
 			printf("%s %d: %s\n", status ? "FAIL" : "PASS", status, (char*) w + 4);
 			return status ? 1 : 0;
+		}
+	}
+	const char* ppm = getenv("NESRUN_PPM");
+	if (ppm) {
+		FILE* f = fopen(ppm, "wb");
+		if (f) {
+			fprintf(f, "P6 256 240 255\n");
+			for (int i = 0; i < NES_WIDTH * NES_HEIGHT; i++) {
+				uint8_t rgb[3];
+				paletteRgb(nes.frameBuffer[i] & 0x3F, rgb);
+				fwrite(rgb, 1, 3, f);
+			}
+			fclose(f);
 		}
 	}
 	const char* dump = getenv("NESRUN_RAM");
