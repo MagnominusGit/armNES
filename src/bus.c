@@ -29,7 +29,11 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 	cpu->openBus = value;
 	// The APU's registers answer by the CPU's address bus, which a DMA leaves where the CPU halted
 	if ((cpu->addressBus & 0xFFE0) == 0x4000) {
-		return apuConflictRead(nes, value, address, driven);
+		nesApuSync(nes);
+		value = apuConflictRead(nes, value, address, driven);
+		// A $4015 read clears the frame IRQ a cycle or two later
+		nes->apuQuiet = 0;
+		return value;
 	}
 	cpu->internalBus = value;
 	return value;
@@ -45,7 +49,9 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		nesPpuSync(nes);
 		ppuWriteRegister(nes, address, value, before);
 	} else if (address < 0x4020) {
+		nesApuSync(nes);
 		apuWrite(nes, address, value);
+		nes->apuQuiet = apuQuietCycles(nes);
 	} else {
 		int page = address >> 12;
 		if (nes->board->write) {

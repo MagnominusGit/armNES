@@ -182,6 +182,8 @@ void nesReset(struct NES* nes, bool hard) {
 		nes->ppuLag = 0;
 		nes->ppuQuietTicks = 0;
 		nes->ppuTick = nes->masterClock;
+		nes->apuPending = 0;
+		nes->apuQuiet = 0;
 	}
 	if (hard) {
 		nesMapChr(nes, 0, 0x2000, 0);
@@ -206,4 +208,6 @@ void nesRunFrame(struct NES* nes) {
 			nesPpuSync(nes);
 		}
 	}
+	nesApuSync(nes);
+	apuFlushAudio(nes);
 }

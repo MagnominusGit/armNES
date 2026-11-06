@@ -492,39 +492,60 @@ static inline bool quiet(const struct NES* nes) {
 		ppu->vramWriteStep | ppu->pendingHit);
 }
 
-// Eight dots of a visible line in the middle of the screen, nothing else going on: a whole tile
+// Each bit of a byte spread to its own byte, most significant first: eight pixels at once
+static uint64_t spread[256];
+
+static void buildSpread(void) {
+	if (spread[1]) {
+		return;
+	}
+	for (int b = 0; b < 256; b++) {
+		uint64_t v = 0;
+		for (int i = 0; i < 8; i++) {
+			if (b & (0x80 >> i)) {
+				v |= (uint64_t) 1 << (i * 8);
+			}
+		}
+		spread[b] = v;
+	}
+}
+
+// Eight dots of a visible line with nothing else going on: a whole tile
 static void renderTile(struct NES* nes) {
 	struct Ppu* ppu = &nes->ppu;
 	int x = ppu->dot;
 	uint16_t* out = &nes->frameBuffer[ppu->scanline * NES_WIDTH + x];
 	uint16_t emphasis = (ppu->emphRed ? 0x40 : 0) | (ppu->emphGreen ? 0x80 : 0) | (ppu->emphBlue ? 0x100 : 0);
 	uint8_t grayMask = ppu->gray ? 0x30 : 0x3F;
-	bool bgOn = ppu->showBg && (x >= 8 || ppu->showBgLeft);
-	bool spritesOn = ppu->showSprites && (x >= 8 || ppu->showSpritesLeft) && ppu->lineHasSprites;
-	int bit = 15 - ppu->fineX;
-	for (int i = 0; i < 8; i++) {
-		int bg = 0;
-		if (bgOn) {
-			bg = ((ppu->bgL >> bit) & 1) | (((ppu->bgH >> bit) & 1) << 1);
-			if (bg) {
-				bg |= (((ppu->atL >> bit) & 1) | (((ppu->atH >> bit) & 1) << 1)) << 2;
-			}
-		}
-		int index = bg;
-		if (spritesOn) {
-			uint8_t sprite = ppu->lineSprites[x + i];
-			if (sprite & SPRITE_OPAQUE) {
-				if (!bg || !(sprite & SPRITE_BEHIND)) {
-					index = 0x10 | (sprite & 0x0F);
-				}
-			}
-		}
-		out[i] = (paletteRead(ppu, index) & grayMask) | emphasis;
-		ppu->bgL <<= 1;
-		ppu->bgH <<= 1;
-		ppu->atL <<= 1;
-		ppu->atH <<= 1;
+	uint64_t pixels = 0;
+	if (ppu->showBg && (x >= 8 || ppu->showBgLeft)) {
+		int s = 8 - ppu->fineX;
+		uint64_t color = spread[(uint8_t) (ppu->bgL >> s)] | spread[(uint8_t) (ppu->bgH >> s)] << 1;
+		uint64_t palette = (spread[(uint8_t) (ppu->atL >> s)] | spread[(uint8_t) (ppu->atH >> s)] << 1) << 2;
+		uint64_t opaque = ((color | color >> 1) & 0x0101010101010101ull) * 0xFF;
+		pixels = color | (palette & opaque);
 	}
+	if (ppu->showSprites && (x >= 8 || ppu->showSpritesLeft) && ppu->lineHasSprites) {
+		for (int i = 0; i < 8; i++) {
+			uint8_t sprite = ppu->lineSprites[x + i];
+			uint8_t bg = pixels >> (i * 8);
+			if ((sprite & SPRITE_OPAQUE) && (!(bg & 3) || !(sprite & SPRITE_BEHIND))) {
+				uint8_t index = 0x10 | (sprite & 0x0F);
+				out[i] = (ppu->palette[index] & grayMask) | emphasis;
+			} else {
+				out[i] = (ppu->palette[bg & 3 ? bg : 0] & grayMask) | emphasis;
+			}
+		}
+	} else {
+		for (int i = 0; i < 8; i++) {
+			uint8_t bg = pixels >> (i * 8);
+			out[i] = (ppu->palette[bg & 3 ? bg : 0] & grayMask) | emphasis;
+		}
+	}
+	ppu->bgL <<= 8;
+	ppu->bgH <<= 8;
+	ppu->atL <<= 8;
+	ppu->atH <<= 8;
 	uint16_t table = ppu->bgTable ? 0x1000 : 0;
 	uint8_t nt = chrRead(nes, 0x2000 | (ppu->v & 0xFFF));
 	uint8_t at = chrRead(nes, 0x23C0 | (ppu->v & 0xC00) | ((ppu->v >> 4) & 0x38) | ((ppu->v >> 2) & 7));
@@ -539,10 +560,37 @@ static void renderTile(struct NES* nes) {
 	ppu->dot += 8;
 	ppu->dots += 8;
 	ppu->dotTick += 8 * nes->ppuPeriod;
+	if (ppu->dot == 256) {
+		incrementY(ppu);
+		evaluateSprites(nes);
+	}
+}
+
+// Dots 257-340 of a visible line, for boards that don't watch the bus
+static void renderHblank(struct NES* nes) {
+	struct Ppu* ppu = &nes->ppu;
+	shift(ppu);
+	ppu->v = (ppu->v & ~0x41F) | (ppu->t & 0x41F);
+	ppu->oamAddr = 0;
+	ppu->dot = 320;
+	fetchSprites(nes);
+	for (int dot = 321; dot <= 336; dot++) {
+		ppu->dot = dot;
+		fetchTile(nes, dot);
+		shift(ppu);
+		if (!(dot & 7)) {
+			reload(ppu);
+			incrementX(ppu);
+		}
+	}
+	ppu->dot = 340;
+	ppu->dots += 84;
+	ppu->dotTick += 84 * nes->ppuPeriod;
 }
 
 void fastRun(struct NES* nes, int dots) {
 	struct Ppu* ppu = &nes->ppu;
+	buildSpread();
 	int pre = preLine(nes), vbl = vblankLine(nes);
 	while (dots > 0) {
 		if (quiet(nes)) {
@@ -571,14 +619,20 @@ void fastRun(struct NES* nes, int dots) {
 				ppu->oamAddr = 0;
 				dots -= n;
 				continue;
-			} else if (line < 240 && rendering(ppu) &&
-				(!nes->watchPpuBus || (!ppu->bgTable && !(ppu->addressBus & 0x1000))) && !(line == 0 && ppu->skippedDot) &&
-				(ppu->hit || !ppu->lineHasZero) &&
-				dot < 248 && (dot & 7) == 0 && dot >= 8 && dots >= 8) {
-				// dot is the last one done: tiles start on dots 9, 17, ... and the one ending on 256 has extra work
-				renderTile(nes);
-				dots -= 8;
-				continue;
+			} else if (line < 240 && rendering(ppu) && !(line == 0 && ppu->skippedDot) &&
+				(ppu->hit || !ppu->lineHasZero)) {
+				// dot is the last one done, so tiles start on dots 1, 9, ... 249
+				if (dot < 256 && (dot & 7) == 0 && dots >= 8 &&
+					(!nes->watchPpuBus || (!ppu->bgTable && !(ppu->addressBus & 0x1000)))) {
+					renderTile(nes);
+					dots -= 8;
+					continue;
+				}
+				if (dot == 256 && dots >= 84 && !nes->watchPpuBus) {
+					renderHblank(nes);
+					dots -= 84;
+					continue;
+				}
 			}
 		}
 		step(nes);

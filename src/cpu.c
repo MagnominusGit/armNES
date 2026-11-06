@@ -55,6 +55,19 @@ static void ppuCatchUp(struct NES* nes) {
 	nes->mapperQuietTicks = nes->board->irqQuietDots ? nes->board->irqQuietDots(nes) * nes->ppuPeriod : 1 << 30;
 }
 
+// Runs the APU through the cycles the CPU has passed
+static inline void apuCatchUp(struct NES* nes) {
+	if (nes->apuPending) {
+		apuRun(nes, nes->apuPending);
+		nes->apuPending = 0;
+	}
+	nes->apuQuiet = apuQuietCycles(nes);
+}
+
+void nesApuSync(struct NES* nes) {
+	apuCatchUp(nes);
+}
+
 void nesPpuSync(struct NES* nes) {
 	ppuCatchUp(nes);
 }
@@ -104,7 +117,9 @@ static inline __attribute__((always_inline)) void tick(struct NES* nes) {
 		ppuCatchUp(nes);
 	}
 	if (nes->cpuClock == 0) {
+		apuCatchUp(nes);
 		apuCycle(nes);
+		nes->apuQuiet = apuQuietCycles(nes);
 	}
 	nes->cpuClock++;
 	nes->masterClock++;
@@ -131,7 +146,10 @@ static inline void finishCycle(struct NES* nes) {
 	int c = nes->cpuClock, period = nes->cpuPeriod;
 	nes->masterClock += period - c;
 	if (c == 0) {
-		apuCycle(nes);
+		// Only cycles the CPU can see the result of run now; the rest wait for apuCatchUp()
+		if (++nes->apuPending > nes->apuQuiet) {
+			apuCatchUp(nes);
+		}
 	}
 	if (c <= 4) {
 		nes->ppuLag += 4 - c;
@@ -201,6 +219,7 @@ static void oamPut(struct NES* nes) {
 
 static void dmaCycle(struct NES* nes) {
 	struct Cpu* cpu = &nes->cpu;
+	apuCatchUp(nes);
 	bool put = nes->apu.putCycle;
 	startCycle(nes);
 	if (cpu->oamDma && cpu->oamFirst) {
@@ -247,6 +266,7 @@ static void dmaCycle(struct NES* nes) {
 		cpu->dmcHalt = false;
 		cpu->oamHalt = false;
 	}
+	nes->apuQuiet = 0;
 	endCycle(nes);
 }
 

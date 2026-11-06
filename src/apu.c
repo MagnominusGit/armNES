@@ -48,10 +48,35 @@ static const uint16_t stepsNtsc5[5] = { 7457, 14913, 22371, 37281, 37282 };
 static const uint16_t stepsPal[6] = { 8313, 16627, 24939, 33252, 33253, 33254 };
 static const uint16_t stepsPal5[5] = { 8313, 16627, 24939, 41565, 41566 };
 
+// Shifts of the DMC's LFSR from each state until it reaches 1 (and expires on the next)
+static uint16_t lfsrToOne[512];
+
+static uint16_t lfsrShift(uint16_t lfsr) {
+	bool b0 = lfsr & 1, b4 = lfsr & 16;
+	bool feedback = !((b0 && b4) || !(b0 || b4 || lfsr == 0));
+	return (lfsr >> 1) | (feedback ? 0x100 : 0);
+}
+
+static void buildLfsr(void) {
+	if (lfsrToOne[0]) {
+		return;
+	}
+	for (int state = 0; state < 512; state++) {
+		uint16_t l = state;
+		int n = 0;
+		while (l != 1 && n < 1000) {
+			l = lfsrShift(l);
+			n++;
+		}
+		lfsrToOne[state] = n;
+	}
+}
+
 static int32_t pulseMix[31];
 static int32_t tndMix[203];
 
 static void buildMixer(void) {
+	buildLfsr();
 	if (pulseMix[1] != 0) {
 		return;
 	}
@@ -248,9 +273,7 @@ static void dmcStepLfsr(struct NES* nes) {
 		dmcStepSample(nes);
 		return;
 	}
-	bool b0 = lfsr & 1, b4 = lfsr & 16;
-	bool feedback = !((b0 && b4) || !(b0 || b4 || lfsr == 0));
-	d->lfsr = (lfsr >> 1) | (feedback ? 0x100 : 0);
+	d->lfsr = lfsrShift(lfsr);
 }
 
 // The DMC DMA's get cycle: the next sample byte into the buffer
@@ -363,18 +386,7 @@ static int mix(struct NES* nes) {
 	return value;
 }
 
-static void outputSample(struct NES* nes, int value) {
-	nes->audioAccum += value;
-	nes->audioAccumCount++;
-	int clockRate = nes->region == REGION_NTSC ? 1789773 : (nes->region == REGION_PAL ? 1662607 : 1773448);
-	nes->audioPhase += nes->sampleRate;
-	if (nes->audioPhase < clockRate) {
-		return;
-	}
-	nes->audioPhase -= clockRate;
-	int32_t in = nes->audioAccum / nes->audioAccumCount;
-	nes->audioAccum = 0;
-	nes->audioAccumCount = 0;
+static void emitSample(struct NES* nes, int32_t in) {
 	// The console's filters: high-pass at about 37 Hz, low-pass at about 14 kHz
 	nes->hpOut = nes->hpOut + in - nes->hpPrev - (nes->hpOut >> 8);
 	nes->hpPrev = in;
@@ -389,6 +401,61 @@ static void outputSample(struct NES* nes, int value) {
 		nes->audioOut[nes->audioCount++] = s;
 		nes->audioOut[nes->audioCount++] = s;
 	}
+}
+
+static inline int clockRateOf(const struct NES* nes) {
+	return nes->region == REGION_NTSC ? 1789773 : (nes->region == REGION_PAL ? 1662607 : 1773448);
+}
+
+// Samples for the APU cycles since the last flush: each is the average level over the cycles since
+// the one before, ending on the cycle that crosses its time
+void apuFlushAudio(struct NES* nes) {
+	uint64_t end = nes->apu.cycles;
+	uint64_t cycle = nes->audioCycle;
+	int32_t level = nes->audioLevel;
+	int rate = clockRateOf(nes);
+	uint32_t change = 0;
+	while (cycle < end) {
+		int64_t need = (rate - nes->audioPhase + nes->sampleRate - 1) / nes->sampleRate;
+		if (need < 1) {
+			need = 1;
+		}
+		uint64_t stop = cycle + need < end ? cycle + need : end;
+		// Sum the level over cycles cycle+1 .. stop
+		uint64_t at = cycle;
+		while (change < nes->audioChangeCount && nes->audioChanges[change].cycle <= stop) {
+			uint64_t c = nes->audioChanges[change].cycle;
+			nes->audioAccum += level * (int32_t) (c - 1 - at);
+			at = c - 1;
+			level = nes->audioChanges[change].level;
+			change++;
+		}
+		nes->audioAccum += level * (int32_t) (stop - at);
+		nes->audioAccumCount += stop - cycle;
+		nes->audioPhase += (int64_t) nes->sampleRate * (int64_t) (stop - cycle);
+		cycle = stop;
+		if (nes->audioPhase >= rate) {
+			nes->audioPhase -= rate;
+			emitSample(nes, nes->audioAccum / nes->audioAccumCount);
+			nes->audioAccum = 0;
+			nes->audioAccumCount = 0;
+		}
+	}
+	nes->audioCycle = end;
+	nes->audioLevel = level;
+	nes->audioChangeCount = 0;
+}
+
+static inline void levelChange(struct NES* nes, int32_t level) {
+	if (nes->audioChangeCount == sizeof(nes->audioChanges) / sizeof(nes->audioChanges[0])) {
+		// Full: flush the cycles before this one
+		nes->apu.cycles--;
+		apuFlushAudio(nes);
+		nes->apu.cycles++;
+	}
+	nes->audioChanges[nes->audioChangeCount].cycle = nes->apu.cycles;
+	nes->audioChanges[nes->audioChangeCount].level = level;
+	nes->audioChangeCount++;
 }
 
 static uint8_t padBits(uint8_t pad) {
@@ -487,9 +554,138 @@ void apuCycle(struct NES* nes) {
 	apu->putCycle = !apu->putCycle;
 	if (apu->mixDirty || nes->board->audio) {
 		apu->mixDirty = false;
-		apu->lastMix = mix(nes);
+		int32_t level = mix(nes);
+		if (level != apu->lastMix) {
+			apu->lastMix = level;
+			levelChange(nes, level);
+		}
 	}
-	outputSample(nes, apu->lastMix);
+}
+
+// The most cycles that can pass with nothing to do but count: no delay running, no timer wrapping,
+// no frame counter step, no output sample due. A get-cycle timer at t lasts this many cycles.
+static inline int getCycles(const struct Apu* apu, int t) {
+	return apu->putCycle ? 2 * t + 1 : 2 * t;
+}
+
+// Channels whose timers can wrap without the mix changing
+static inline bool pulseSilent(struct Pulse* p) {
+	return !p->lengthCounter || pulseMuted(p) || !(p->constant ? p->volume : p->envelopeDecay);
+}
+
+static inline bool noiseSilent(const struct Noise* n) {
+	return !n->lengthCounter || !(n->constant ? n->volume : n->envelopeDecay);
+}
+
+static inline bool triangleFrozen(const struct Apu* apu) {
+	const struct Triangle* t = &apu->triangle;
+	return !t->lengthCounter || !t->linearCounter || t->timerPeriod < 2;
+}
+
+static int frameQuiet(const struct NES* nes) {
+	const struct Apu* apu = &nes->apu;
+	bool pal = nes->region != REGION_NTSC;
+	const uint16_t* steps = apu->fiveStep ? (pal ? stepsPal5 : stepsNtsc5) : (pal ? stepsPal : stepsNtsc);
+	int n = apu->fiveStep ? 5 : 6;
+	for (int i = 0; i < n; i++) {
+		if (steps[i] > apu->frameCounter) {
+			return steps[i] - apu->frameCounter - 1;
+		}
+	}
+	return 0;
+}
+
+static int bulkCycles(struct NES* nes) {
+	struct Apu* apu = &nes->apu;
+	const struct Dmc* d = &apu->dmc;
+	if (apu->padShiftDelay[0] | apu->padShiftDelay[1] | d->enableDelay | d->loadDelay | d->cannotRun |
+		apu->clearingFrameFlag | apu->quarterClock | apu->halfClock | apu->lengthReloadAny | apu->haltPending |
+		apu->mixDirty | (apu->strobing && !apu->strobed) | d->setImplicitAbort) {
+		return 0;
+	}
+	if (!(apu->frameReset & 0x80) || nes->board->audio) {
+		return 0;
+	}
+	int k = frameQuiet(nes);
+	int t;
+	for (int i = 0; i < 2; i++) {
+		if (!pulseSilent(&apu->pulse[i])) {
+			t = getCycles(apu, apu->pulse[i].timer);
+			k = t < k ? t : k;
+		}
+	}
+	if (!noiseSilent(&apu->noise)) {
+		t = getCycles(apu, apu->noise.timer);
+		k = t < k ? t : k;
+	}
+	t = getCycles(apu, lfsrToOne[d->lfsr & 0x1FF]);
+	k = t < k ? t : k;
+	if (!triangleFrozen(apu)) {
+		t = apu->triangle.timer;
+		k = t < k ? t : k;
+	}
+	return k;
+}
+
+// A timer counting n clocks: how many times it reloads on the way
+static inline int timerAdvance(uint16_t* timer, uint16_t period, int n) {
+	if (n <= *timer) {
+		*timer -= n;
+		return 0;
+	}
+	int rest = n - *timer - 1;
+	*timer = period - rest % (period + 1);
+	return 1 + rest / (period + 1);
+}
+
+static void bulkAdvance(struct NES* nes, int k) {
+	struct Apu* apu = &nes->apu;
+	int gets = apu->putCycle ? k / 2 : (k + 1) / 2;
+	for (int i = 0; i < 2; i++) {
+		struct Pulse* p = &apu->pulse[i];
+		int wraps = timerAdvance(&p->timer, p->timerPeriod, gets);
+		p->dutyStep = (p->dutyStep - wraps) & 7;
+	}
+	struct Noise* n = &apu->noise;
+	for (int wraps = timerAdvance(&n->timer, n->timerPeriod, gets); wraps; wraps--) {
+		uint16_t feedback = (n->shift ^ (n->shift >> (n->mode ? 6 : 1))) & 1;
+		n->shift = (n->shift >> 1) | (feedback << 14);
+	}
+	for (int i = 0; i < gets; i++) {
+		apu->dmc.lfsr = lfsrShift(apu->dmc.lfsr);
+	}
+	timerAdvance(&apu->triangle.timer, apu->triangle.timerPeriod, k);
+	apu->frameCounter += k;
+	apu->cycles += k;
+	apu->putCycle ^= k & 1;
+}
+
+void apuRun(struct NES* nes, int cycles) {
+	while (cycles > 0) {
+		int k = bulkCycles(nes);
+		if (k > 0) {
+			k = k < cycles ? k : cycles;
+			bulkAdvance(nes, k);
+			cycles -= k;
+		} else {
+			apuCycle(nes);
+			cycles--;
+		}
+	}
+}
+
+// Cycles that can pass before the APU changes something the CPU sees: a DMC DMA request, an IRQ, a
+// delayed write landing
+int apuQuietCycles(struct NES* nes) {
+	const struct Apu* apu = &nes->apu;
+	const struct Dmc* d = &apu->dmc;
+	if (d->enableDelay | d->loadDelay | d->cannotRun | apu->clearingFrameFlag | apu->quarterClock |
+		apu->halfClock | d->setImplicitAbort | !(apu->frameReset & 0x80) | nes->cpu.dmcDma) {
+		return 0;
+	}
+	int k = frameQuiet(nes);
+	int t = getCycles(apu, lfsrToOne[d->lfsr & 0x1FF]);
+	return t < k ? t : k;
 }
 
 // A read while the CPU's address bus is on $4000-$401F also reaches the APU's registers, by the low

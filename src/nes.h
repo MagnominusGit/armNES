@@ -257,6 +257,8 @@ struct NES {
 	int cpuClock, ppuClock, ppuCpuClock;
 	int cpuPeriod, ppuPeriod;
 	int ppuLag, ppuQuietTicks, mapperQuietTicks;
+	// APU cycles the CPU has passed but the APU hasn't run, and how many can pass before it must
+	int apuPending, apuQuiet;
 	bool ppuEveryCycle;
 	// The master clock of this CPU cycle's access, for boards that count M2 from the PPU's side, and
 	// the next master clock the PPU hasn't run
@@ -288,6 +290,15 @@ struct NES {
 	int sampleRate;
 	int64_t audioPhase;
 	int32_t audioAccum, audioAccumCount;
+	// The mix's level from audioCycle on, and where it changes after that, in APU cycles; turned into
+	// samples by apuFlushAudio()
+	uint64_t audioCycle;
+	int32_t audioLevel;
+	uint32_t audioChangeCount;
+	struct AudioChange {
+		uint64_t cycle;
+		int32_t level;
+	} audioChanges[8192];
 	int32_t hpPrev, hpOut, lpOut;
 };
 
@@ -313,6 +324,7 @@ void nesSetIrq(struct NES*, int source, bool on);
 // cpu.c
 void nesTick(struct NES*);
 void nesPpuSync(struct NES*);
+void nesApuSync(struct NES*);
 void nesPpuSyncAhead(struct NES*, int clocks);
 void cpuReset(struct NES*, bool hard);
 void cpuStep(struct NES*);
@@ -340,6 +352,9 @@ uint8_t ppuBusRead(struct NES*, uint16_t address);
 // apu.c
 void apuReset(struct NES*, bool hard);
 void apuCycle(struct NES*);
+void apuRun(struct NES*, int cycles);
+int apuQuietCycles(struct NES*);
+void apuFlushAudio(struct NES*);
 uint8_t apuReadStatus(struct NES*);
 void apuWrite(struct NES*, uint16_t address, uint8_t value);
 void apuDmcDmaGet(struct NES*);
