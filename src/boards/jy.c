@@ -187,6 +187,7 @@ static uint8_t jyRead(struct NES* nes, uint16_t address) {
 		return nes->cpu.openBus;
 	}
 	if ((address & 0x3FF) == 0 && address != 0x5800) {
+		nes->hasJumper = true;
 		return j->dip | (nes->cpu.openBus & 0x3F);
 	}
 	if (address & 0x800) {
@@ -290,7 +291,7 @@ static void jyWrite(struct NES* nes, uint16_t address, uint8_t value) {
 
 static void jyReset(struct NES* nes, bool hard) {
 	struct Jy* j = JY;
-	uint8_t dip = hard ? 0 : (j->dip + 0x40) & 0xC0;
+	uint8_t dip = hard ? (jumperSetting(nes) & 3) << 6 : j->dip;
 	memset(j, 0, sizeof(*j));
 	j->dip = dip;
 	nes->readHooks |= 1 << 5;

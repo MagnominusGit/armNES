@@ -466,6 +466,12 @@ void FCEU_PrintError(const char* format, ...) {
 void FCEU_CheatAddRAM(int s, uint32_t A, uint8_t* p) {
 }
 
+// Boards ask for their jumper as they power on
+uint8_t FCEU_Jumper(void) {
+	nes->hasJumper = true;
+	return jumperSetting(nes);
+}
+
 void FCEU_MemoryRand(uint8_t* ptr, uint32_t size) {
 	memset(ptr, 0, size);
 }

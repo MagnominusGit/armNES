@@ -65,12 +65,12 @@ static DECLFW(M319WriteLatch) {
 
 static void M319Reset(void) {
 	reg[0] =reg[1] =latch =0;
-	pad ^=0x40;
 	M319Sync();
 }
 
 static void M319Power(void) {
-	reg[0] =reg[1] =latch =pad =0;
+	reg[0] =reg[1] =latch =0;
+	pad =(FCEU_Jumper() &1) <<6;
 	M319Sync();
 	SetReadHandler(0x5000, 0x5FFF, M319ReadPad);
 	SetReadHandler(0x6000, 0xFFFF, CartBR);

@@ -59,6 +59,12 @@ static inline uint8_t busConflict(struct NES* nes, uint16_t address, uint8_t val
 	return page ? value & page[address & 0xFFF] : value;
 }
 
+// A cart's solder pads or DIP switches: the frontend's setting, else the one known for the dump,
+// else 0. They stay put through Reset, as on the cart.
+static inline uint8_t jumperSetting(const struct NES* nes) {
+	return nes->jumper >= 0 ? nes->jumper : nes->cart.jumper >= 0 ? nes->cart.jumper : 0;
+}
+
 #define BOARD(var) extern const struct Board var
 
 // basic.c

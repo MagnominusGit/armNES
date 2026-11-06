@@ -11,6 +11,7 @@
 
 void nesInit(struct NES* nes) {
 	memset(nes, 0, sizeof(*nes));
+	nes->jumper = -1;
 	nes->frameBuffer = calloc(NES_WIDTH * NES_HEIGHT, sizeof(uint16_t));
 	nes->sampleRate = 48000;
 }
@@ -181,6 +182,7 @@ void nesReset(struct NES* nes, bool hard) {
 		memset(nes->prgPages, 0, sizeof(nes->prgPages));
 		memset(nes->prgWritable, 0, sizeof(nes->prgWritable));
 		memset(nes->chrPages, 0, sizeof(nes->chrPages));
+		nes->hasJumper = false;
 		nes->readHooks = 0;
 		nes->watchPpuBus = false;
 		nes->ppuReadHook = false;

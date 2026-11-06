@@ -43,13 +43,12 @@ static DECLFW (writeReg) {
 
 static void reset () {
 	reg = 0;
-	pad++;
 	MMC3_clear();
 }
 
 static void power () {
 	reg = 0;
-	pad = 0;
+	pad = FCEU_Jumper();
 	MMC3_power();
 }
 

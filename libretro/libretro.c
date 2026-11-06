@@ -30,13 +30,48 @@ static struct OptionChoice regionChoices[] = {
 	{ "Dendy", REGION_DENDY },
 };
 
+static struct OptionChoice jumperChoices[] = {
+	{ "Auto", -1 },
+	{ "0", 0 },
+	{ "1", 1 },
+	{ "2", 2 },
+	{ "3", 3 },
+	{ "4", 4 },
+	{ "5", 5 },
+	{ "6", 6 },
+	{ "7", 7 },
+	{ "8", 8 },
+	{ "9", 9 },
+	{ "10", 10 },
+	{ "11", 11 },
+	{ "12", 12 },
+	{ "13", 13 },
+	{ "14", 14 },
+	{ "15", 15 },
+	{ "16", 16 },
+	{ "17", 17 },
+	{ "18", 18 },
+	{ "19", 19 },
+	{ "20", 20 },
+	{ "21", 21 },
+	{ "22", 22 },
+	{ "23", 23 },
+};
+
 static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_region", "Region", NULL, "The console the game runs on. Auto takes it from the game's header.", NULL, NULL,
 		{ { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { "Dendy", NULL }, { NULL, NULL } }, "Auto" },
+	{ "armnes_jumper", "Cart Jumper", NULL,
+		"Some carts have solder pads or DIP switches that pick their menu, the games listed, a language or "
+		"the video timing. Auto uses the setting known for the dump, or 0. Changing it restarts the game, "
+		"as it would on the cart. Other carts ignore it.",
+		NULL, NULL, { { "Auto", NULL }, { "0", NULL }, { "1", NULL }, { "2", NULL }, { "3", NULL }, { "4", NULL }, { "5", NULL }, { "6", NULL }, { "7", NULL }, { "8", NULL }, { "9", NULL }, { "10", NULL }, { "11", NULL }, { "12", NULL }, { "13", NULL }, { "14", NULL }, { "15", NULL }, { "16", NULL }, { "17", NULL }, { "18", NULL }, { "19", NULL }, { "20", NULL }, { "21", NULL }, { "22", NULL }, { "23", NULL }, { NULL, NULL } }, "Auto" },
 	{ NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
 static struct retro_core_options_v2 options = { NULL, optionDefinitions };
+
+static void checkJumper(void);
 
 // The NTSC signal's levels decoded to RGB (Bisqwit's method), with the emphasis bits dimming the
 // other two channels
@@ -182,6 +217,7 @@ void retro_run(void) {
 		}
 	}
 	nesRunFrame(&nes);
+	checkJumper();
 	for (int i = 0; i < NES_WIDTH * NES_HEIGHT; i++) {
 		video[i] = palette565[nes.frameBuffer[i] & 0x1FF];
 	}
@@ -262,6 +298,31 @@ static struct retro_disk_control_callback diskControl = {
 	setEjectState, getEjectState, getImageIndex, setImageIndex, getNumImages, NULL, NULL,
 };
 
+// Carts with solder pads or DIP switches: say so once the game looks at them, and restart the game
+// when the setting changes
+static bool jumperNoticed;
+
+static void checkJumper(void) {
+	bool updated = false;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+		int jumper = optionChoice(environ_cb, "armnes_jumper", jumperChoices, 25, -1);
+		if (jumper != nes.jumper) {
+			nes.jumper = jumper;
+			if (nes.hasJumper) {
+				nesReset(&nes, true);
+			}
+		}
+	}
+	if (nes.hasJumper && !jumperNoticed) {
+		jumperNoticed = true;
+		char text[200];
+		snprintf(text, sizeof(text), "This cart has solder pads or DIP switches, set to %d%s. Core Options > Cart Jumper changes them.",
+			jumperSetting(&nes), nes.jumper < 0 && nes.cart.jumper >= 0 ? " for this dump" : "");
+		struct retro_message message = { text, 480 };
+		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+	}
+}
+
 bool retro_load_game(const struct retro_game_info* game) {
 	if (!game || !game->data) {
 		return false;
@@ -304,6 +365,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 		diskIndex = 0;
 		environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, &diskControl);
 	}
+	nes.jumper = optionChoice(environ_cb, "armnes_jumper", jumperChoices, 25, -1);
+	jumperNoticed = false;
 	if (!nesLoad(&nes, game->data, game->size)) {
 		if (nes.cart.mapper || nes.cart.prgSize) {
 			struct retro_message message = { "armNES: this game's board isn't supported yet", 360 };

@@ -183,7 +183,8 @@ static void M178Power(void) {
 		SetWriteHandler(0x6000, 0x7fff, CartBW);
 		FCEU_CheatAddRAM((WRAMSIZE >> 10) < 8 ? (WRAMSIZE >> 10) : 8, 0x6000, WRAM);
 	}
-	pad[0] = pad[1] = 0;
+	pad[0] = 0;
+	pad[1] = FCEU_Jumper();
 }
 
 static void M551Reset(void) {
@@ -198,7 +199,6 @@ static void M178Reset(void)
 	reg[0] = reg[1] = reg[2] = reg[3] = 0;
 	M178Sync();
 	pad[0] = 0;
-	pad[1]++;
 }
 
 static void M178SndClk(int a)

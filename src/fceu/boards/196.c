@@ -25,7 +25,6 @@
 static uint8_t submapper;
 static uint8_t reg;
 static uint8_t pad;
-static uint8_t allowPad;
 
 static void sync () {
 	if (submapper == 3)
@@ -62,13 +61,12 @@ static DECLFW (interceptASICWrite) {
 
 static void reset () {
 	reg = 0;
-	if (allowPad) pad++;
 	MMC3_clear();
 }
 
 static void power () {
 	reg = 0;
-	pad = 0;
+	pad = FCEU_Jumper();
 	MMC3_power();
 	SetReadHandler(0x5000, 0x5FFF, readPad);
 	SetWriteHandler(0x8000, 0xFFFF, interceptASICWrite);
@@ -76,7 +74,6 @@ static void power () {
 
 void Mapper196_Init (CartInfo *info) {
 	submapper = info->submapper;
-	allowPad = 1;
 	MMC3_init(info, sync, MMC3_TYPE_AX5202P, NULL, NULL, NULL, writeReg);
 	info->Power = power;
 	info->Reset = reset;

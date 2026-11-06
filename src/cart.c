@@ -41,15 +41,39 @@ static const struct HeaderFix headerFixes[] = {
 };
 #undef PAL
 
+// Solder pad or DIP switch settings known for particular dumps, from what FCEUmm set for them
+static const struct {
+	uint32_t crc;
+	int jumper;
+} jumperSettings[] = {
+	{ 0x390373DA, 1 },
+	{ 0x797EB9FB, 1 },
+	{ 0xC620471C, 1 },
+	{ 0xC5FAFE2C, 1 },
+};
+
+static int knownJumper(uint32_t crc) {
+	for (size_t i = 0; i < sizeof(jumperSettings) / sizeof(jumperSettings[0]); i++) {
+		if (jumperSettings[i].crc == crc) {
+			return jumperSettings[i].jumper;
+		}
+	}
+	return -1;
+}
+
 static uint32_t ramSize(int shift) {
 	return shift ? 64u << shift : 0;
 }
 
-static void fixHeader(struct Cart* cart, const uint8_t* rom, size_t size) {
+// The CRC-32 of PRG and CHR ROM as the file has them, which the lists below go by
+static uint32_t dumpCrc(const struct Cart* cart, const uint8_t* rom, size_t size) {
 	uint32_t prg = cart->prgSize < size ? cart->prgSize : size;
 	uint32_t chr = cart->chrRam ? 0 : cart->chrSize;
 	chr = prg + chr <= size ? chr : size - prg;
-	uint32_t crc = crc32(crc32(0, rom, prg), rom + prg, chr);
+	return crc32(crc32(0, rom, prg), rom + prg, chr);
+}
+
+static void fixHeader(struct Cart* cart, uint32_t crc) {
 	const struct HeaderFix* f = headerFixes;
 	while (f->crc && f->crc != crc) {
 		f++;
@@ -306,9 +330,11 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 	if (!cart->prgSize) {
 		return false;
 	}
+	uint32_t crc = dumpCrc(cart, data + offset, size > offset ? size - offset : 0);
 	if (!nes2) {
-		fixHeader(cart, data + offset, size > offset ? size - offset : 0);
+		fixHeader(cart, crc);
 	}
+	cart->jumper = knownJumper(crc);
 	// Short images are padded with open-bus-like 0xFF rather than refused
 	cart->prg = malloc(cart->prgSize);
 	memset(cart->prg, 0xFF, cart->prgSize);

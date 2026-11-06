@@ -74,6 +74,10 @@ int main(int argc, char** argv) {
 	nes.audioOut = audio;
 	nes.audioCapacity = 8192;
 	nes.exactPpu = getenv("NESRUN_EXACT") != NULL;
+	// NESRUN_JUMPER=n: the cart's solder pads or DIP switches
+	if (getenv("NESRUN_JUMPER")) {
+		nes.jumper = atoi(getenv("NESRUN_JUMPER"));
+	}
 	// NESRUN_BIOS=<disksys.rom>: the Disk System's BIOS
 	size_t biosSize = 0;
 	uint8_t* bios = getenv("NESRUN_BIOS") ? readFile(getenv("NESRUN_BIOS"), &biosSize) : NULL;

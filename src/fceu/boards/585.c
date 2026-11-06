@@ -39,13 +39,12 @@ static DECLFR (interceptPRGRead) {
 }
 
 static void power () {
-	pad = 0;
+	pad = (FCEU_Jumper() & 3) << 5;
 	Latch_power();
 	SetReadHandler(0x8000, 0xFFFF, interceptPRGRead);
 }
 
 static void reset () {
-	pad += 0x20;
 	Latch_clear();
 }
 

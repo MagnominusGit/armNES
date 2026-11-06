@@ -554,6 +554,7 @@ bool fdsCartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 	cart->vramSize = cart->miscSize = 0;
 	cart->mapper = 20;
 	cart->submapper = 0;
+	cart->jumper = -1;
 	cart->nes2 = false;
 	cart->region = REGION_NTSC;
 	cart->mirroring = MIRROR_HORIZONTAL;

@@ -22,6 +22,9 @@ static bool environment(unsigned cmd, void* data) {
 	case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
 		rgb565 = *(enum retro_pixel_format*) data == RETRO_PIXEL_FORMAT_RGB565;
 		return rgb565;
+	case RETRO_ENVIRONMENT_SET_MESSAGE:
+		fprintf(stderr, "MESSAGE: %s\n", ((const struct retro_message*) data)->msg);
+		return true;
 	// CORETEST_SYSTEM=<dir>: where cores find BIOS files
 	case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
 		*(const char**) data = getenv("CORETEST_SYSTEM");

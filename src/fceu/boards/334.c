@@ -42,13 +42,12 @@ static DECLFR(M334Read) {
 }
 
 static void M334Reset(void) {
-    dipswitch++;
 	EXPREGS[0] = 0;
 	MMC3RegReset();
 }
 
 static void M334Power(void) {
-    dipswitch = 0;
+    dipswitch = FCEU_Jumper();
 	EXPREGS[0] = 0;
 	GenMMC3Power();
     SetReadHandler(0x6000, 0x7FFF, M334Read);
@@ -61,4 +60,5 @@ void Mapper334_Init(CartInfo *info) {
 	info->Power = M334Power;
 	info->Reset = M334Reset;
 	AddExState(EXPREGS, 1, 0, "EXPR");
+	AddExState(&dipswitch, 1, 0, "DPSW");
 }

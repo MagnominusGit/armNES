@@ -14,7 +14,7 @@
 struct Fk23c {
 	struct Mmc3 mmc3;
 	uint8_t regs[8], mmc3Regs[12], latch, dipswitch, subType;
-	bool afterPower, dipswitchOnReset;
+	bool afterPower;
 };
 
 #define FK STATE(Fk23c)
@@ -153,7 +153,11 @@ static void fkWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address >= 0x5000 && address < 0x6000) {
 		if (f->afterPower && address > 0x5010 && address != 0x5FF3) {
 			f->afterPower = false;
-			f->dipswitchOnReset = address >= 0x5020;
+			// Carts that write past $5020 have DIP switches picking which address the registers decode
+			if (address >= 0x5020) {
+				f->dipswitch = jumperSetting(nes) & 7;
+				nes->hasJumper = true;
+			}
 		}
 		bool enabled = (f->mmc3.wramControl & 0x40) || !fkWramExtended(nes);
 		if (enabled && (address & (0x10 << f->dipswitch))) {
@@ -249,8 +253,6 @@ static void fkReset(struct NES* nes, bool hard) {
 			cart->chr = realloc(cart->chr, cart->chrSize);
 			memset(cart->chr, 0, cart->chrSize);
 		}
-	} else if (f->dipswitchOnReset) {
-		f->dipswitch = (f->dipswitch + 1) & 7;
 	}
 	fkRegisters(nes);
 	nes->watchPpuBus = true;

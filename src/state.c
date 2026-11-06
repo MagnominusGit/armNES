@@ -131,6 +131,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	bool exactPpu = nes->exactPpu, exactTiming = nes->exactTiming;
 	uint8_t pads[2] = { nes->pads[0], nes->pads[1] };
 	const uint8_t* fdsBios = nes->fdsBios;
+	int jumper = nes->jumper;
 
 	memcpy(nes, in, sizeof(struct NES));
 	in += sizeof(struct NES);
@@ -150,6 +151,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->pads[0] = pads[0];
 	nes->pads[1] = pads[1];
 	nes->fdsBios = fdsBios;
+	nes->jumper = jumper;
 	uint32_t tags[32];
 	memcpy(tags, in, sizeof(tags));
 	in += sizeof(tags);

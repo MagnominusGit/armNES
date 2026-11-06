@@ -244,6 +244,8 @@ struct Cart {
 	// NES 2.0's miscellaneous ROM, such as a protection chip's program
 	uint8_t* misc;
 	uint32_t miscSize;
+	// The jumper setting known for this dump, or -1
+	int jumper;
 	// Disk System sides, as the drive reads them (boards/fds.c)
 	uint8_t* disk;
 	uint32_t diskSideSize;
@@ -309,6 +311,10 @@ struct NES {
 	uint8_t pads[2];
 	// A keyboard, for the boards that have one: keys down by libretro key code (RETROK_*)
 	uint8_t keys[64];
+	// Solder pads or DIP switches on the cart: the frontend's setting (-1 for the cart's own), and
+	// whether the game has looked at them
+	int jumper;
+	bool hasJumper;
 
 	uint16_t* frameBuffer;
 	bool frameDone;

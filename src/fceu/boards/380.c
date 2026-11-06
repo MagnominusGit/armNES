@@ -66,14 +66,13 @@ static DECLFW(M380Write)
 
 static void M380Reset(void)
 {
-   dipswitch = (dipswitch + 1) & 0xF;
    latche = 0;
    Sync();
 }
 
 static void M380Power(void)
 {
-   dipswitch = 0;
+   dipswitch = FCEU_Jumper() & 0xF;
    latche = 0;
    Sync();
    setchr8(0);

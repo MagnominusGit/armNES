@@ -149,7 +149,7 @@ static void tca01Reset(struct NES* nes, bool hard) {
 
 const struct Board boardTca01 = { .name = "TCA01", .reset = tca01Reset, .read = tca01Read };
 
-// 74LS374N (150) and SA-020A (243): eight 3-bit latches, and a DIP switch that changes on reset
+// 74LS374N (150) and SA-020A (243): eight 3-bit latches, and a DIP switch
 static void s374Sync(struct NES* nes) {
 	uint8_t* l = SA->latch;
 	uint32_t chr = nes->cart.mapper == 150 ? (l[6] & 3) | ((l[4] << 2) & 4) | (l[2] << 3)
@@ -175,6 +175,7 @@ static void s374Sync(struct NES* nes) {
 static uint8_t s374Read(struct NES* nes, uint16_t address) {
 	struct Sachen* s = SA;
 	if ((address & 0xC101) == 0x4101) {
+		nes->hasJumper = true;
 		uint8_t mask = (s->dip & 1) ? 3 : 7;
 		return (s->latch[s->command] & mask) | (nes->cpu.openBus & ~mask);
 	}
@@ -202,7 +203,7 @@ static void s374Write(struct NES* nes, uint16_t address, uint8_t value) {
 
 static void s374Reset(struct NES* nes, bool hard) {
 	struct Sachen* s = SA;
-	uint8_t dip = hard ? 0 : s->dip ^ 1;
+	uint8_t dip = hard ? jumperSetting(nes) & 1 : s->dip;
 	memset(s, 0, sizeof(*s));
 	s->dip = dip;
 	if (nes->cart.mapper == 150) {

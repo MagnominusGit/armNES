@@ -19,6 +19,7 @@ enum {
 	BUS_CONFLICT = 2,
 	CHR_RAM_16K = 4,
 	WRAM = 8,
+	JUMPER = 16, // solder pads change what some ROM reads see
 };
 
 struct DiscreteBoard {
@@ -239,7 +240,31 @@ static void sync62(struct NES* nes, struct Discrete* d) {
 	mirrorHV(nes, a & 0x80);
 }
 
+// 200 and 227 (submapper 1): in one latch mode the solder pads take over some ROM reads
+static uint8_t jumperRead(struct NES* nes, uint16_t address) {
+	struct Discrete* d = STATE(Discrete);
+	uint8_t jumper = jumperSetting(nes);
+	nes->hasJumper = true;
+	if (nes->cart.mapper == 227) {
+		address |= jumper;
+	} else if (nes->cart.prgSize == 0x10000) {
+		// Pads 1 and 2 open the bus for the latch's bits 2 and 3
+		if (((d->address & 4) && (jumper & 1)) || ((d->address & 8) && (jumper & 2))) {
+			return nes->cpu.openBus;
+		}
+	} else if (address & 0xF) {
+		if (jumper & 1) {
+			return nes->cpu.openBus;
+		}
+	} else {
+		address = (address & ~0x1F) | (jumper & 0x1F);
+	}
+	uint8_t* page = nes->prgPages[address >> 12];
+	return page ? page[address & 0xFFF] : nes->cpu.openBus;
+}
+
 static void sync200(struct NES* nes, struct Discrete* d) {
+	nes->readHooks = (d->address & (nes->cart.prgSize == 0x10000 ? 0x0C : 0x08)) ? 0xFF00 : 0;
 	prg16(nes, 0x8000, d->address & 7);
 	prg16(nes, 0xC000, d->address & 7);
 	chr8(nes, d->address & 7);
@@ -298,6 +323,7 @@ static void sync226(struct NES* nes, struct Discrete* d) {
 
 static void sync227(struct NES* nes, struct Discrete* d) {
 	uint16_t a = d->address;
+	nes->readHooks = (a & 0x400) && nes->cart.submapper == 1 ? 0xFF00 : 0;
 	int bank = ((a >> 2) & 0x1F) | ((a & 0x100) >> 3);
 	if (a & 0x80) {
 		if (a & 1) {
@@ -411,13 +437,13 @@ static const struct DiscreteBoard boards[] = {
 	{ 180, 0x8000, 0xFFFF, BUS_CONFLICT, sync180, "UNROM (fixed bank at $8000)" },
 	{ 184, 0x6000, 0x7FFF, 0, sync184, "Sunsoft-1" },
 	{ 185, 0x8000, 0xFFFF, BUS_CONFLICT, sync185, "CNROM (protected)" },
-	{ 200, 0x8000, 0xFFFF, LATCH_ADDRESS, sync200, "200" },
+	{ 200, 0x8000, 0xFFFF, LATCH_ADDRESS | JUMPER, sync200, "200" },
 	{ 201, 0x8000, 0xFFFF, LATCH_ADDRESS, sync201, "201" },
 	{ 202, 0x8000, 0xFFFF, LATCH_ADDRESS, sync202, "202" },
 	{ 203, 0x8000, 0xFFFF, 0, sync203, "203" },
 	{ 225, 0x8000, 0xFFFF, LATCH_ADDRESS, sync225, "225" },
 	{ 226, 0x8000, 0xFFFF, 0, sync226, "226" },
-	{ 227, 0x8000, 0xFFFF, LATCH_ADDRESS, sync227, "227" },
+	{ 227, 0x8000, 0xFFFF, LATCH_ADDRESS | JUMPER, sync227, "227" },
 	{ 229, 0x8000, 0xFFFF, LATCH_ADDRESS, sync229, "229" },
 	{ 231, 0x8000, 0xFFFF, LATCH_ADDRESS, sync231, "231" },
 	{ 232, 0x8000, 0xFFFF, 0, sync232, "Camerica BF9096" },
@@ -542,6 +568,7 @@ const struct Board* discreteFind(int mapper, int submapper) {
 			b->write = discreteWrite;
 			b->sync = discreteSync;
 			b->stateSize = sizeof(struct Discrete);
+			b->read = (boards[i].flags & JUMPER) ? jumperRead : NULL;
 			b->data = &boards[i];
 			return b;
 		}

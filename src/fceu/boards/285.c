@@ -60,13 +60,12 @@ static DECLFR (readPad) {
 }
 
 static void power () {
-	pad = 0;
+	pad = FCEU_Jumper() % 24;
 	Latch_power();
 	SetReadHandler(0x5000, 0x5FFF, readPad);
 }
 
 static void reset () {
-	pad = (pad + 1) % 24;
 	Latch_clear();
 }
 

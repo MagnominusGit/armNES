@@ -114,14 +114,13 @@ static DECLFW(BMCD1038Write) {
 }
 
 static void BMCD1038Reset(void) {
-	dipswitch++;
-	dipswitch &= 3;
 
 	latche = 0;
 	BMCD1038Sync();
 }
 
 static void BMCD1038Power(void) {
+	dipswitch = FCEU_Jumper() & 3;
 	LatchPower();
 
 	SetWriteHandler(0x8000, 0xFFFF, BMCD1038Write);
@@ -241,14 +240,13 @@ static DECLFR (Mapper200_interceptPRGRead_large) {
 
 static void Mapper200_Power() {
 	LatchPower();
-	dipswitch = 0;
+	dipswitch = FCEU_Jumper();
 	SetReadHandler(0x8000, 0xFFFF, ROM_size == 4? Mapper200_interceptPRGRead_small: Mapper200_interceptPRGRead_large);
 	M200Sync();
 }
 
 static void Mapper200_Reset() {
 	latche = 0;
-	dipswitch++;
 	M200Sync();
 }
 
@@ -305,14 +303,13 @@ static DECLFR (Mapper204_interceptPRGRead_large) {
 
 static void Mapper204_Power() {
 	LatchPower();
-	dipswitch = 0;
+	dipswitch = FCEU_Jumper();
 	SetReadHandler(0x8000, 0xFFFF, ROM_size == 4? Mapper204_interceptPRGRead_small: Mapper204_interceptPRGRead_large);
 	M204Sync();
 }
 
 static void Mapper204_Reset() {
 	latche = 0;
-	dipswitch++;
 	M204Sync();
 }
 
@@ -414,14 +411,12 @@ static DECLFR(M227Read) {
 }
 
 static void Mapper227_Reset(void) {
-	dipswitch++;
-	dipswitch &= 15;
 	latche = 0;
 	M227Sync();
 }
 
 void Mapper227_Init(CartInfo *info) {
-	dipswitch = 0;
+	dipswitch = FCEU_Jumper() & 15;
 	submapper =info->submapper;
 	Latch_Init(info, M227Sync, M227Read, 0x0000, 0x8000, 0xFFFF, info->iNES2 && (info->PRGRamSize || info->PRGRamSaveSize) || info->battery);
 	info->Reset = Mapper227_Reset;
@@ -471,14 +466,12 @@ static DECLFR(M288Read) {
 }
 
 static void M288Reset(void) {
-	dipswitch++;
-	dipswitch &= 15;
 	latche =0;
 	M288Sync();
 }
 
 void Mapper288_Init(CartInfo *info) {
-	dipswitch = 0;
+	dipswitch = FCEU_Jumper() & 15;
 	Latch_Init(info, M288Sync, M288Read, 0x0000, 0x8000, 0xFFFF, 0);
 	info->Reset = M288Reset;
 	AddExState(&dipswitch, 1, 0, "DIPSW");
@@ -670,14 +663,13 @@ static DECLFR (Mapper435_interceptPRGRead_submapper1) {
 
 static void Mapper435_Power() {
 	LatchPower();
-	dipswitch = 0;
+	dipswitch = FCEU_Jumper();
 	SetReadHandler(0x8000, 0xFFFF, submapper == 1? Mapper435_interceptPRGRead_submapper1: Mapper435_interceptPRGRead_submapper0);
 	M435Sync();
 }
 
 static void Mapper435_Reset() {
 	latche = 0;
-	dipswitch++;
 	M435Sync();
 }
 
@@ -747,13 +739,12 @@ static DECLFR(M488Read) {
 }
 
 static void M488Reset(void) {
-	dipswitch++;
 	latche =0;
 	M488Sync();
 }
 
 void Mapper488_Init(CartInfo *info) {
-	dipswitch = 0;
+	dipswitch = FCEU_Jumper();
 	Latch_Init(info, M488Sync, M488Read, 0x0000, 0x8000, 0xFFFF, 0);
 	info->Reset = M488Reset;
 	AddExState(&dipswitch, 1, 0, "DIPSW");

@@ -65,7 +65,7 @@ static DECLFW(Mapper221Write) {
 
 static void UNLN625092Power(void) {
 	reg[0] = reg[1] = 0;
-	pad = 0;
+	pad = FCEU_Jumper();
 	sync();
 	SetReadHandler(0x6000, 0x7FFF, readPad);
 	SetWriteHandler(0x8000, 0xFFFF, Mapper221Write);
@@ -73,7 +73,6 @@ static void UNLN625092Power(void) {
 
 static void UNLN625092Reset(void) {
 	reg[0] = reg[1] = 0;
-	pad++;
 	sync();
 }
 

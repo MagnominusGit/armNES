@@ -22,6 +22,7 @@ void ResetGameLoaded(void);
 #define DECLFW(x) void FP_FASTAPASS(2) x(uint32_t A, uint8_t V)
 
 void FCEU_MemoryRand(uint8_t *ptr, uint32_t size);
+uint8_t FCEU_Jumper(void);
 void FCEU_MemoryRand_Reseed(uint32_t seed);
 void FASTAPASS(3) SetReadHandler(int32_t start, int32_t end, readfunc func);
 void FASTAPASS(3) SetWriteHandler(int32_t start, int32_t end, writefunc func);

@@ -26,7 +26,6 @@ static uint8_t reg[16];
 static uint8_t scratch[4];
 static uint8_t flags;
 static uint8_t pad;
-static uint8_t forcePadValue;
 static int mapper;
 static uint8_t submapper;
 
@@ -192,11 +191,6 @@ static DECLFW (writePRGRAM) {
 static void reset () {
 	int i;
 	for (i = 0; i < 16; i++) reg[i] = 0;
-	if (forcePadValue == 0)
-		pad++;
-	else
-	if (forcePadValue == 2)
-		pad = PAL? 0: 1;
 	X6502_IRQEnd(FCEU_IQEXT);
 	flags = 0;
 	sync();
@@ -214,11 +208,7 @@ static void power () {
 	GameHBIRQHook = scanlineCounter;
 	for (i = 0; i < 16; i++) reg[i] = 0;
 	for (i = 0; i < 4; i++) scratch[i] = 0;
-	if (forcePadValue == 0)
-		pad = 0;
-	else
-	if (forcePadValue == 2)
-		pad = PAL? 0: 1;
+	pad = FCEU_Jumper();
 	flags = 0;
 	sync();
 	if (PRGsize[0x10]) FCEU_CheatAddRAM((PRGsize[0x10] >> 10) < 8 ? (PRGsize[0x10] >> 10) : 8, 0x6000, PRGptr[0x10]);
@@ -237,7 +227,6 @@ void Mapper83_Init (CartInfo *info) {
 		if (info->PRGRomSize ==1024*1024) submapper = 2; else
 		if (info->PRGRomSize ==512*1024) submapper = 3;
 	}
-	forcePadValue = 0;
 	if (submapper == 2) WRAM_init(info, 32);
 	info->Power = power;
 	info->Reset = reset;
@@ -248,7 +237,6 @@ void Mapper83_Init (CartInfo *info) {
 void Mapper264_Init (CartInfo *info) {
 	mapper = 264;
 	submapper = info->submapper;
-	forcePadValue = 0;
 	info->Power = power;
 	info->Reset = reset;
 	GameStateRestore = restore;
