@@ -257,6 +257,8 @@ struct NES {
 	int cpuClock, ppuClock, ppuCpuClock;
 	int cpuPeriod, ppuPeriod;
 	int ppuLag, ppuQuietTicks, mapperQuietTicks;
+	// Something needs every CPU cycle stepped in full: exact timing or a board hook
+	bool slowCycles;
 	// APU cycles the CPU has passed but the APU hasn't run, and how many can pass before it must
 	int apuPending, apuQuiet;
 	bool ppuEveryCycle;

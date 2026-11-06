@@ -74,12 +74,11 @@ int main(int argc, char** argv) {
 	b.audioOut = audioB;
 	a.audioCapacity = b.audioCapacity = 8192;
 	a.exactPpu = true;
+	a.exactTiming = true;
 	if (!nesLoad(&a, data, size) || !nesLoad(&b, data, size)) {
 		printf("UNSUPPORTED\n");
 		return 3;
 	}
-	a.exactTiming = true;
-	a.exactPpu = true;
 	// A fixed button script: Start, then A and directions in turn
 	for (int frame = 0; frame < frames; frame++) {
 		uint8_t pad = 0;

@@ -165,19 +165,44 @@ static inline void finishCycle(struct NES* nes) {
 	nes->cpuClock = period;
 }
 
+// A whole CPU cycle when nothing the CPU can see changes in it: the PPU and the board's IRQ stay
+// quiet past clock 7, so the NMI and IRQ lines are what they were
+static inline bool quietCycle(const struct NES* nes) {
+	int lag = nes->ppuLag + 8;
+	return nes->cpuClock == 0 && lag < nes->ppuQuietTicks && lag < nes->mapperQuietTicks &&
+		nes->apuPending < nes->apuQuiet;
+}
+
 static inline void endCycle(struct NES* nes) {
 	struct Cpu* cpu = &nes->cpu;
 	// A 1-cycle DMA that this cycle didn't run never runs
-	if (cpu->dmcDma && nes->apu.dmc.implicitAbort) {
+	if (__builtin_expect(cpu->dmcDma, 0) && nes->apu.dmc.implicitAbort) {
 		nes->apu.dmc.implicitAbort = false;
 	}
-	if (nes->board->cpuCycle) {
-		nes->board->cpuCycle(nes);
-	}
-	if (nes->exactTiming) {
-		do {
-			tick(nes);
-		} while (nes->cpuClock != nes->cpuPeriod);
+	if (__builtin_expect(nes->slowCycles, 0)) {
+		if (nes->board->cpuCycle) {
+			nes->board->cpuCycle(nes);
+		}
+		if (nes->exactTiming) {
+			do {
+				tick(nes);
+			} while (nes->cpuClock != nes->cpuPeriod);
+		} else {
+			finishCycle(nes);
+		}
+	} else if (quietCycle(nes)) {
+		int period = nes->cpuPeriod;
+		nes->masterClock += period;
+		nes->ppuLag += period;
+		nes->apuPending++;
+		bool out = ppuNmiOutput(nes);
+		cpu->nmiLine |= out;
+		if (cpu->opcodeCycle && !out) {
+			cpu->nmiLine = false;
+		}
+		apuLatchIrq(nes);
+		cpu->irqSampled = cpu->irqLine != 0;
+		nes->cpuClock = period;
 	} else {
 		finishCycle(nes);
 	}
@@ -271,12 +296,24 @@ static void dmaCycle(struct NES* nes) {
 }
 
 static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
-	nes->cpu.addressBus = address;
+	struct Cpu* cpu = &nes->cpu;
+	cpu->addressBus = address;
 	while (__builtin_expect(dmaPending(nes), 0)) {
 		dmaCycle(nes);
 	}
 	startCycle(nes);
-	uint8_t value = busRead(nes, address);
+	uint8_t value;
+	uint8_t* page = nes->prgPages[address >> 12];
+	if (address >= 0x8000 && page && !(nes->readHooks & (1 << (address >> 12)))) {
+		// Program ROM, the common case
+		value = page[address & 0xFFF];
+		cpu->openBus = cpu->internalBus = value;
+	} else if (address < 0x2000) {
+		value = nes->ram[address & 0x7FF];
+		cpu->openBus = cpu->internalBus = value;
+	} else {
+		value = busRead(nes, address);
+	}
 	endCycle(nes);
 	return value;
 }
