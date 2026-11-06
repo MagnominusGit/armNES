@@ -17,6 +17,8 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 	} else if (nes->readHooks & (1 << (address >> 12))) {
 		nesPpuSync(nes);
 		value = nes->board->read(nes, address);
+		// The read may have acknowledged the board's IRQ
+		nes->mapperQuietTicks = 0;
 	} else {
 		uint8_t* page = address >= 0x4020 ? nes->prgPages[address >> 12] : NULL;
 		if (page) {

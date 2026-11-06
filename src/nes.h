@@ -107,6 +107,8 @@ struct Ppu {
 	uint8_t nextCount;
 	bool nextZero;
 	uint8_t hitDelay;
+	// The sprite pattern fetches are under way, for boards with separate sprite CHR banks
+	bool spriteFetch;
 	// The master clock of the dot being stepped
 	uint64_t dotTick;
 	// $2007 reads and writes going through the PPU: how many dots in (0 for none) and the address
@@ -214,6 +216,8 @@ struct Board {
 	void (*m2Rise)(struct NES*);
 	// PPU dots during which the board's IRQ line can't change on its own
 	int (*irqQuietDots)(struct NES*);
+	// The start of each line, while rendering (and line 240 to end the frame)
+	void (*scanline)(struct NES*, int line);
 	// The board's own sound, mixed with the APU's
 	int (*audio)(struct NES*);
 	// Restore pointers from registers after a state load

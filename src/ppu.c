@@ -835,6 +835,12 @@ void ppuStep(struct NES* nes) {
 	if (ppu->oam2Reset) {
 		ppu->oam2Reset--;
 	}
+	ppu->spriteFetch = renderLine(nes) && ppu->dot >= 257 && ppu->dot <= 320;
+	// Line 0's dot 0 is skipped on odd frames; the line still starts
+	bool lineStart = ppu->dot == 0 || (ppu->dot == 1 && ppu->scanline == 0 && ppu->skippedDot);
+	if (lineStart && ppu->scanline <= 240 && nes->board->scanline && (rendering(ppu) || ppu->scanline == 240)) {
+		nes->board->scanline(nes, ppu->scanline);
+	}
 	if (renderLine(nes)) {
 		spriteEvaluation(nes);
 		if (renderingDelayed(ppu) && (ppu->dot == 63 || ppu->dot == 255 || ppu->dot == 339)) {

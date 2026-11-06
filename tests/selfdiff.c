@@ -35,6 +35,12 @@ static const char* differs(struct NES* a, struct NES* b) {
 		return "frame";
 	}
 	if (memcmp(a->ram, b->ram, sizeof(a->ram))) {
+		for (size_t i = 0; i < sizeof(a->ram); i++) {
+			if (a->ram[i] != b->ram[i]) {
+				printf("  ram $%04zx: %02x/%02x\n", i, a->ram[i], b->ram[i]);
+				break;
+			}
+		}
 		return "ram";
 	}
 	if (a->cpu.pc != b->cpu.pc || a->cpu.a != b->cpu.a || a->cpu.x != b->cpu.x || a->cpu.y != b->cpu.y ||
@@ -75,6 +81,8 @@ int main(int argc, char** argv) {
 	a.audioCapacity = b.audioCapacity = 8192;
 	a.exactPpu = true;
 	a.exactTiming = true;
+	// SELFDIFF_FAST_EXACT_TIMING: the fast PPU on every master clock, to tell the two apart
+	b.exactTiming = getenv("SELFDIFF_FAST_EXACT_TIMING") != NULL;
 	if (!nesLoad(&a, data, size) || !nesLoad(&b, data, size)) {
 		printf("UNSUPPORTED\n");
 		return 3;

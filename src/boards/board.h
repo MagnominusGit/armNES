@@ -104,6 +104,9 @@ BOARD(boardJy);
 // bandai.c
 BOARD(boardBandai);
 
+// mmc5.c
+BOARD(boardMmc5);
+
 // discrete.c
 const struct Board* discreteFind(int mapper, int submapper);
 

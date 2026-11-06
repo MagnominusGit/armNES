@@ -17,6 +17,8 @@ const struct Board* boardFind(int mapper, int submapper) {
 		return &boardCnrom;
 	case 4:
 		return &boardMmc3;
+	case 5:
+		return &boardMmc5;
 	case 7:
 		return &boardAxrom;
 	case 9:

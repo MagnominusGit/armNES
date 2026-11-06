@@ -146,6 +146,7 @@ static void fetchSprites(struct NES* nes) {
 	ppu->lineHasSprites = false;
 	// Fetched in slot order, as boards that latch on tiles see them
 	uint8_t los[8], his[8];
+	ppu->spriteFetch = true;
 	bool fetched[8] = { false };
 	for (int slot = 0; slot < ppu->nextCount; slot++) {
 		if ((uint8_t) (line - ppu->oam2[slot * 4]) >= height) {
@@ -156,6 +157,7 @@ static void fetchSprites(struct NES* nes) {
 		his[slot] = chrRead(nes, address | 8);
 		fetched[slot] = true;
 	}
+	ppu->spriteFetch = false;
 	for (int slot = ppu->nextCount - 1; slot >= 0; slot--) {
 		if (!fetched[slot]) {
 			continue;
@@ -356,6 +358,22 @@ static inline void renderDot(struct NES* nes, int dot, bool visible, bool pre) {
 	}
 }
 
+// The PPU outputs each pixel three dots after choosing its color, with the emphasis and grayscale
+// of that moment: when they change, the pixels drawn in the last three dots take the new ones
+static void retint(struct NES* nes) {
+	struct Ppu* ppu = &nes->ppu;
+	if (ppu->scanline >= 240 || !(ppu->scanline || !ppu->skippedDot)) {
+		return;
+	}
+	uint16_t emphasis = (ppu->emphRed ? 0x40 : 0) | (ppu->emphGreen ? 0x80 : 0) | (ppu->emphBlue ? 0x100 : 0);
+	uint16_t* line = &nes->frameBuffer[ppu->scanline * NES_WIDTH];
+	for (int x = ppu->dot - 3; x <= ppu->dot - 1; x++) {
+		if (x >= 0 && x < 256) {
+			line[x] = (line[x] & (ppu->gray ? 0x30 : 0x3F)) | emphasis;
+		}
+	}
+}
+
 static void vramIncrement(struct NES* nes) {
 	struct Ppu* ppu = &nes->ppu;
 	if (rendering(ppu) && (ppu->scanline < 240 || ppu->scanline == preLine(nes))) {
@@ -395,6 +413,7 @@ static void registerEffects(struct NES* nes) {
 		ppu->emphRed = ppu->value2001 & 0x20;
 		ppu->emphGreen = ppu->value2001 & 0x40;
 		ppu->emphBlue = ppu->value2001 & 0x80;
+		retint(nes);
 	}
 	if (ppu->vramReadStep) {
 		switch (++ppu->vramReadStep) {
@@ -457,6 +476,9 @@ static inline void step(struct NES* nes) {
 	}
 	int line = ppu->scanline, dot = ppu->dot;
 	ppu->dots++;
+	if (dot == 0 && line <= 240 && nes->board->scanline && (rendering(ppu) || line == 240)) {
+		nes->board->scanline(nes, line);
+	}
 	if (ppu->pendingHit && --ppu->hitDelay == 0) {
 		ppu->pendingHit = false;
 		ppu->hit = true;
@@ -893,6 +915,7 @@ void fastWriteRegister(struct NES* nes, uint16_t address, uint8_t value, uint8_t
 		}
 		ppu->emphRed = value & 0x20;
 		ppu->emphGreen = value & 0x40;
+		retint(nes);
 		break;
 	}
 	case 3:

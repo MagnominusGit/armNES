@@ -20,6 +20,7 @@ set(CORE_SOURCES
 	src/boards/jy.c
 	src/boards/list.c
 	src/boards/mmc3.c
+	src/boards/mmc5.c
 	src/boards/multicart.c
 	src/boards/sachen.c
 	src/bus.c
