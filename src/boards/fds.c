@@ -478,6 +478,11 @@ int fdsSide(struct NES* nes) {
 	return nes->board == &boardFds ? FD->side : -1;
 }
 
+// The drive's motor runs with a disk in it: the game is loading or saving
+bool fdsBusy(struct NES* nes) {
+	return nes->board == &boardFds && FD->side >= 0 && FD->scanning;
+}
+
 void fdsInsert(struct NES* nes, int side) {
 	if (nes->board == &boardFds && side < nes->cart.diskSides) {
 		FD->side = side;

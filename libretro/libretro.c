@@ -165,6 +165,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"with its color fringes and the blending some games' dithering relied on, S-Video sharper. It "
 		"makes its own colors, so the palette doesn't apply. Takes more CPU time.",
 		NULL, NULL, { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_fds_fast", "Disk System Fast Loading", NULL,
+		"Runs the Disk System up to 16 times as fast while the drive reads or writes the disk, showing only "
+		"every 16th frame and dropping its sound.",
+		NULL, NULL, { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_aspect", "Aspect Ratio", NULL,
 		"4:3 is the picture as a TV showed it. 8:7 PAR keeps the console's pixel shape (8:7 on NTSC, about "
 		"11:8 on PAL). 1:1 shows square pixels.",
@@ -517,12 +521,14 @@ static int turboPeriod = 4;
 static bool allowOpposing;
 static unsigned turboFrame;
 static int fourPlayers, expansion, zapperAim;
+static bool fdsFast;
 
 static void readInputOptions(void) {
 	turboPeriod = optionChoice(environ_cb, "armnes_turbo", turboChoices, 6, 4);
 	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
 	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 3, 0);
 	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 4, AIM_LIGHT_GUN);
+	fdsFast = optionChoice(environ_cb, "armnes_fds_fast", onOffChoices, 2, 0);
 	expansion = optionChoice(environ_cb, "armnes_expansion", expansionChoices, 4, EXPANSION_NONE);
 }
 
@@ -724,6 +730,9 @@ void retro_run(void) {
 		}
 	}
 	nesRunFrame(&nes);
+	for (int extra = 0; fdsFast && extra < 15 && fdsBusy(&nes); extra++) {
+		nesRunFrame(&nes);
+	}
 	checkOptions();
 	int scale = 1;
 	if (filter) {

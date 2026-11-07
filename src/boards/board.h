@@ -131,6 +131,7 @@ BOARD(boardFds);
 bool fdsCartLoad(struct NES*, const uint8_t* data, size_t size);
 int fdsSide(struct NES*);
 void fdsInsert(struct NES*, int side);
+bool fdsBusy(struct NES*);
 
 // discrete.c
 const struct Board* discreteFind(int mapper, int submapper);
