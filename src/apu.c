@@ -458,17 +458,6 @@ static inline void levelChange(struct NES* nes, int32_t level) {
 	nes->audioChangeCount++;
 }
 
-static uint8_t padBits(uint8_t pad) {
-	// Shifted out from bit 7: A first
-	uint8_t out = 0;
-	for (int i = 0; i < 8; i++) {
-		if (pad & (1 << i)) {
-			out |= 0x80 >> i;
-		}
-	}
-	return out;
-}
-
 void apuCycle(struct NES* nes) {
 	struct Apu* apu = &nes->apu;
 	struct Dmc* d = &apu->dmc;
@@ -489,8 +478,9 @@ void apuCycle(struct NES* nes) {
 		if (apu->strobing) {
 			if (!apu->strobed) {
 				apu->strobed = true;
-				apu->padShift[0] = padBits(nes->pads[0]);
-				apu->padShift[1] = padBits(nes->pads[1]);
+				apu->padShift[0] = inputReport(nes, 0);
+				apu->padShift[1] = inputReport(nes, 1);
+				inputLatch(nes);
 			}
 		} else {
 			apu->strobed = false;
@@ -714,13 +704,14 @@ uint8_t apuConflictRead(struct NES* nes, uint8_t value, uint16_t address, bool d
 	case 0x16:
 	case 0x17: {
 		int port = address & 1;
-		uint8_t bit = (apu->padShift[port] & 0x80) ? 1 : 0;
+		uint8_t bit = nes->input.device[port] == DEVICE_PAD ? apu->padShift[port] >> 31 : 0;
+		uint8_t devices = inputBits(nes, port);
 		apu->padShiftDelay[port] = 2;
 		apu->strobed = false;
 		if (cpu->oamDma && driven) {
 			break;
 		}
-		value = bit | (cpu->openBus & 0xE0);
+		value = bit | devices | (cpu->openBus & 0xE0);
 		cpu->openBus = value;
 		break;
 	}
@@ -734,6 +725,7 @@ void apuWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Dmc* d = &apu->dmc;
 	apu->mixDirty = true;
 	if (address == 0x4016) {
+		inputWrite(nes, value);
 		apu->strobing = value & 1;
 		if (!apu->strobing) {
 			apu->strobed = false;

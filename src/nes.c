@@ -12,6 +12,7 @@
 void nesInit(struct NES* nes) {
 	memset(nes, 0, sizeof(*nes));
 	nes->jumper = -1;
+	nes->input.zapperX = nes->input.zapperY = -1;
 	nes->frameBuffer = calloc(NES_WIDTH * NES_HEIGHT, sizeof(uint16_t));
 	nes->sampleRate = 48000;
 }

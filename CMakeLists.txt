@@ -30,6 +30,7 @@ set(CORE_SOURCES
 	src/cart.c
 	src/cheat.c
 	src/cpu.c
+	src/input.c
 	src/nes.c
 	src/ppu.c
 	src/ppu-fast.c

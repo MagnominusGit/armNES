@@ -190,7 +190,7 @@ struct Apu {
 	uint8_t registers[0x10];
 	// Controllers: the strobe latches on the APU's get-to-put edge; reads shift two cycles later
 	bool strobing, strobed;
-	uint8_t padShift[2];
+	uint32_t padShift[2];
 	uint8_t padShiftDelay[2];
 	uint64_t cycles;
 	int32_t expansion;
@@ -267,6 +267,34 @@ struct Cart {
 };
 
 enum { MAX_CHEATS = 128 };
+
+// Controller ports and the Famicom expansion port (input.c)
+enum { DEVICE_PAD, DEVICE_ZAPPER, DEVICE_PADDLE, DEVICE_POWER_PAD, DEVICE_NONE };
+enum { EXPANSION_NONE, EXPANSION_HORI, EXPANSION_PADDLE, EXPANSION_MAT, EXPANSION_KEYBOARD };
+
+// What the frontend plugged in and holds: players 3 and 4 (pads), the Zapper's aim (-1 off the
+// screen), the paddle's button, the Power Pad's 12 buttons
+struct InputConfig {
+	uint8_t device[2];
+	bool fourScore;
+	uint8_t expansion;
+	uint8_t pads[2];
+	bool mic;
+	int16_t zapperX, zapperY;
+	bool zapperTrigger;
+	bool paddleButton;
+	uint16_t powerPad;
+};
+
+// The devices' own state, with the paddle's knob (0-255)
+struct InputState {
+	uint32_t hori[2];
+	uint16_t knob[2];
+	uint8_t powerLow[2], powerHigh[2];
+	uint8_t keyboardRow, paddle;
+	bool keyboardColumn, keyboardEnable;
+	uint8_t lastWrite;
+};
 
 struct Cheat {
 	uint16_t address;
@@ -365,6 +393,8 @@ struct NES {
 	// Cheats from the frontend
 	struct Cheat cheats[MAX_CHEATS];
 	int cheatCount;
+	struct InputConfig input;
+	struct InputState inputState;
 };
 
 // cart.c
@@ -409,6 +439,12 @@ static inline bool nesOverclockHold(struct NES* nes, int line) {
 	}
 	return nes->overclockHolding;
 }
+
+// input.c
+uint32_t inputReport(const struct NES*, int port);
+void inputLatch(struct NES*);
+uint8_t inputBits(struct NES*, int port);
+void inputWrite(struct NES*, uint8_t value);
 
 // cheat.c
 void nesCheatClear(struct NES*);

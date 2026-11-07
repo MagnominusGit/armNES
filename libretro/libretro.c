@@ -7,6 +7,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 // The libretro core: one NES, its picture through an NTSC palette, its sound at 48 kHz, two pads.
@@ -60,6 +61,10 @@ static struct OptionChoice jumperChoices[] = {
 
 enum { ASPECT_TV, ASPECT_PAR, ASPECT_SQUARE };
 
+#define DEVICE_ID_ZAPPER RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_LIGHTGUN, 0)
+#define DEVICE_ID_PADDLE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 0)
+#define DEVICE_ID_POWER_PAD RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0)
+
 // Overclocking: frames' worth of extra CPU time, negative for after the picture instead of vblank
 static struct OptionChoice overclockChoices[] = {
 	{ "Off", 0 },
@@ -83,6 +88,28 @@ static struct OptionChoice turboChoices[] = {
 static struct OptionChoice onOffChoices[] = {
 	{ "Off", 0 },
 	{ "On", 1 },
+};
+
+static struct OptionChoice fourPlayerChoices[] = {
+	{ "Off", 0 },
+	{ "Four Score", 1 },
+	{ "Famicom adapter", 2 },
+};
+
+static struct OptionChoice expansionChoices[] = {
+	{ "None", EXPANSION_NONE },
+	{ "Paddle", EXPANSION_PADDLE },
+	{ "Power Pad", EXPANSION_MAT },
+	{ "Keyboard", EXPANSION_KEYBOARD },
+};
+
+enum { AIM_LIGHT_GUN, AIM_MOUSE, AIM_STICK, AIM_STICK_PAN };
+
+static struct OptionChoice aimChoices[] = {
+	{ "Light gun", AIM_LIGHT_GUN },
+	{ "Mouse", AIM_MOUSE },
+	{ "Right stick (absolute)", AIM_STICK },
+	{ "Right stick (pan)", AIM_STICK_PAN },
 };
 
 static struct OptionChoice spriteChoices[] = {
@@ -139,6 +166,23 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"Lets left and right (or up and down) be held together, which a pad can't do. A few games glitch "
 		"with it; some speedrun tricks use it.",
 		NULL, NULL, { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_four_players", "4 Players", NULL,
+		"Players 3 and 4 on controllers 3 and 4, through the NES Four Score or the Famicom's adapter on "
+		"the expansion port. Games read one or the other.",
+		NULL, NULL, { { "Off", NULL }, { "Four Score", NULL }, { "Famicom adapter", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_expansion", "Famicom Expansion Port", NULL,
+		"A device in the Famicom's expansion port. The paddle follows the mouse; the Power Pad (the "
+		"Famicom's, read by rows) takes controller 1's buttons; the keyboard takes the keyboard (turn on "
+		"Game Focus).",
+		NULL, NULL, { { "None", NULL }, { "Paddle", NULL }, { "Power Pad", NULL },
+		{ "Keyboard", NULL }, { NULL, NULL } }, "None" },
+	{ "armnes_zapper_aim", "Zapper Aim", NULL,
+		"How the Zapper aims. Light gun points where the light gun (or the mouse pointer) is. Mouse moves "
+		"a crosshair; the left button fires. Right stick (absolute) puts the crosshair where the stick "
+		"points; Right stick (pan) moves it. With the stick, controller 1's R or R2 fires. Touching the "
+		"screen aims and fires there with any of them.",
+		NULL, NULL, { { "Light gun", NULL }, { "Mouse", NULL }, { "Right stick (absolute)", NULL },
+		{ "Right stick (pan)", NULL }, { NULL, NULL } }, "Light gun" },
 	{ "armnes_jumper", "Cart Jumper", NULL,
 		"Some carts have solder pads or DIP switches that pick their menu, the games listed, a language or "
 		"the video timing. Auto uses the setting known for the dump, or 0. Changing it restarts the game, "
@@ -318,6 +362,20 @@ void retro_set_environment(retro_environment_t cb) {
 	}
 	bool noGame = false;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &noGame);
+	static const struct retro_controller_description ports[] = {
+		{ "Controller", RETRO_DEVICE_JOYPAD },
+		{ "Zapper", DEVICE_ID_ZAPPER },
+		{ "Paddle", DEVICE_ID_PADDLE },
+		{ "Power Pad", DEVICE_ID_POWER_PAD },
+		{ "None", RETRO_DEVICE_NONE },
+	};
+	static const struct retro_controller_description pads[] = {
+		{ "Controller", RETRO_DEVICE_JOYPAD },
+	};
+	static const struct retro_controller_info info[] = {
+		{ ports, 5 }, { ports, 5 }, { pads, 1 }, { pads, 1 }, { NULL, 0 },
+	};
+	cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*) info);
 	optionsGive(cb, &options);
 }
 
@@ -368,9 +426,18 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 	info->timing.sample_rate = 48000;
 }
 
+static uint8_t portDevice[2];
+
 void retro_set_controller_port_device(unsigned port, unsigned device) {
-	(void) port;
-	(void) device;
+	if (port < 2) {
+		switch (device) {
+		case DEVICE_ID_ZAPPER: portDevice[port] = DEVICE_ZAPPER; break;
+		case DEVICE_ID_PADDLE: portDevice[port] = DEVICE_PADDLE; break;
+		case DEVICE_ID_POWER_PAD: portDevice[port] = DEVICE_POWER_PAD; break;
+		case RETRO_DEVICE_NONE: portDevice[port] = DEVICE_NONE; break;
+		default: portDevice[port] = DEVICE_PAD; break;
+		}
+	}
 }
 
 void retro_reset(void) {
@@ -382,10 +449,14 @@ void retro_reset(void) {
 static int turboPeriod = 4;
 static bool allowOpposing;
 static unsigned turboFrame;
+static int fourPlayers, expansion, zapperAim;
 
 static void readInputOptions(void) {
 	turboPeriod = optionChoice(environ_cb, "armnes_turbo", turboChoices, 6, 4);
 	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
+	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 3, 0);
+	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 4, AIM_LIGHT_GUN);
+	expansion = optionChoice(environ_cb, "armnes_expansion", expansionChoices, 4, EXPANSION_NONE);
 }
 
 static uint8_t readPad(unsigned port) {
@@ -401,7 +472,7 @@ static uint8_t readPad(unsigned port) {
 		}
 	}
 	// Turbo A and B: held for the first half of each period
-	if (turboPeriod && turboFrame % turboPeriod < turboPeriod / 2) {
+	if (turboPeriod && turboFrame % (unsigned) turboPeriod < (unsigned) turboPeriod / 2) {
 		if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X)) {
 			pad |= 0x01;
 		}
@@ -421,12 +492,161 @@ static uint8_t readPad(unsigned port) {
 	return pad;
 }
 
+// The Power Pads' 12 buttons, 1 to 12, from a controller's
+static const unsigned matButtons[12] = {
+	RETRO_DEVICE_ID_JOYPAD_Y, RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_B, RETRO_DEVICE_ID_JOYPAD_A,
+	RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_RIGHT, RETRO_DEVICE_ID_JOYPAD_DOWN,
+	RETRO_DEVICE_ID_JOYPAD_L, RETRO_DEVICE_ID_JOYPAD_R, RETRO_DEVICE_ID_JOYPAD_SELECT, RETRO_DEVICE_ID_JOYPAD_START,
+};
+
+static uint16_t readMat(unsigned port) {
+	uint16_t buttons = 0;
+	for (int i = 0; i < 12; i++) {
+		if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, matButtons[i])) {
+			buttons |= 1 << i;
+		}
+	}
+	return buttons;
+}
+
+static int touchX, touchY, touchFrames;
+
+// The crosshair the mouse and stick move, in 256ths of a pixel, and whether it's drawn
+static int crossX = 128 << 8, crossY = 120 << 8;
+static bool crossShown;
+
+// Aim from the mouse or the stick: false for the light gun
+static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
+	int left = cropHorizontal << 8, right = (NES_WIDTH - 1 - cropHorizontal) << 8;
+	int top = cropVertical << 8, bottom = (NES_HEIGHT - 1 - cropVertical) << 8;
+	switch (zapperAim) {
+	case AIM_MOUSE:
+		// Half a pixel a count, from this port's mouse and the first one
+		for (unsigned p = 0; p <= port; p += port ? port : 1) {
+			crossX += input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X) * 128;
+			crossY += input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y) * 128;
+			*trigger |= input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_LEFT) != 0;
+			*away |= input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_RIGHT) != 0;
+		}
+		break;
+	case AIM_STICK:
+	case AIM_STICK_PAN: {
+		int x = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
+		int y = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
+		if (zapperAim == AIM_STICK) {
+			crossX = left + (x + 0x8000) * ((right - left) >> 8) / 0xFFFF * 256;
+			crossY = top + (y + 0x8000) * ((bottom - top) >> 8) / 0xFFFF * 256;
+		} else {
+			// Up to 4 pixels a frame, past a small dead zone
+			crossX += abs(x) > 0x1000 ? x / 32 : 0;
+			crossY += abs(y) > 0x1000 ? y / 32 : 0;
+		}
+		*trigger |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R) ||
+			input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2);
+		break;
+	}
+	default:
+		return false;
+	}
+	crossX = crossX < left ? left : crossX > right ? right : crossX;
+	crossY = crossY < top ? top : crossY > bottom ? bottom : crossY;
+	return true;
+}
+
+static void drawCrosshair(void) {
+	int cx = crossX >> 8, cy = crossY >> 8;
+	for (int pass = 0; pass < 2; pass++) {
+		for (int d = -4; d <= 4; d++) {
+			for (int w = -1; w <= 1; w++) {
+				if (pass && (w || d == 0 || abs(d) == 4)) {
+					continue;
+				}
+				int points[2][2] = { { cx + d, cy + w }, { cx + w, cy + d } };
+				for (int i = 0; i < 2; i++) {
+					int x = points[i][0], y = points[i][1];
+					if (x >= 0 && x < NES_WIDTH && y >= 0 && y < NES_HEIGHT) {
+						video[y * NES_WIDTH + x] = pass ? 0xFFFF : 0x0000;
+					}
+				}
+			}
+		}
+	}
+}
+
+static void readDevices(void) {
+	struct InputConfig* in = &nes.input;
+	crossShown = false;
+	in->device[0] = portDevice[0];
+	in->device[1] = portDevice[1];
+	in->fourScore = fourPlayers == 1;
+	in->expansion = fourPlayers == 2 ? EXPANSION_HORI : (uint8_t) expansion;
+	for (unsigned port = 0; port < 2; port++) {
+		nes.pads[port] = in->device[port] == DEVICE_PAD ? readPad(port) : 0;
+		in->pads[port] = fourPlayers ? readPad(port + 2) : 0;
+	}
+	in->mic = in->device[1] == DEVICE_PAD && input_state_cb(1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
+	in->powerPad = 0;
+	for (unsigned port = 0; port < 2; port++) {
+		switch (in->device[port]) {
+		case DEVICE_ZAPPER: {
+			// The aim on the shown picture; off it, or with the reload button, at nothing. A touch aims
+			// and fires there, and the aim stays a moment after it, while the game looks for the light.
+			int x = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X);
+			int y = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y);
+			bool away = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN) ||
+				input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_RELOAD);
+			in->zapperTrigger = input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_TRIGGER) ||
+				input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_RELOAD);
+			bool trigger = false, offscreen = false;
+			crossShown = aimCrosshair(port, &trigger, &offscreen);
+			if (crossShown) {
+				in->zapperTrigger = trigger || offscreen;
+				away = offscreen;
+			}
+			if (input_state_cb(port, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_PRESSED)) {
+				touchX = input_state_cb(port, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_X);
+				touchY = input_state_cb(port, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_Y);
+				touchFrames = 30;
+				in->zapperTrigger = true;
+			}
+			int width = NES_WIDTH - 2 * cropHorizontal, height = NES_HEIGHT - 2 * cropVertical;
+			if (touchFrames) {
+				touchFrames--;
+				crossShown = false;
+				in->zapperX = (int16_t) (cropHorizontal + (touchX + 0x7FFF) * width / 0xFFFF);
+				in->zapperY = (int16_t) (cropVertical + (touchY + 0x7FFF) * height / 0xFFFF);
+			} else if (crossShown) {
+				in->zapperX = away ? -1 : (int16_t) (crossX >> 8);
+				in->zapperY = away ? -1 : (int16_t) (crossY >> 8);
+			} else {
+				in->zapperX = away ? -1 : (int16_t) (cropHorizontal + (x + 0x7FFF) * width / 0xFFFF);
+				in->zapperY = away ? -1 : (int16_t) (cropVertical + (y + 0x7FFF) * height / 0xFFFF);
+			}
+			break;
+		}
+		case DEVICE_POWER_PAD:
+			in->powerPad = readMat(port);
+			break;
+		}
+	}
+	// The paddle's knob follows the mouse across its range
+	unsigned mousePort = in->device[0] == DEVICE_PADDLE ? 0 : in->device[1] == DEVICE_PADDLE ? 1 :
+		in->expansion == EXPANSION_PADDLE ? 0 : 4;
+	if (mousePort < 4) {
+		int position = nes.inputState.paddle + input_state_cb(mousePort, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X);
+		nes.inputState.paddle = (uint8_t) (position < 0 ? 0 : position > 255 ? 255 : position);
+		in->paddleButton = input_state_cb(mousePort, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_LEFT);
+	}
+	if (in->expansion == EXPANSION_MAT) {
+		in->powerPad = readMat(0);
+	}
+}
+
 void retro_run(void) {
 	input_poll_cb();
 	turboFrame++;
-	nes.pads[0] = readPad(0);
-	nes.pads[1] = readPad(1);
-	if (nes.board == &boardYuxing) {
+	readDevices();
+	if (nes.board == &boardYuxing || nes.input.expansion == EXPANSION_KEYBOARD) {
 		memset(nes.keys, 0, sizeof(nes.keys));
 		for (unsigned key = 1; key < RETROK_LAST; key++) {
 			if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, key)) {
@@ -438,6 +658,9 @@ void retro_run(void) {
 	checkOptions();
 	for (int i = 0; i < NES_WIDTH * NES_HEIGHT; i++) {
 		video[i] = palette565[nes.frameBuffer[i] & 0x1FF];
+	}
+	if (crossShown) {
+		drawCrosshair();
 	}
 	video_cb(video + cropVertical * NES_WIDTH + cropHorizontal, NES_WIDTH - 2 * cropHorizontal,
 		NES_HEIGHT - 2 * cropVertical, NES_WIDTH * sizeof(uint16_t));
@@ -580,29 +803,26 @@ bool retro_load_game(const struct retro_game_info* game) {
 	if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) {
 		return false;
 	}
-	static const struct retro_input_descriptor descriptors[] = {
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Left" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Up" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Down" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "B" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Left" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Up" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Down" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "B" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" },
-		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
-		{ 0, 0, 0, 0, NULL },
+	static const struct { unsigned id; const char* name; } buttons[] = {
+		{ RETRO_DEVICE_ID_JOYPAD_LEFT, "Left" }, { RETRO_DEVICE_ID_JOYPAD_UP, "Up" },
+		{ RETRO_DEVICE_ID_JOYPAD_DOWN, "Down" }, { RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right" },
+		{ RETRO_DEVICE_ID_JOYPAD_B, "B" }, { RETRO_DEVICE_ID_JOYPAD_A, "A" },
+		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
+		{ RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" }, { RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
 	};
+	static struct retro_input_descriptor descriptors[4 * 10 + 6];
+	unsigned count = 0;
+	for (unsigned port = 0; port < 4; port++) {
+		for (unsigned i = 0; i < 10; i++) {
+			descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_JOYPAD, 0, buttons[i].id, buttons[i].name };
+		}
+	}
+	descriptors[count++] = (struct retro_input_descriptor) { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Microphone" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Zapper Aim X" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Zapper Trigger" };
+	descriptors[count] = (struct retro_input_descriptor) { 0, 0, 0, 0, NULL };
 	environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
 
 	nesInit(&nes);

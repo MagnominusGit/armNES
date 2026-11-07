@@ -4,6 +4,7 @@
 #include "libretro.h"
 
 #include <dlfcn.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -128,9 +129,56 @@ static void audioSample(int16_t l, int16_t r) {
 static void inputPoll(void) {
 }
 
+// CORETEST_PADS=n: controllers 2 to n each hold a button: B, Select, Up
+// CORETEST_AIM="x,y": a light gun held there (-32767 to 32767), trigger twice a second
+// CORETEST_MOUSE="n[,m]": the mouse moves n a frame, right for 2 seconds then left, and m down; left
+// button twice a second
 static int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) {
-	(void) device;
-	(void) index;
+	if (device == RETRO_DEVICE_LIGHTGUN && getenv("CORETEST_AIM")) {
+		int x = 0, y = 0;
+		sscanf(getenv("CORETEST_AIM"), "%d,%d", &x, &y);
+		return id == RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X ? x : id == RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y ? y :
+			id == RETRO_DEVICE_ID_LIGHTGUN_TRIGGER ? frame % 30 < 3 : 0;
+	}
+	// CORETEST_TOUCH="x,y": a touch there for 2 frames, twice a second
+	if (device == RETRO_DEVICE_POINTER && getenv("CORETEST_TOUCH")) {
+		int x = 0, y = 0;
+		sscanf(getenv("CORETEST_TOUCH"), "%d,%d", &x, &y);
+		return id == RETRO_DEVICE_ID_POINTER_X ? x : id == RETRO_DEVICE_ID_POINTER_Y ? y :
+			id == RETRO_DEVICE_ID_POINTER_PRESSED ? frame % 30 < 2 : 0;
+	}
+	if (device == RETRO_DEVICE_MOUSE && getenv("CORETEST_MOUSE")) {
+		int step = 0, down = 0;
+		sscanf(getenv("CORETEST_MOUSE"), "%d,%d", &step, &down);
+		return id == RETRO_DEVICE_ID_MOUSE_X ? (frame % 240 < 120 ? step : -step) : id == RETRO_DEVICE_ID_MOUSE_Y ? down :
+			id == RETRO_DEVICE_ID_MOUSE_LEFT ? frame % 30 < 3 : 0;
+	}
+	// CORETEST_STICK="x,y": the right stick held there, R pressed twice a second
+	if (getenv("CORETEST_STICK") && device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
+		int x = 0, y = 0;
+		sscanf(getenv("CORETEST_STICK"), "%d,%d", &x, &y);
+		return id == RETRO_DEVICE_ID_ANALOG_X ? x : y;
+	}
+	if (getenv("CORETEST_STICK") && device == RETRO_DEVICE_JOYPAD && port == 0 && id == RETRO_DEVICE_ID_JOYPAD_R) {
+		return frame % 30 < 3;
+	}
+	// CORETEST_TYPE="text": typed from frame 300, a key every 10 frames; | is Return
+	if (device == RETRO_DEVICE_KEYBOARD && getenv("CORETEST_TYPE")) {
+		const char* text = getenv("CORETEST_TYPE");
+		unsigned i = (frame - 300) / 10;
+		if (frame < 300 || i >= strlen(text) || (frame - 300) % 10 >= 5) {
+			return 0;
+		}
+		char c = (char) tolower((unsigned char) text[i]);
+		return id == (c == '|' ? RETROK_RETURN : (unsigned) c);
+	}
+	if (device != RETRO_DEVICE_JOYPAD) {
+		return 0;
+	}
+	if (port && getenv("CORETEST_PADS") && port < (unsigned) atoi(getenv("CORETEST_PADS"))) {
+		static const unsigned held[4] = { 0, RETRO_DEVICE_ID_JOYPAD_B, RETRO_DEVICE_ID_JOYPAD_SELECT, RETRO_DEVICE_ID_JOYPAD_UP };
+		return port < 4 && id == held[port];
+	}
 	return port == 0 && ((id == RETRO_DEVICE_ID_JOYPAD_START && frame % 300 < 6) ||
 		(id == RETRO_DEVICE_ID_JOYPAD_RIGHT && frame % 240 < 120) || (id == RETRO_DEVICE_ID_JOYPAD_A && frame % 60 < 20));
 }
@@ -162,6 +210,8 @@ int main(int argc, char** argv) {
 	SYM(retro_get_system_av_info);
 	SYM(retro_unload_game);
 	SYM(retro_deinit);
+	SYM(retro_set_controller_port_device);
+	SYM(retro_get_memory_data);
 	p_retro_set_environment(environment);
 	p_retro_set_video_refresh(video);
 	p_retro_set_audio_sample(audioSample);
@@ -186,6 +236,13 @@ int main(int argc, char** argv) {
 	if (!p_retro_load_game(&game)) {
 		printf("LOAD FAILED\n");
 		return 3;
+	}
+	// CORETEST_PORTS="device,device": libretro device ids for ports 1 and 2
+	if (getenv("CORETEST_PORTS")) {
+		unsigned devices[2] = { 1, 1 };
+		sscanf(getenv("CORETEST_PORTS"), "%i,%i", (int*) &devices[0], (int*) &devices[1]);
+		p_retro_set_controller_port_device(0, devices[0]);
+		p_retro_set_controller_port_device(1, devices[1]);
 	}
 	struct retro_system_av_info av;
 	p_retro_get_system_av_info(&av);
@@ -231,6 +288,13 @@ int main(int argc, char** argv) {
 	bool same = hashes[0][0] == hashes[1][0] && hashes[0][1] == hashes[1][1];
 	printf("%s %ux%u aspect %.4f %.4f fps %.0f Hz, state %zu bytes, %zu audio frames, replay %s\n", same ? "OK" : "FAIL",
 		frameWidth, frameHeight, av.geometry.aspect_ratio, av.timing.fps, av.timing.sample_rate, stateSize, audioFrames, same ? "same" : "DIFFERS");
+	// CORETEST_RAM=n: the first n bytes of the console's RAM
+	if (getenv("CORETEST_RAM")) {
+		const uint8_t* ram = p_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+		for (int i = 0; ram && i < atoi(getenv("CORETEST_RAM")); i++) {
+			printf("%02X%c", ram[i], i % 16 == 15 ? '\n' : ' ');
+		}
+	}
 	p_retro_unload_game();
 	p_retro_deinit();
 	return same ? 0 : 1;

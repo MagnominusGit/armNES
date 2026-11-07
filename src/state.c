@@ -134,6 +134,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	int jumper = nes->jumper;
 	struct Cheat cheats[MAX_CHEATS];
 	int cheatCount = nes->cheatCount;
+	struct InputConfig input = nes->input;
 	uint16_t cheatPages = nes->cheatPages;
 	memcpy(cheats, nes->cheats, sizeof(cheats));
 	int overclockLines = nes->overclockLines;
@@ -160,6 +161,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->jumper = jumper;
 	memcpy(nes->cheats, cheats, sizeof(cheats));
 	nes->cheatCount = cheatCount;
+	nes->input = input;
 	nes->cheatPages = cheatPages;
 	nes->overclockLines = overclockLines;
 	nes->overclockPostRender = overclockPostRender;
