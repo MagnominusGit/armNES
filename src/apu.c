@@ -771,7 +771,7 @@ uint8_t apuConflictRead(struct NES* nes, uint8_t value, uint16_t address, bool d
 		if (cpu->oamDma && driven) {
 			break;
 		}
-		value = bit | devices | (cpu->openBus & 0xE0);
+		value = bit | devices | (nes->cart.vs ? 0 : cpu->openBus & 0xE0);
 		cpu->openBus = value;
 		break;
 	}

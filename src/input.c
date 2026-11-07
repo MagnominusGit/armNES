@@ -179,12 +179,24 @@ uint8_t inputBits(struct NES* nes, int port) {
 	if (!port && in->mic) {
 		bits |= 0x04;
 	}
+	// The VS. System's cabinet: service button, DIP switches 1-2 and coins on $4016, switches 3-8
+	// on $4017
+	if (nes->cart.vs) {
+		if (port) {
+			bits |= in->vsDip & 0xFC;
+		} else {
+			bits |= in->vsService << 2 | (in->vsDip & 3) << 3 | in->vsCoin[0] << 5 | in->vsCoin[1] << 6;
+		}
+	}
 	return bits;
 }
 
-// A $4016 write: the keyboard's row and column, the Famicom Power Pad's rows
+// A $4016 write: the keyboard's row and column, the Famicom Power Pad's rows, a VS. System's banks
 void inputWrite(struct NES* nes, uint8_t value) {
 	struct InputState* st = &nes->inputState;
+	if (nes->board->out) {
+		nes->board->out(nes, value);
+	}
 	if (nes->input.expansion == EXPANSION_KEYBOARD) {
 		if (value & 1) {
 			st->keyboardRow = 0;

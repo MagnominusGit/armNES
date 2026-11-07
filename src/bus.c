@@ -16,6 +16,11 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 			nesPpuSync(nes);
 			value = ppuReadRegister(nes, address);
 		}
+		// The RC2C05s give an ID in $2002's low bits
+		if (__builtin_expect(nes->cart.vs, 0) && (address & 7) == 2 && nes->cart.vsPpu >= 8 && nes->cart.vsPpu <= 12) {
+			static const uint8_t ids[5] = { 0x1B, 0x3D, 0x1C, 0x1B, 0x00 };
+			value = (value & 0xC0) | ids[nes->cart.vsPpu - 8];
+		}
 	} else if (nes->readHooks & (1 << (address >> 12))) {
 		nesPpuSync(nes);
 		value = nes->board->read(nes, address);
@@ -53,6 +58,10 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address < 0x2000) {
 		nes->ram[address & 0x7FF] = value;
 	} else if (address < 0x4000) {
+		// The RC2C05s swap $2000 and $2001
+		if (__builtin_expect(nes->cart.vs, 0) && nes->cart.vsPpu >= 8 && nes->cart.vsPpu <= 12 && (address & 6) == 0) {
+			address ^= 1;
+		}
 		if ((address & 7) != 4 || nes->exactPpu || !fastOamWriteAhead(nes, value)) {
 			nesPpuSync(nes);
 			ppuWriteRegister(nes, address, value, before);

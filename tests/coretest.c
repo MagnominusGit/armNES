@@ -183,6 +183,10 @@ static int16_t inputState(unsigned port, unsigned device, unsigned index, unsign
 	if (getenv("CORETEST_IDLE")) {
 		return 0;
 	}
+	// CORETEST_SELECT: Select pressed a second before each Start
+	if (getenv("CORETEST_SELECT") && port == 0 && id == RETRO_DEVICE_ID_JOYPAD_SELECT) {
+		return frame % 300 >= 240 && frame % 300 < 246;
+	}
 	return port == 0 && ((id == RETRO_DEVICE_ID_JOYPAD_START && frame % 300 < 6) ||
 		(id == RETRO_DEVICE_ID_JOYPAD_RIGHT && frame % 240 < 120) || (id == RETRO_DEVICE_ID_JOYPAD_A && frame % 60 < 20));
 }

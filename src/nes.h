@@ -232,6 +232,8 @@ struct Board {
 	void (*loadExtra)(struct NES*, const uint8_t* in);
 	// A variant's description, for boards that share their code
 	const void* data;
+	// Writes to $4016, for boards wired to the controller port's OUT pins (the VS. System's)
+	void (*out)(struct NES*, uint8_t value);
 };
 
 struct Cart {
@@ -259,6 +261,10 @@ struct Cart {
 	int mapper, submapper;
 	// An NES 2.0 header, or sizes and submapper from the list of fixed headers
 	bool nes2;
+	// A VS. System board, and its PPU (NES 2.0's numbering: RP2C03 0-1, RP2C04-0001 to -0004 2-5,
+	// RC2C03 6-7, RC2C05-01 to -05 8-12)
+	bool vs;
+	uint8_t vsPpu;
 	enum Mirroring mirroring;
 	enum Region region;
 	uint32_t prgCrc;
@@ -286,6 +292,9 @@ struct InputConfig {
 	bool zapperTrigger;
 	bool paddleButton;
 	uint16_t powerPad;
+	// The VS. System's DIP switches (1 in bit 0), coin slots and service button
+	uint8_t vsDip;
+	bool vsCoin[2], vsService;
 };
 
 // The devices' own state, with the paddle's knob (0-255)

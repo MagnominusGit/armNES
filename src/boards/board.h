@@ -125,6 +125,7 @@ BOARD(boardJy043);
 BOARD(boardKaraoke);
 BOARD(boardQta);
 BOARD(boardYuxing);
+BOARD(boardVs99);
 
 // fds.c
 BOARD(boardFds);

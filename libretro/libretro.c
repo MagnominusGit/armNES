@@ -134,6 +134,11 @@ static struct OptionChoice panChoices[] = {
 	{ "25% right", 25 }, { "50% right", 50 }, { "75% right", 75 }, { "Right", 100 },
 };
 
+static struct OptionChoice vsPpuChoices[] = {
+	{ "Auto", -1 }, { "RP2C03", 0 }, { "RP2C04-0001", 2 }, { "RP2C04-0002", 3 }, { "RP2C04-0003", 4 }, { "RP2C04-0004", 5 },
+	{ "RC2C05-01", 8 }, { "RC2C05-02", 9 }, { "RC2C05-03", 10 }, { "RC2C05-04", 11 }, { "RC2C05-05", 12 },
+};
+
 static struct OptionChoice spriteChoices[] = {
 	{ "8 per line", 0 },
 	{ "No limit", 1 },
@@ -231,11 +236,26 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_pan_dmc", "Sound > DMC Position", "DMC Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
 	{ "armnes_volume_cart", "Sound > Cart Sound Volume", "Cart Sound Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
 	{ "armnes_pan_cart", "Sound > Cart Sound Position", "Cart Sound Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
+	{ "armnes_vs_ppu", "VS. System > PPU", "PPU", "The arcade board's PPU, which sets its colors. Auto takes it from an NES 2.0 header, or the RP2C03.",
+		NULL, "vs", { { "Auto", NULL }, { "RP2C03", NULL }, { "RP2C04-0001", NULL }, { "RP2C04-0002", NULL }, { "RP2C04-0003", NULL },
+		{ "RP2C04-0004", NULL }, { "RC2C05-01", NULL }, { "RC2C05-02", NULL }, { "RC2C05-03", NULL }, { "RC2C05-04", NULL },
+		{ "RC2C05-05", NULL }, { NULL, NULL } }, "Auto" },
+	{ "armnes_vs_swap", "VS. System > Swap Controllers", "Swap Controllers", "Some cabinets wire player 1 to the second port.",
+		NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip1", "VS. System > DIP Switch 1", "DIP Switch 1", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip2", "VS. System > DIP Switch 2", "DIP Switch 2", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip3", "VS. System > DIP Switch 3", "DIP Switch 3", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip4", "VS. System > DIP Switch 4", "DIP Switch 4", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip5", "VS. System > DIP Switch 5", "DIP Switch 5", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip6", "VS. System > DIP Switch 6", "DIP Switch 6", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip7", "VS. System > DIP Switch 7", "DIP Switch 7", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip8", "VS. System > DIP Switch 8", "DIP Switch 8", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
 static struct retro_core_option_v2_category categories[] = {
 	{ "sound", "Sound", "Each channel's volume and where it sits between the speakers. The console mixes in mono." },
+	{ "vs", "VS. System", "The arcade board's PPU, controller wiring and DIP switches. Select puts in a coin, controller 1's L is the service button." },
 	{ NULL, NULL, NULL },
 };
 
@@ -346,6 +366,10 @@ static bool loadCustomPalette(void) {
 
 // The NTSC signal's levels decoded to RGB (Bisqwit's method), or a palette's colors, with the
 // emphasis bits dimming the other two channels (red and green swapped on PAL and Dendy)
+static const uint16_t vsPalettes[5][64] = {
+#include "vs-palettes.inc"
+};
+
 static void buildPalette(int which) {
 	static const float low[4] = { 0.350f, 0.518f, 0.962f, 1.550f };
 	static const float high[4] = { 1.094f, 1.506f, 1.962f, 1.962f };
@@ -357,7 +381,14 @@ static void buildPalette(int which) {
 		if (which == PALETTE_CUSTOM && customColors) {
 			table = customPalette;
 		}
-		if (table) {
+		if (nes.cart.vs) {
+			// The RGB PPUs' own colors; emphasis turns a channel fully on
+			int ppu = nes.cart.vsPpu >= 2 && nes.cart.vsPpu <= 5 ? nes.cart.vsPpu - 1 : 0;
+			uint16_t c = vsPalettes[ppu][entry & 0x3F];
+			for (int i = 0; i < 3; i++) {
+				rgb[i] = (entry & (0x40 << i)) ? 1 : ((c >> (6 - 3 * i)) & 7) / 7.0f;
+			}
+		} else if (table) {
 			uint32_t c = table[customColors == 512 && table == customPalette ? entry : entry & 0x3F];
 			rgb[0] = (c >> 16) / 255.0f;
 			rgb[1] = ((c >> 8) & 0xFF) / 255.0f;
@@ -378,7 +409,7 @@ static void buildPalette(int which) {
 			rgb[1] = y - 0.274788f * i - 0.635691f * q;
 			rgb[2] = y - 1.108545f * i + 1.709007f * q;
 		}
-		int emphasis = entry >> 6;
+		int emphasis = nes.cart.vs ? 0 : entry >> 6;
 		if (nes.region != REGION_NTSC) {
 			emphasis = (emphasis & 4) | (emphasis & 1) << 1 | (emphasis & 2) >> 1;
 		}
@@ -398,7 +429,7 @@ static void buildPalette(int which) {
 
 static struct OptionChoice paletteChoices[PALETTE_CUSTOM + 1];
 
-static int palette = -1, paletteRegion = -1;
+static int palette = -1, paletteRegion = -1, paletteVs = -1;
 
 static void readPaletteOption(void) {
 	int which = optionChoice(environ_cb, "armnes_palette", paletteChoices, PALETTE_CUSTOM + 1, PALETTE_NTSC);
@@ -407,9 +438,11 @@ static void readPaletteOption(void) {
 		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 		which = PALETTE_NTSC;
 	}
-	if (which != palette || (int) nes.region != paletteRegion) {
+	int vs = nes.cart.vs ? nes.cart.vsPpu : -1;
+	if (which != palette || (int) nes.region != paletteRegion || vs != paletteVs) {
 		palette = which;
 		paletteRegion = nes.region;
+		paletteVs = vs;
 		buildPalette(which);
 	}
 }
@@ -521,6 +554,8 @@ static int turboPeriod = 4;
 static bool allowOpposing;
 static unsigned turboFrame;
 static int fourPlayers, expansion, zapperAim;
+static bool vsSwap;
+static unsigned coinFrames[2];
 static bool fdsFast;
 
 static void readInputOptions(void) {
@@ -529,6 +564,13 @@ static void readInputOptions(void) {
 	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 3, 0);
 	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 4, AIM_LIGHT_GUN);
 	fdsFast = optionChoice(environ_cb, "armnes_fds_fast", onOffChoices, 2, 0);
+	vsSwap = optionChoice(environ_cb, "armnes_vs_swap", onOffChoices, 2, 0);
+	nes.input.vsDip = 0;
+	for (int i = 0; i < 8; i++) {
+		char key[24];
+		snprintf(key, sizeof(key), "armnes_vs_dip%d", i + 1);
+		nes.input.vsDip |= optionChoice(environ_cb, key, onOffChoices, 2, 0) << i;
+	}
 	expansion = optionChoice(environ_cb, "armnes_expansion", expansionChoices, 4, EXPANSION_NONE);
 }
 
@@ -660,6 +702,23 @@ static void readDevices(void) {
 		in->pads[port] = fourPlayers ? readPad(port + 2) : 0;
 	}
 	in->mic = in->device[1] == DEVICE_PAD && input_state_cb(1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
+	if (nes.cart.vs) {
+		// Select drops a coin in that player's slot, held a few frames as a coin takes to fall. The
+		// cabinet's start buttons report where a pad's Select does.
+		for (unsigned port = 0; port < 2; port++) {
+			bool held = nes.pads[port] & 0x04;
+			coinFrames[port] = held ? coinFrames[port] + 1 : 0;
+			in->vsCoin[port] = held && coinFrames[port] <= 4;
+			nes.pads[port] = (nes.pads[port] & ~0x0C) | (nes.pads[port] & 0x08) >> 1;
+		}
+		in->vsService = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
+		in->mic = false;
+		if (vsSwap) {
+			uint8_t pad = nes.pads[0];
+			nes.pads[0] = nes.pads[1];
+			nes.pads[1] = pad;
+		}
+	}
 	in->powerPad = 0;
 	for (unsigned port = 0; port < 2; port++) {
 		switch (in->device[port]) {
@@ -974,10 +1033,10 @@ bool retro_load_game(const struct retro_game_info* game) {
 		{ RETRO_DEVICE_ID_JOYPAD_LEFT, "Left" }, { RETRO_DEVICE_ID_JOYPAD_UP, "Up" },
 		{ RETRO_DEVICE_ID_JOYPAD_DOWN, "Down" }, { RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right" },
 		{ RETRO_DEVICE_ID_JOYPAD_B, "B" }, { RETRO_DEVICE_ID_JOYPAD_A, "A" },
-		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
+		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select (VS. System: Coin)" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
 		{ RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" }, { RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
 	};
-	static struct retro_input_descriptor descriptors[4 * 10 + 6];
+	static struct retro_input_descriptor descriptors[4 * 10 + 7];
 	unsigned count = 0;
 	for (unsigned port = 0; port < 4; port++) {
 		for (unsigned i = 0; i < 10; i++) {
@@ -985,6 +1044,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		}
 	}
 	descriptors[count++] = (struct retro_input_descriptor) { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Microphone" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "VS. System: Service" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Zapper Aim X" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
@@ -1015,6 +1075,10 @@ bool retro_load_game(const struct retro_game_info* game) {
 		return false;
 	}
 	readVideoOptions();
+	int vsPpu = optionChoice(environ_cb, "armnes_vs_ppu", vsPpuChoices, 11, -1);
+	if (nes.cart.vs && vsPpu >= 0) {
+		nes.cart.vsPpu = (uint8_t) vsPpu;
+	}
 	int region = optionChoice(environ_cb, "armnes_region", regionChoices, 4, -1);
 	if (region >= 0 && region != (int) nes.region) {
 		nesSetRegion(&nes, region);

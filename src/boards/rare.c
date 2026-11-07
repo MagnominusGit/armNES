@@ -521,3 +521,42 @@ const struct Board boardYuxing = {
 	.ppuBus = yuxingPpuBus, .busA12 = true, .irqQuietDots = yuxingIrqQuietDots, .scanline = yuxingScanline, .sync = yuxingSync,
 	.stateSize = sizeof(struct Mmc3), .data = &yuxingVariant,
 };
+
+// VS. System (99): $4016's bit 2 picks the 8 KB of CHR, and on boards with 40 KB of PRG also the
+// first 8 KB at $8000
+struct Vs99 {
+	uint8_t out;
+};
+
+static void vs99Sync(struct NES* nes) {
+	int bank = (STATE(Vs99)->out >> 2) & 1;
+	if (nes->cart.prgSize > 0x8000) {
+		prg8(nes, 0x8000, bank * 4);
+		for (int i = 1; i < 4; i++) {
+			prg8(nes, 0x8000 + i * 0x2000, i);
+		}
+	} else {
+		prg32(nes, 0);
+	}
+	chr8(nes, bank);
+	wram8(nes);
+}
+
+static void vs99Out(struct NES* nes, uint8_t value) {
+	if ((STATE(Vs99)->out ^ value) & 4) {
+		STATE(Vs99)->out = value;
+		vs99Sync(nes);
+	}
+	STATE(Vs99)->out = value;
+}
+
+static void vs99Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		memset(nes->boardState, 0, sizeof(struct Vs99));
+	}
+	vs99Sync(nes);
+}
+
+const struct Board boardVs99 = {
+	.name = "VS. System", .reset = vs99Reset, .out = vs99Out, .sync = vs99Sync, .stateSize = sizeof(struct Vs99),
+};
