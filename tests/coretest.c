@@ -5,6 +5,7 @@
 
 #include <dlfcn.h>
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,8 +22,23 @@ static size_t audioFrames;
 
 static struct retro_disk_control_callback disk;
 
+// CORETEST_LOG: the core's log lines on stderr
+static void logLine(enum retro_log_level level, const char* format, ...) {
+	(void) level;
+	va_list args;
+	va_start(args, format);
+	vfprintf(stderr, format, args);
+	va_end(args);
+}
+
 static bool environment(unsigned cmd, void* data) {
 	switch (cmd) {
+	case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+		if (!getenv("CORETEST_LOG")) {
+			return false;
+		}
+		((struct retro_log_callback*) data)->log = logLine;
+		return true;
 	case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE:
 		disk = *(const struct retro_disk_control_callback*) data;
 		return true;
