@@ -738,7 +738,13 @@ int apuQuietCycles(struct NES* nes) {
 		return 0;
 	}
 	int k = frameQuiet(nes);
-	int t = getCycles(apu, lfsrToOne[d->lfsr & 0x1FF]);
+	// The DMC's timer matters only at the tick that empties the shifter with sample bytes left, which
+	// asks for a DMA; the ticks before it change nothing but the sound
+	if (!d->bytesRemaining) {
+		return k;
+	}
+	int period = 2 * (lfsrToOne[dmcSeed(nes, d->rateIndex) & 0x1FF] + 1);
+	int t = getCycles(apu, lfsrToOne[d->lfsr & 0x1FF]) + (d->bitsRemaining - 1) * period;
 	return t < k ? t : k;
 }
 
