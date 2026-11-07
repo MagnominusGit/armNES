@@ -15,7 +15,7 @@ enum {
 	FDS_SIDE_BYTES = 65500,
 	LEAD_GAP = 3537,
 	BLOCK_GAP = 122,
-	BYTE_CYCLES = 149,
+	BYTE_CYCLES = 150,
 	// From the motor starting (or the head returning) to the start of the disk
 	SPIN_UP = 50000,
 };
