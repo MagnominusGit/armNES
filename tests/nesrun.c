@@ -2,6 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
+#include "board.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -137,6 +138,15 @@ int main(int argc, char** argv) {
 			int n = sscanf(p, "%d:%i:%d", &at, &key, &hold);
 			if (n >= 2 && frame >= at && frame < at + hold && key > 0 && key < 512) {
 				nes.keys[key >> 3] |= 1 << (key & 7);
+			}
+			p = strchr(p, ',');
+			p = p ? p + 1 : NULL;
+		}
+		// NESRUN_DISK="frame:side,...": the disk in the drive from then, -1 for none
+		for (const char* p = getenv("NESRUN_DISK"); p && *p;) {
+			int at = 0, side = 0;
+			if (sscanf(p, "%d:%d", &at, &side) == 2 && frame == at) {
+				fdsInsert(&nes, side);
 			}
 			p = strchr(p, ',');
 			p = p ? p + 1 : NULL;

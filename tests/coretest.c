@@ -19,8 +19,13 @@ static enum retro_pixel_format pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
 static unsigned frameWidth, frameHeight;
 static size_t audioFrames;
 
+static struct retro_disk_control_callback disk;
+
 static bool environment(unsigned cmd, void* data) {
 	switch (cmd) {
+	case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE:
+		disk = *(const struct retro_disk_control_callback*) data;
+		return true;
 	case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
 		pixelFormat = *(enum retro_pixel_format*) data;
 		return true;
@@ -275,7 +280,18 @@ int main(int argc, char** argv) {
 	unsigned start = getenv("CORETEST_FRAME") ? atoi(getenv("CORETEST_FRAME")) + 1 : 600;
 	start = start < 600 ? 600 : start;
 	dumpingSound = true;
+	// CORETEST_DISK=frame:index: the disk ejected then, and that one put in a second later
+	unsigned diskAt = 0, diskIndex = 0;
+	if (getenv("CORETEST_DISK")) {
+		sscanf(getenv("CORETEST_DISK"), "%u:%u", &diskAt, &diskIndex);
+	}
 	for (frame = 0; frame < start; frame++) {
+		if (diskAt && disk.set_eject_state && frame == diskAt) {
+			disk.set_eject_state(true);
+			disk.set_image_index(diskIndex);
+		} else if (diskAt && disk.set_eject_state && frame == diskAt + 60) {
+			disk.set_eject_state(false);
+		}
 		p_retro_run();
 	}
 	dumpingSound = false;
