@@ -413,6 +413,44 @@ static void sync242(struct NES* nes, struct Discrete* d) {
 	nes->readHooks = pads ? 0xFF00 : 0;
 }
 
+// 108 submapper 4, behaviour per Mesen: the last 32 KB fixed, an 8 KB ROM bank at $6000; writes
+// to $8xxx, $Axxx, $Cxxx, $Exxx and $F000 up set that bank and the CHR bank, the others CHR bit 0
+static void sync108(struct NES* nes, struct Discrete* d) {
+	nesMapPrg(nes, 0x8000, 0x8000, -1);
+	prg8(nes, 0x6000, d->outer ? d->value : -1);
+	chr8(nes, d->value2);
+}
+
+// 60-1064-16L (538), behaviour per Mesen: an FDS conversion with ROM at $6000 (the odd bank of the
+// pair written) and $8000 (the even one, or bank 10 for odd values without bit 3), the last three
+// banks above
+static void sync538(struct NES* nes, struct Discrete* d) {
+	uint8_t v = d->value;
+	prg8(nes, 0x6000, v | 1);
+	prg8(nes, 0x8000, ((v & 1) && !(v & 8)) ? 0x0A : v & ~1);
+	prg8(nes, 0xA000, -3);
+	prg8(nes, 0xC000, -2);
+	prg8(nes, 0xE000, -1);
+	chr8(nes, 0);
+}
+
+// 8157 (301), behaviour per Mesen: the address written picks a 16 KB bank, an outer 128 KB and
+// 512 KB, and what $C000 holds (the first bank, the same one, or the last); with its pad set the
+// upper 512 KB of a smaller cart reads nothing
+static void sync301(struct NES* nes, struct Discrete* d) {
+	uint16_t a = d->address;
+	int inner = (a >> 2) & 7, mode = ((a >> 7) & 1) | ((a >> 8) & 2);
+	int outer = ((a >> 5) & 3) << 3 | ((a >> 8) & 1) << 6;
+	nes->hasJumper = true;
+	if ((a & 0x100) && nes->cart.prgSize <= 0x80000 && jumperSetting(nes)) {
+		nesUnmapPrg(nes, 0x8000, 0x8000);
+		return;
+	}
+	prg16(nes, 0x8000, outer | inner);
+	prg16(nes, 0xC000, outer | (mode == 0 ? 0 : mode == 1 ? inner : 7));
+	mirrorHV(nes, a & 2);
+}
+
 // Camerica BF9096 (232): the outer 64 KB from $8000-$BFFF, the inner 16 KB from $C000
 static void sync232(struct NES* nes, struct Discrete* d) {
 	int outer = (d->outer >> 3) & 3;
@@ -500,6 +538,9 @@ static const struct DiscreteBoard boards[] = {
 	{ 240, 0x4020, 0x5FFF, 0, sync240, "240" },
 	{ 241, 0x8000, 0xFFFF, WRAM, sync241, "241" },
 	{ 242, 0x8000, 0xFFFF, LATCH_ADDRESS | JUMPER | WRAM, sync242, "242" },
+	{ 301, 0x8000, 0xFFFF, LATCH_ADDRESS, sync301, "8157" },
+	{ 108, 0x8000, 0xFFFF, 0, sync108, "108" },
+	{ 538, 0xC000, 0xDFFF, 0, sync538, "60-1064-16L" },
 };
 
 static const struct DiscreteBoard* discrete(struct NES* nes) {
@@ -535,6 +576,17 @@ static void discreteWrite(struct NES* nes, uint16_t address, uint8_t value) {
 			return;
 		}
 		break;
+	case 108:
+		if (address >= 0x8000) {
+			if ((address & 0x9000) == 0x8000 || address >= 0xF000) {
+				d->value = d->value2 = value;
+				d->outer = 1;
+			} else {
+				d->value2 = value & 1;
+			}
+			discreteSync(nes);
+		}
+		return;
 	case 41:
 		if (address >= 0x6000 && address < 0x6800) {
 			d->address = address;
@@ -617,7 +669,8 @@ static struct Board instances[sizeof(boards) / sizeof(boards[0])];
 
 const struct Board* discreteFind(int mapper, int submapper) {
 	for (size_t i = 0; i < sizeof(boards) / sizeof(boards[0]); i++) {
-		if (boards[i].mapper == mapper) {
+		// 108's other submappers are FCEUmm's
+		if (boards[i].mapper == mapper && !(mapper == 108 && submapper != 4)) {
 			struct Board* b = &instances[i];
 			b->name = boards[i].name;
 			b->reset = discreteReset;
