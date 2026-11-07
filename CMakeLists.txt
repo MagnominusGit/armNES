@@ -80,6 +80,14 @@ target_link_libraries(armnes_libretro armnes armulators-libretro retro-archive Z
 set_target_properties(armnes_libretro PROPERTIES PREFIX "")
 target_link_options(armnes_libretro PRIVATE -Wl,--version-script=${ARMULATORS_LINK_SCRIPT} -Wl,--no-undefined)
 
+# armnes, the standalone app: Armulators' (armulators/app) with the core linked in, named by app.cmake
+option(ARMNES_APP "Build armnes, the standalone SDL2 app" OFF)
+if(ARMNES_APP)
+	armulators_app(armnes-app DESCRIPTOR ${CMAKE_CURRENT_SOURCE_DIR}/app.cmake
+		SOURCES libretro/libretro.c libretro/composite.c app/hooks.c INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/libretro
+		LIBS armnes armulators-libretro)
+endif()
+
 # Drives the libretro core like a frontend and checks save states replay exactly
 add_executable(coretest tests/coretest.c)
 target_include_directories(coretest PRIVATE armulators/libretro)
