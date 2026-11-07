@@ -129,8 +129,12 @@ void mmc3PpuBus(struct NES* nes, uint16_t address) {
 		} else if (--m->counter == 0) {
 			mmc3Irq(nes);
 		} else if (m->counter == 255) {
+			// The old MMC3A (submapper 4) doesn't fire on this reload, only on counting down to 0 or a
+			// reload $C001 asked for
 			m->counter = m->latch;
-			mmc3Irq(nes);
+			if (!(nes->cart.mapper == 4 && nes->cart.submapper == 4)) {
+				mmc3Irq(nes);
+			}
 		}
 	}
 	m->a12 = a12;
@@ -219,9 +223,10 @@ static void namco108Sync(struct NES* nes) {
 	}
 }
 
+// The chip sees A15 and A0 only: its registers fill $8000-$FFFF
 static void namco108Write(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Mmc3* m = STATE(Mmc3);
-	if (address < 0x8000 || address >= 0xA000) {
+	if (address < 0x8000) {
 		return;
 	}
 	if (address & 1) {
@@ -234,7 +239,9 @@ static void namco108Write(struct NES* nes, uint16_t address, uint8_t value) {
 
 static void namco108Reset(struct NES* nes, bool hard) {
 	if (hard) {
+		// The PRG banks in order, as FCEUmm starts them, for 32 KB games that never set them
 		memset(nes->boardState, 0, sizeof(struct Mmc3));
+		STATE(Mmc3)->banks[7] = 1;
 	}
 	namco108Sync(nes);
 }
