@@ -21,7 +21,7 @@ static uint32_t shiftSize(uint8_t shift) {
 	return shift ? 64u << shift : 0;
 }
 
-// Old headers known to be wrong, by the CRC-32 of PRG and CHR ROM: FCEUmm's list
+// Old headers known to be wrong, by the CRC-32 of PRG and CHR ROM: armNES's, then FCEUmm's list
 struct HeaderFix {
 	uint32_t crc;
 	int mapper, submapper, mirroring, battery, prgRam, chrRam, region, extra;
@@ -37,6 +37,11 @@ struct HeaderFix {
 #define MULTI 2
 #define DENDY 3
 static const struct HeaderFix headerFixes[] = {
+	// A UxROM conversion headed as MMC1
+	{ 0x32adca1d,    2, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	// Translations of a 24C01 game headed as 16, whose 24C02 it can't talk to
+	{ 0xcec78d89,  159, DEFAULT, DEFAULT, 1,       0x10,    DEFAULT, DEFAULT, NOEXTRA },
+	{ 0xfe6c086f,  159, DEFAULT, DEFAULT, 1,       0x10,    DEFAULT, DEFAULT, NOEXTRA },
 #include "fceu/ines-correct.h"
 };
 #undef PAL
