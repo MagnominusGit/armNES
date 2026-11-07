@@ -247,6 +247,8 @@ struct Cart {
 	uint32_t vramSize;
 	uint8_t* wram;
 	uint32_t wramSize;
+	// The work RAM is a ported board's own buffer, which the board frees
+	bool wramBorrowed;
 	// NES 2.0's miscellaneous ROM, such as a protection chip's program
 	uint8_t* misc;
 	uint32_t miscSize;

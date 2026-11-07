@@ -404,7 +404,10 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 void cartFree(struct NES* nes) {
 	free(nes->cart.prg);
 	free(nes->cart.chr);
-	free(nes->cart.wram);
+	if (!nes->cart.wramBorrowed) {
+		free(nes->cart.wram);
+	}
+	nes->cart.wramBorrowed = false;
 	free(nes->cart.vram);
 	free(nes->cart.misc);
 	free(nes->cart.disk);

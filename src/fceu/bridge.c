@@ -28,7 +28,6 @@ static struct NES* nes;
 static CartInfo info;
 static bool loaded, dirty, handlersDirty;
 static uint16_t handlerPages;
-static uint8_t* saveRam;
 
 uint8_t* fceuRam;
 uint8_t* fceuNtaram;
@@ -446,11 +445,8 @@ void* FCEU_malloc(uint32_t size) {
 	return calloc(1, size);
 }
 
-// The work RAM a board saved as its battery RAM is the cartridge's, freed with it
 void FCEU_gfree(void* ptr) {
-	if (ptr != saveRam) {
-		free(ptr);
-	}
+	free(ptr);
 }
 
 void FCEU_free(void* ptr) {
@@ -748,7 +744,6 @@ static void power(struct NES* n) {
 	MapIRQHook = NULL;
 	GameStateRestore = NULL;
 	memset(&GameExpSound, 0, sizeof(GameExpSound));
-	saveRam = NULL;
 	trainerpoo = cart->hasTrainer ? cart->trainer : NULL;
 	MiscROM = cart->misc;
 	PAL = cart->region == REGION_PAL;
@@ -850,7 +845,9 @@ static void power(struct NES* n) {
 		uint32_t keep = info.SaveGameLen[0] < cart->wramSize ? info.SaveGameLen[0] : cart->wramSize;
 		memcpy(info.SaveGame[0], cart->wram, keep);
 		free(cart->wram);
-		cart->wram = saveRam = info.SaveGame[0];
+		// Some boards' buffers are static or the CHR RAM, so the board keeps them
+		cart->wram = info.SaveGame[0];
+		cart->wramBorrowed = true;
 		cart->wramSize = cart->batterySize = info.SaveGameLen[0];
 	}
 }
