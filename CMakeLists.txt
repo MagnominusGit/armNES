@@ -36,6 +36,8 @@ set(CORE_SOURCES
 	src/ppu.c
 	src/ppu-fast.c
 	src/state.c
+	src/zip.c
+	src/arcade.c
 )
 # FCEUmm's board files, for the mappers without a board of armNES's own
 file(GLOB FCEU_BOARDS src/fceu/boards/*.c)

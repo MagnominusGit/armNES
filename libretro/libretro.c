@@ -5,11 +5,13 @@
 #include "board.h"
 #include "composite.h"
 #include "options.h"
+#include "zip.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 // The libretro core: one NES, its picture through an NTSC palette, its sound at 48 kHz, two pads.
 
@@ -195,8 +197,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_filter", "NTSC/PAL Filter", NULL,
 		"The picture as a TV decodes the console's video signal, NTSC or PAL by the region: Composite "
 		"with its color fringes and the blending some games' dithering relied on, S-Video sharper. It "
-		"makes its own colors, so the palette doesn't apply. Takes more CPU time. VS. System boards send "
-		"RGB to an arcade monitor, so it stays off for them.",
+		"makes its own colors, so the palette doesn't apply. Takes more CPU time. VS. System and "
+		"PlayChoice-10 boards send RGB to an arcade monitor, so it stays off for them.",
 		NULL, NULL, { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_fds_fast", "Disk System Fast Loading", NULL,
 		"Runs the Disk System up to 16 times as fast while the drive reads or writes the disk, showing only "
@@ -352,7 +354,7 @@ static void readVideoOptions(void) {
 	aspect = optionChoice(environ_cb, "armnes_aspect", aspectChoices, 3, ASPECT_TV);
 	cropVertical = optionChoice(environ_cb, "armnes_crop_vertical", cropChoices, 5, 0);
 	cropHorizontal = optionChoice(environ_cb, "armnes_crop_horizontal", cropChoices, 5, 0);
-	filter = nes.cart.vs ? COMPOSITE_OFF : optionChoice(environ_cb, "armnes_filter", filterChoices, 3, COMPOSITE_OFF);
+	filter = nes.cart.vs || nes.cart.playchoice ? COMPOSITE_OFF : optionChoice(environ_cb, "armnes_filter", filterChoices, 3, COMPOSITE_OFF);
 	screens = optionChoice(environ_cb, "armnes_vs_screens", screenChoices, 3, SCREENS_BOTH);
 }
 
@@ -360,7 +362,7 @@ static void geometry(struct retro_game_geometry* g) {
 	unsigned width = NES_WIDTH - 2 * cropHorizontal, height = NES_HEIGHT - 2 * cropVertical;
 	// NTSC pixels are 8:7; PAL's are 2950000:2128137
 	float pixel = nes.region == REGION_NTSC ? 8.0f / 7.0f : 2950000.0f / 2128137.0f;
-	unsigned count = nes.dual && screens == SCREENS_BOTH ? 2 : 1;
+	unsigned count = nes.dual && screens == SCREENS_BOTH && nes.cart.vsHardware != 6 ? 2 : 1;
 	g->base_width = (filter ? width * COMPOSITE_SCALE : width) * count;
 	g->base_height = height;
 	g->max_width = 2 * COMPOSITE_WIDTH;
@@ -439,7 +441,7 @@ static void buildPalette(int which) {
 		if (which == PALETTE_CUSTOM && customColors) {
 			table = customPalette;
 		}
-		if (nes.cart.vs) {
+		if (nes.cart.vs || nes.cart.playchoice) {
 			// The RGB PPUs' own colors; emphasis turns a channel fully on
 			int ppu = nes.cart.vsPpu >= 2 && nes.cart.vsPpu <= 5 ? nes.cart.vsPpu - 1 : 0;
 			uint16_t c = vsPalettes[ppu][entry & 0x3F];
@@ -496,7 +498,7 @@ static void readPaletteOption(void) {
 		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 		which = PALETTE_NTSC;
 	}
-	int vs = nes.cart.vs ? nes.cart.vsPpu : -1;
+	int vs = nes.cart.vs || nes.cart.playchoice ? nes.cart.vsPpu : -1;
 	if (which != palette || (int) nes.region != paletteRegion || vs != paletteVs) {
 		palette = which;
 		paletteRegion = nes.region;
@@ -576,9 +578,9 @@ void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armNES";
 	info->library_version = "0.1";
-	info->valid_extensions = "nes|fds|unf|unif|nsf";
+	info->valid_extensions = "nes|fds|unf|unif|nsf|zip";
 	info->need_fullpath = false;
-	info->block_extract = false;
+	info->block_extract = true;
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {
@@ -1022,9 +1024,11 @@ static void runDual(void) {
 	checkOptions();
 	int scale = filter ? COMPOSITE_SCALE : 1;
 	int width = (NES_WIDTH - 2 * cropHorizontal) * scale, height = NES_HEIGHT - 2 * cropVertical;
-	int count = screens == SCREENS_BOTH ? 2 : 1;
+	// The protected DualSystem's second board shows nothing of the game
+	int shown = nes.cart.vsHardware == 6 ? SCREENS_MAIN : screens;
+	int count = shown == SCREENS_BOTH ? 2 : 1;
 	for (int i = 0; i < count; i++) {
-		const struct NES* board = (i || screens == SCREENS_SECOND) ? &sub : &nes;
+		const struct NES* board = (i || shown == SCREENS_SECOND) ? &sub : &nes;
 		const uint16_t* picture = board == &sub ? subPicture : nes.frameBuffer;
 		if (filter) {
 			compositeFrame(filter, false, board->ppu.oddFrame, picture, screen);
@@ -1118,6 +1122,64 @@ static bool loadFdsBios(void) {
 		}
 	}
 	return false;
+}
+
+// A .zip: the game file in it, or a MAME VS. System or PlayChoice-10 set, whose clones may keep only
+// their own chips and need the parent set's .zip from the same folder
+static uint8_t* unpacked;
+static char romDir[1024];
+
+static uint8_t* loadSet(const char* set, size_t* size) {
+	char path[1100];
+	snprintf(path, sizeof(path), "%s%s.zip", romDir, set);
+	FILE* f = fopen(path, "rb");
+	if (!f) {
+		return NULL;
+	}
+	fseek(f, 0, SEEK_END);
+	long length = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	uint8_t* data = length > 0 ? malloc((size_t) length) : NULL;
+	if (data && fread(data, 1, (size_t) length, f) != (size_t) length) {
+		free(data);
+		data = NULL;
+	}
+	fclose(f);
+	*size = (size_t) length;
+	return data;
+}
+
+static bool unpack(const struct retro_game_info* game, const uint8_t** data, size_t* size) {
+	*data = game->data;
+	*size = game->size;
+	if (!zipIs(game->data, game->size)) {
+		return true;
+	}
+	static struct ZipEntry entries[256];
+	int count = zipList(game->data, game->size, entries, 256);
+	for (int i = 0; i < count; i++) {
+		const char* dot = strrchr(entries[i].name, '.');
+		if (dot && (!strcasecmp(dot, ".nes") || !strcasecmp(dot, ".fds") || !strcasecmp(dot, ".unf") ||
+			!strcasecmp(dot, ".unif") || !strcasecmp(dot, ".nsf"))) {
+			unpacked = zipRead(game->data, game->size, &entries[i]);
+			*size = entries[i].size;
+			*data = unpacked;
+			return unpacked != NULL;
+		}
+	}
+	char name[256] = "";
+	const char* path = game->path ? game->path : "";
+	const char* base = strrchr(path, '/');
+	base = base ? base + 1 : path;
+	snprintf(romDir, sizeof(romDir), "%.*s", (int) (base - path), path);
+	snprintf(name, sizeof(name), "%s", base);
+	char* dot = strrchr(name, '.');
+	if (dot) {
+		*dot = 0;
+	}
+	unpacked = arcadeBuild(game->data, game->size, name[0] ? name : NULL, loadSet, size);
+	*data = unpacked;
+	return unpacked != NULL;
 }
 
 static bool isDisk(const uint8_t* data, size_t size) {
@@ -1256,7 +1318,16 @@ bool retro_load_game(const struct retro_game_info* game) {
 	nesInit(&nes);
 	nes.audioOut = audio;
 	nes.audioCapacity = sizeof(audio) / sizeof(audio[0]);
-	if (isDisk(game->data, game->size)) {
+	const uint8_t* data;
+	size_t size;
+	free(unpacked);
+	unpacked = NULL;
+	if (!unpack(game, &data, &size)) {
+		struct retro_message message = { "armNES: no game in this .zip, or not all of a MAME set's chips", 360 };
+		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+		return false;
+	}
+	if (isDisk(data, size)) {
 		if (!loadFdsBios()) {
 			struct retro_message message = { "armNES: Disk System games need disksys.rom in the system folder", 360 };
 			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
@@ -1272,9 +1343,9 @@ bool retro_load_game(const struct retro_game_info* game) {
 	sub.audioOut = subAudio;
 	sub.audioCapacity = sizeof(subAudio) / sizeof(subAudio[0]);
 	memset(subPicture, 0, sizeof(subPicture));
-	if (!nesLoadDual(&nes, &sub, vsShared, game->data, game->size)) {
+	if (!nesLoadDual(&nes, &sub, vsShared, data, size)) {
 		nesFree(&sub);
-		if (!nesLoad(&nes, game->data, game->size)) {
+		if (!nesLoad(&nes, data, size)) {
 			if (nes.cart.mapper || nes.cart.prgSize) {
 				struct retro_message message = { "armNES: this game's board isn't supported yet", 360 };
 				environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
@@ -1322,6 +1393,8 @@ void retro_unload_game(void) {
 			nesFree(&sub);
 		}
 		nesFree(&nes);
+		free(unpacked);
+		unpacked = NULL;
 		loaded = false;
 	}
 }
