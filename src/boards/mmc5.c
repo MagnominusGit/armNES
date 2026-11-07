@@ -7,8 +7,8 @@
 
 // MMC5 (5), after the NESdev wiki: four PRG modes over ROM and RAM, four CHR modes with separate
 // sprite and background banks for 8x16 sprites, 1 KB of ExRAM (as a name table, for extended
-// attributes, or as RAM), fill mode, a scanline IRQ, a multiplier, and two pulse channels and a
-// PCM channel beside the APU. The split screen isn't here yet.
+// attributes, or as RAM), fill mode, a scanline IRQ, a multiplier, a vertical split, and two pulse
+// channels and a PCM channel beside the APU.
 
 static const uint8_t mmc5Lengths[32] = {
 	10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14,
@@ -30,6 +30,13 @@ struct Mmc5 {
 	uint8_t mul[2];
 	// Extended attributes: the tile being fetched
 	uint8_t exTile;
+	// The split: $5200-$5202, and the background fetch it counts tiles by (2 to 33 on a line, then
+	// the next line's first two) with the line those are for
+	uint8_t splitMode, splitScroll, splitBank;
+	uint8_t fetchCount, splitTile;
+	int16_t fetchLine;
+	bool inSplit;
+	uint8_t splitY;
 };
 
 #define M5 STATE(Mmc5)
@@ -116,12 +123,44 @@ static void mmc5Sync(struct NES* nes) {
 	mmc5SyncNametables(nes);
 }
 
-// Every PPU read comes through here: sprite or background banks, and extended attributes
+// The split's side of the screen: tiles left of the count, or from it on, read their name table and
+// attributes from ExRAM at the split's own scroll and their patterns from its 4 KB bank
+static uint8_t splitRead(struct NES* nes, uint16_t address) {
+	struct Mmc5* m = M5;
+	uint8_t* ex = exram(nes);
+	int tile = m->splitTile & 31;
+	if (address >= 0x2000) {
+		if ((address & 0x3FF) < 0x3C0) {
+			return ex[(m->splitY >> 3) * 32 + tile];
+		}
+		uint8_t at = ex[0x3C0 + (m->splitY >> 5) * 8 + (tile >> 2)];
+		return ((at >> (((m->splitY >> 2) & 4) | (tile & 2))) & 3) * 0x55;
+	}
+	const struct Cart* cart = &nes->cart;
+	return cart->chr[(m->splitBank * 0x1000u + (address & 0xFF8) + (m->splitY & 7)) % cart->chrSize];
+}
+
+// Every PPU read comes through here: sprite or background banks, extended attributes and the split
 static uint8_t mmc5PpuRead(struct NES* nes, uint16_t address) {
 	struct Mmc5* m = M5;
 	const struct Ppu* ppu = &nes->ppu;
 	// Outside rendering (reads through $2007) the last set written is used, and no attributes
 	bool active = (ppu->showBg || ppu->showSprites) && (ppu->scanline < 240 || ppu->scanline >= 261);
+	if ((m->splitMode & 0x80) && active && !ppu->spriteFetch && m->exramMode < 2) {
+		if (address >= 0x2000 && (address & 0x3FF) < 0x3C0) {
+			int fetch = m->fetchCount < 255 ? m->fetchCount++ : 255;
+			bool next = fetch >= 34;
+			int tile = next ? fetch - 34 : fetch;
+			int count = m->splitMode & 0x1F;
+			m->splitTile = (uint8_t) tile;
+			m->inSplit = tile < 34 && ((m->splitMode & 0x40) ? tile >= count : tile < count);
+			m->splitY = (uint8_t) ((m->splitScroll + m->fetchLine + next) % 240);
+		}
+		// The tile's attributes and patterns come before the next name table read
+		if (m->inSplit) {
+			return splitRead(nes, address);
+		}
+	}
 	if (address >= 0x2000) {
 		uint8_t* page = nes->chrPages[(address >> 10) & 15];
 		uint8_t value = page ? page[address & 0x3FF] : 0;
@@ -215,6 +254,15 @@ static void mmc5Write(struct NES* nes, uint16_t address, uint8_t value) {
 	case 0x5130:
 		m->chrHigh = value & 3;
 		return;
+	case 0x5200:
+		m->splitMode = value;
+		return;
+	case 0x5201:
+		m->splitScroll = value;
+		return;
+	case 0x5202:
+		m->splitBank = value;
+		return;
 	case 0x5203:
 		m->irqTarget = value;
 		return;
@@ -244,6 +292,8 @@ static void mmc5Write(struct NES* nes, uint16_t address, uint8_t value) {
 // The start of each rendered line: the in-frame flag and the line counter
 static void mmc5Scanline(struct NES* nes, int line) {
 	struct Mmc5* m = M5;
+	m->fetchCount = 2;
+	m->fetchLine = line < 240 ? line : -1;
 	if (line >= 240) {
 		m->inFrame = false;
 		return;
