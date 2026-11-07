@@ -196,6 +196,8 @@ struct Apu {
 	int32_t expansion;
 	// The mix only changes when a channel's output can
 	bool mixDirty;
+	// The frontend's mixer is on (nes.mixer)
+	bool stereo;
 	int32_t lastMix;
 };
 
@@ -302,6 +304,8 @@ struct Cheat {
 	int16_t compare;
 };
 
+enum { MIX_PULSE1, MIX_PULSE2, MIX_TRIANGLE, MIX_NOISE, MIX_DMC, MIX_CART, MIX_CHANNELS };
+
 struct NES {
 	struct Cpu cpu;
 	struct Ppu ppu;
@@ -386,7 +390,7 @@ struct NES {
 	uint32_t audioChangeCount;
 	struct AudioChange {
 		uint64_t cycle;
-		int32_t level;
+		int32_t level, right;
 	} audioChanges[8192];
 	int32_t hpPrev, hpOut, lpOut;
 
@@ -395,6 +399,16 @@ struct NES {
 	int cheatCount;
 	struct InputConfig input;
 	struct InputState inputState;
+
+	// The frontend's mixer: each channel's left and right gain (pulse 1, pulse 2, triangle, noise,
+	// DMC, the cart's sound); off, the console's mono mix
+	struct Mixer {
+		bool custom;
+		float gain[MIX_CHANNELS][2];
+		// The right side's mix, sample sum, level and filters
+		int32_t lastRight, accumRight, levelRight;
+		int32_t hpPrev, hpOut, lpOut;
+	} mixer;
 };
 
 // cart.c

@@ -139,6 +139,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	memcpy(cheats, nes->cheats, sizeof(cheats));
 	int overclockLines = nes->overclockLines;
 	bool overclockPostRender = nes->overclockPostRender, noSpriteLimit = nes->noSpriteLimit;
+	struct Mixer mixer = nes->mixer;
 
 	memcpy(nes, in, sizeof(struct NES));
 	in += sizeof(struct NES);
@@ -166,6 +167,8 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->overclockLines = overclockLines;
 	nes->overclockPostRender = overclockPostRender;
 	nes->noSpriteLimit = noSpriteLimit;
+	nes->mixer = mixer;
+	nes->apu.stereo = mixer.custom;
 	uint32_t tags[32];
 	memcpy(tags, in, sizeof(tags));
 	in += sizeof(tags);

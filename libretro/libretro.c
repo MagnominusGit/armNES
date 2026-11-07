@@ -119,6 +119,21 @@ static struct OptionChoice filterChoices[] = {
 	{ "S-Video", COMPOSITE_SVIDEO },
 };
 
+#define VOLUME_VALUES { { "0%", NULL }, { "10%", NULL }, { "20%", NULL }, { "30%", NULL }, { "40%", NULL }, { "50%", NULL }, \
+	{ "60%", NULL }, { "70%", NULL }, { "80%", NULL }, { "90%", NULL }, { "100%", NULL }, { NULL, NULL } }
+#define PAN_VALUES { { "Left", NULL }, { "75% left", NULL }, { "50% left", NULL }, { "25% left", NULL }, { "Center", NULL }, \
+	{ "25% right", NULL }, { "50% right", NULL }, { "75% right", NULL }, { "Right", NULL }, { NULL, NULL } }
+
+static struct OptionChoice volumeChoices[] = {
+	{ "0%", 0 }, { "10%", 10 }, { "20%", 20 }, { "30%", 30 }, { "40%", 40 }, { "50%", 50 },
+	{ "60%", 60 }, { "70%", 70 }, { "80%", 80 }, { "90%", 90 }, { "100%", 100 },
+};
+
+static struct OptionChoice panChoices[] = {
+	{ "Left", -100 }, { "75% left", -75 }, { "50% left", -50 }, { "25% left", -25 }, { "Center", 0 },
+	{ "25% right", 25 }, { "50% right", 50 }, { "75% right", 75 }, { "Right", 100 },
+};
+
 static struct OptionChoice spriteChoices[] = {
 	{ "8 per line", 0 },
 	{ "No limit", 1 },
@@ -200,10 +215,27 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"the video timing. Auto uses the setting known for the dump, or 0. Changing it restarts the game, "
 		"as it would on the cart. Other carts ignore it.",
 		NULL, NULL, { { "Auto", NULL }, { "0", NULL }, { "1", NULL }, { "2", NULL }, { "3", NULL }, { "4", NULL }, { "5", NULL }, { "6", NULL }, { "7", NULL }, { "8", NULL }, { "9", NULL }, { "10", NULL }, { "11", NULL }, { "12", NULL }, { "13", NULL }, { "14", NULL }, { "15", NULL }, { "16", NULL }, { "17", NULL }, { "18", NULL }, { "19", NULL }, { "20", NULL }, { "21", NULL }, { "22", NULL }, { "23", NULL }, { NULL, NULL } }, "Auto" },
+	{ "armnes_volume_pulse1", "Sound > Pulse 1 Volume", "Pulse 1 Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_pulse1", "Sound > Pulse 1 Position", "Pulse 1 Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
+	{ "armnes_volume_pulse2", "Sound > Pulse 2 Volume", "Pulse 2 Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_pulse2", "Sound > Pulse 2 Position", "Pulse 2 Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
+	{ "armnes_volume_triangle", "Sound > Triangle Volume", "Triangle Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_triangle", "Sound > Triangle Position", "Triangle Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
+	{ "armnes_volume_noise", "Sound > Noise Volume", "Noise Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_noise", "Sound > Noise Position", "Noise Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
+	{ "armnes_volume_dmc", "Sound > DMC Volume", "DMC Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_dmc", "Sound > DMC Position", "DMC Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
+	{ "armnes_volume_cart", "Sound > Cart Sound Volume", "Cart Sound Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_cart", "Sound > Cart Sound Position", "Cart Sound Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
 	{ NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
-static struct retro_core_options_v2 options = { NULL, optionDefinitions };
+static struct retro_core_option_v2_category categories[] = {
+	{ "sound", "Sound", "Each channel's volume and where it sits between the speakers. The console mixes in mono." },
+	{ NULL, NULL, NULL },
+};
+
+static struct retro_core_options_v2 options = { categories, optionDefinitions };
 
 static void checkOptions(void);
 
@@ -217,6 +249,24 @@ static void readSpeedOptions(void) {
 	nes.overclockLines = frames * (nes.region == REGION_NTSC ? 262 : 312);
 	nes.overclockPostRender = overclock < 0;
 	nes.noSpriteLimit = optionChoice(environ_cb, "armnes_sprite_limit", spriteChoices, 2, 0);
+}
+
+// A side's gain falls as the channel moves to the other side
+static void readSoundOptions(void) {
+	static const char* keys[MIX_CHANNELS] = { "pulse1", "pulse2", "triangle", "noise", "dmc", "cart" };
+	nes.mixer.custom = false;
+	for (int c = 0; c < MIX_CHANNELS; c++) {
+		char key[32];
+		snprintf(key, sizeof(key), "armnes_volume_%s", keys[c]);
+		int volume = optionChoice(environ_cb, key, volumeChoices, 11, 100);
+		snprintf(key, sizeof(key), "armnes_pan_%s", keys[c]);
+		int pan = optionChoice(environ_cb, key, panChoices, 9, 0);
+		nes.mixer.gain[c][0] = volume / 100.0f * (pan > 0 ? 1 - pan / 100.0f : 1);
+		nes.mixer.gain[c][1] = volume / 100.0f * (pan < 0 ? 1 + pan / 100.0f : 1);
+		nes.mixer.custom |= volume != 100 || pan != 0;
+	}
+	nes.apu.stereo = nes.mixer.custom;
+	nes.apu.mixDirty = true;
 }
 
 static void readVideoOptions(void) {
@@ -777,6 +827,7 @@ static void checkOptions(void) {
 		readSpeedOptions();
 		readPaletteOption();
 		readInputOptions();
+		readSoundOptions();
 		if (aspect != oldAspect || cropVertical != oldVertical || cropHorizontal != oldHorizontal || filter != oldFilter) {
 			struct retro_game_geometry g;
 			geometry(&g);
@@ -881,6 +932,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	readSpeedOptions();
 	readPaletteOption();
 	readInputOptions();
+	readSoundOptions();
 	setMemoryMaps();
 	loaded = true;
 	return true;

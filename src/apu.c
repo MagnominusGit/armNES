@@ -5,6 +5,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
 
+#include <math.h>
+
 #include <string.h>
 
 // The 2A03's sound and controller ports, ticked once per CPU cycle after the CPU's access. Cycles
@@ -365,6 +367,26 @@ static void frameCounter(struct NES* nes) {
 	}
 }
 
+// The frontend's mix: each channel scaled before the console's mixing curves, per side
+static int mixSide(const struct Mixer* m, int side, const int* levels, int cart) {
+	const float (*g)[2] = m->gain;
+	float pulse = levels[0] * g[MIX_PULSE1][side] + levels[1] * g[MIX_PULSE2][side];
+	float tnd = 3 * levels[2] * g[MIX_TRIANGLE][side] + 2 * levels[3] * g[MIX_NOISE][side] + levels[4] * g[MIX_DMC][side];
+	float value = (pulse > 0 ? 40000.0f * 95.52f / (8128.0f / pulse + 100.0f) : 0) +
+		(tnd > 0 ? 40000.0f * 163.67f / (24329.0f / tnd + 100.0f) : 0) + cart * g[MIX_CART][side];
+	return (int) lrintf(value);
+}
+
+static void channelLevels(const struct Apu* apu, int levels[5]) {
+	for (int i = 0; i < 2; i++) {
+		const struct Pulse* p = &apu->pulse[i];
+		levels[i] = p->lengthCounter && !pulseMuted(p) && dutyTable[p->duty][p->dutyStep] ? (p->constant ? p->volume : p->envelopeDecay) : 0;
+	}
+	levels[2] = triangleTable[apu->triangle.step];
+	levels[3] = apu->noise.lengthCounter && !(apu->noise.shift & 1) ? (apu->noise.constant ? apu->noise.volume : apu->noise.envelopeDecay) : 0;
+	levels[4] = apu->dmc.output;
+}
+
 static int mix(struct NES* nes) {
 	struct Apu* apu = &nes->apu;
 	int pulse = 0;
@@ -386,20 +408,29 @@ static int mix(struct NES* nes) {
 	return value;
 }
 
-static void emitSample(struct NES* nes, int32_t in) {
+__attribute__((noinline, cold)) static int mixStereo(struct NES* nes, int* right) {
+	int levels[5];
+	channelLevels(&nes->apu, levels);
+	int cart = nes->board->audio ? nes->board->audio(nes) : 0;
+	*right = mixSide(&nes->mixer, 1, levels, cart);
+	return mixSide(&nes->mixer, 0, levels, cart);
+}
+
+static inline int16_t filter(int32_t* hpPrev, int32_t* hpOut, int32_t* lpOut, int32_t in) {
 	// The console's filters: high-pass at about 37 Hz, low-pass at about 14 kHz
-	nes->hpOut = nes->hpOut + in - nes->hpPrev - (nes->hpOut >> 8);
-	nes->hpPrev = in;
-	nes->lpOut += ((nes->hpOut - nes->lpOut) * 3) >> 2;
-	int32_t s = nes->lpOut;
-	if (s > 32767) {
-		s = 32767;
-	} else if (s < -32768) {
-		s = -32768;
-	}
+	*hpOut = *hpOut + in - *hpPrev - (*hpOut >> 8);
+	*hpPrev = in;
+	*lpOut += ((*hpOut - *lpOut) * 3) >> 2;
+	int32_t s = *lpOut;
+	return (int16_t) (s > 32767 ? 32767 : s < -32768 ? -32768 : s);
+}
+
+static inline void emitSample(struct NES* nes, int32_t left, int32_t right, bool stereo) {
 	if (nes->audioCount + 2 <= nes->audioCapacity) {
-		nes->audioOut[nes->audioCount++] = s;
-		nes->audioOut[nes->audioCount++] = s;
+		int16_t l = filter(&nes->hpPrev, &nes->hpOut, &nes->lpOut, left);
+		struct Mixer* m = &nes->mixer;
+		nes->audioOut[nes->audioCount++] = l;
+		nes->audioOut[nes->audioCount++] = stereo ? filter(&m->hpPrev, &m->hpOut, &m->lpOut, right) : l;
 	}
 }
 
@@ -408,11 +439,12 @@ static inline int clockRateOf(const struct NES* nes) {
 }
 
 // Samples for the APU cycles since the last flush: each is the average level over the cycles since
-// the one before, ending on the cycle that crosses its time
-void apuFlushAudio(struct NES* nes) {
+// the one before, ending on the cycle that crosses its time. The right side only with the
+// frontend's mixer; otherwise it's the left.
+static inline void flush(struct NES* nes, bool stereo) {
 	uint64_t end = nes->apu.cycles;
 	uint64_t cycle = nes->audioCycle;
-	int32_t level = nes->audioLevel;
+	int32_t level = nes->audioLevel, right = nes->mixer.levelRight;
 	int rate = clockRateOf(nes);
 	uint32_t change = 0;
 	while (cycle < end) {
@@ -426,27 +458,44 @@ void apuFlushAudio(struct NES* nes) {
 		while (change < nes->audioChangeCount && nes->audioChanges[change].cycle <= stop) {
 			uint64_t c = nes->audioChanges[change].cycle;
 			nes->audioAccum += level * (int32_t) (c - 1 - at);
+			if (stereo) {
+				nes->mixer.accumRight += right * (int32_t) (c - 1 - at);
+				right = nes->audioChanges[change].right;
+			}
 			at = c - 1;
 			level = nes->audioChanges[change].level;
 			change++;
 		}
 		nes->audioAccum += level * (int32_t) (stop - at);
+		if (stereo) {
+			nes->mixer.accumRight += right * (int32_t) (stop - at);
+		}
 		nes->audioAccumCount += stop - cycle;
 		nes->audioPhase += (int64_t) nes->sampleRate * (int64_t) (stop - cycle);
 		cycle = stop;
 		if (nes->audioPhase >= rate) {
 			nes->audioPhase -= rate;
-			emitSample(nes, nes->audioAccum / nes->audioAccumCount);
+			emitSample(nes, nes->audioAccum / nes->audioAccumCount, stereo ? nes->mixer.accumRight / nes->audioAccumCount : 0, stereo);
 			nes->audioAccum = 0;
+			nes->mixer.accumRight = 0;
 			nes->audioAccumCount = 0;
 		}
 	}
 	nes->audioCycle = end;
 	nes->audioLevel = level;
+	nes->mixer.levelRight = stereo ? right : level;
 	nes->audioChangeCount = 0;
 }
 
-static inline void levelChange(struct NES* nes, int32_t level) {
+void apuFlushAudio(struct NES* nes) {
+	if (nes->mixer.custom) {
+		flush(nes, true);
+	} else {
+		flush(nes, false);
+	}
+}
+
+static inline void levelChange(struct NES* nes, int32_t level, int32_t right) {
 	if (nes->audioChangeCount == sizeof(nes->audioChanges) / sizeof(nes->audioChanges[0])) {
 		// Full: flush the cycles before this one
 		nes->apu.cycles--;
@@ -455,6 +504,7 @@ static inline void levelChange(struct NES* nes, int32_t level) {
 	}
 	nes->audioChanges[nes->audioChangeCount].cycle = nes->apu.cycles;
 	nes->audioChanges[nes->audioChangeCount].level = level;
+	nes->audioChanges[nes->audioChangeCount].right = right;
 	nes->audioChangeCount++;
 }
 
@@ -544,10 +594,20 @@ void apuCycle(struct NES* nes) {
 	apu->putCycle = !apu->putCycle;
 	if (apu->mixDirty || nes->board->audio) {
 		apu->mixDirty = false;
-		int32_t level = mix(nes);
-		if (level != apu->lastMix) {
-			apu->lastMix = level;
-			levelChange(nes, level);
+		if (!apu->stereo) {
+			int32_t level = mix(nes);
+			if (level != apu->lastMix) {
+				apu->lastMix = level;
+				levelChange(nes, level, level);
+			}
+		} else {
+			int right;
+			int32_t level = mixStereo(nes, &right);
+			if (level != apu->lastMix || right != nes->mixer.lastRight) {
+				apu->lastMix = level;
+				nes->mixer.lastRight = right;
+				levelChange(nes, level, right);
+			}
 		}
 	}
 }
