@@ -152,6 +152,14 @@ static struct OptionChoice filterChoices[] = {
 	{ "S-Video", COMPOSITE_SVIDEO },
 };
 
+// How much darker the rows between the picture's lines are, in 256ths kept
+static struct OptionChoice scanlineChoices[] = {
+	{ "Off", 256 },
+	{ "Light", 192 },
+	{ "Medium", 128 },
+	{ "Dark", 64 },
+};
+
 #define VOLUME_VALUES { { "0%", NULL }, { "10%", NULL }, { "20%", NULL }, { "30%", NULL }, { "40%", NULL }, { "50%", NULL }, \
 	{ "60%", NULL }, { "70%", NULL }, { "80%", NULL }, { "90%", NULL }, { "100%", NULL }, { NULL, NULL } }
 #define PAN_VALUES { { "Left", NULL }, { "75% left", NULL }, { "50% left", NULL }, { "25% left", NULL }, { "Center", NULL }, \
@@ -216,6 +224,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The picture as a TV decoded it: Composite, with its color fringes and blended dithering, or the "
 		"sharper S-Video. It makes its own colors. Takes more CPU time. Off for arcade boards.",
 		NULL, "video", { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_scanlines", "Scanlines", NULL,
+		"Dark rows between the filtered picture's lines, as a CRT's beam left them. Best with integer scaling "
+		"or a smooth filter in the frontend.",
+		NULL, "video", { { "Off", NULL }, { "Light", NULL }, { "Medium", NULL }, { "Dark", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_sprite_limit", "Sprite Limit", NULL,
 		"The console shows 8 sprites on a line, which games turn into flicker. No limit shows them all; "
 		"games still see the console's limit.",
@@ -310,7 +322,7 @@ static void checkOptions(void);
 static bool showOptions(void);
 
 // The picture: its shape and how much of the edges is cropped
-static int aspect, cropVertical, cropHorizontal, filter;
+static int aspect, cropVertical, cropHorizontal, filter, scanlines = 256;
 
 enum { SCREENS_BOTH, SCREENS_MAIN, SCREENS_SECOND };
 static int screens;
@@ -353,6 +365,7 @@ static void readVideoOptions(void) {
 	cropVertical = optionChoice(environ_cb, "armnes_crop_vertical", cropChoices, 5, 0);
 	cropHorizontal = optionChoice(environ_cb, "armnes_crop_horizontal", cropChoices, 5, 0);
 	filter = nes.cart.vs || nes.cart.playchoice ? COMPOSITE_OFF : optionChoice(environ_cb, "armnes_filter", filterChoices, 3, COMPOSITE_OFF);
+	scanlines = optionChoice(environ_cb, "armnes_scanlines", scanlineChoices, 4, 256);
 	screens = optionChoice(environ_cb, "armnes_vs_screens", screenChoices, 3, SCREENS_BOTH);
 }
 
@@ -362,9 +375,10 @@ static void geometry(struct retro_game_geometry* g) {
 	float pixel = nes.region == REGION_NTSC ? 8.0f / 7.0f : 2950000.0f / 2128137.0f;
 	unsigned count = nes.dual && screens == SCREENS_BOTH && nes.cart.vsHardware != 6 ? 2 : 1;
 	g->base_width = (filter ? width * COMPOSITE_SCALE : width) * count;
-	g->base_height = height;
+	// The filtered picture has two rows to a line, the second for the scanline
+	g->base_height = filter ? 2 * height : height;
 	g->max_width = 2 * COMPOSITE_WIDTH;
-	g->max_height = NES_HEIGHT;
+	g->max_height = 2 * NES_HEIGHT;
 	switch (aspect) {
 	case ASPECT_PAR:
 		g->aspect_ratio = width * pixel / height;
@@ -620,6 +634,7 @@ static bool showOptions(void) {
 		{ "armnes_fds_fast", !loaded || nes.cart.disk },
 		{ "armnes_jumper", !loaded || nes.hasJumper || nes.cart.jumper >= 0 },
 		{ "armnes_palette", !optionIs(environ_cb, "armnes_filter", "Composite") && !optionIs(environ_cb, "armnes_filter", "S-Video") },
+		{ "armnes_scanlines", optionIs(environ_cb, "armnes_filter", "Composite") || optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_volume_cart", !loaded || cartSound() },
 		{ "armnes_pan_cart", !loaded || cartSound() },
 		{ "armnes_zapper_aim", zapper },
@@ -1140,8 +1155,25 @@ void retro_run(void) {
 	if (crossShown) {
 		drawCrosshair(scale);
 	}
-	video_cb(video + (cropVertical * NES_WIDTH + cropHorizontal) * scale, (NES_WIDTH - 2 * cropHorizontal) * scale,
-		NES_HEIGHT - 2 * cropVertical, NES_WIDTH * scale * sizeof(uint16_t));
+	if (filter) {
+		// Each line twice, the second dimmed as the scanline
+		static uint16_t tall[2 * COMPOSITE_WIDTH * NES_HEIGHT];
+		for (int y = 0; y < NES_HEIGHT; y++) {
+			const uint16_t* line = &video[y * COMPOSITE_WIDTH];
+			uint16_t* top = &tall[2 * y * COMPOSITE_WIDTH];
+			uint16_t* bottom = top + COMPOSITE_WIDTH;
+			memcpy(top, line, COMPOSITE_WIDTH * sizeof(uint16_t));
+			for (int x = 0; x < COMPOSITE_WIDTH; x++) {
+				unsigned p = line[x];
+				bottom[x] = (uint16_t) (((p >> 11) * scanlines >> 8) << 11 | (((p >> 5) & 63) * scanlines >> 8) << 5 | (p & 31) * scanlines >> 8);
+			}
+		}
+		video_cb(tall + (2 * cropVertical * NES_WIDTH + cropHorizontal) * COMPOSITE_SCALE, (NES_WIDTH - 2 * cropHorizontal) * COMPOSITE_SCALE,
+			2 * (NES_HEIGHT - 2 * cropVertical), COMPOSITE_WIDTH * sizeof(uint16_t));
+	} else {
+		video_cb(video + cropVertical * NES_WIDTH + cropHorizontal, NES_WIDTH - 2 * cropHorizontal,
+			NES_HEIGHT - 2 * cropVertical, NES_WIDTH * sizeof(uint16_t));
+	}
 	if (nes.audioCount) {
 		audio_batch_cb(nes.audioOut, nes.audioCount / 2);
 	}

@@ -9,8 +9,10 @@
 
 // The picture as a TV decodes the console's composite signal. The PPU draws each pixel as a square
 // wave between two levels, 12 samples to a cycle of the color carrier: 8 samples a pixel on NTSC, 10
-// on PAL. The TV separates luma and chroma with filters a carrier cycle and two cycles long, which
-// leaves the fringes and dot crawl. PAL mirrors the carrier's phase every other line, and the TV
+// on PAL. The TV takes luma as the average of the signal and itself half a carrier cycle later, which
+// cancels the carrier as a notch filter does and keeps the edges sharp (S-Video's luma has no carrier
+// and is only smoothed), and chroma with a filter two cycles long; that leaves the fringes and dot
+// crawl. PAL mirrors the carrier's phase every other line, and the TV
 // averages each line's color with the line before, which blurs color vertically and cancels hue
 // errors.
 //
@@ -74,12 +76,16 @@ static void decode(int entry, int phase, bool pal, bool mirrored, bool svideo, f
 	for (int j = 0; j < TAPS; j++) {
 		float center = (j - BEFORE + 0.5f) * samples / 3;
 		float y = 0, i = 0, q = 0;
-		float lumaWidth = svideo ? 6 : 12, chromaWidth = 24;
+		float chromaWidth = 24;
 		for (int k = 0; k < samples; k++) {
 			float distance = fabsf(k + 0.5f - center);
 			float s = signal[k];
-			if (distance < lumaWidth / 2) {
-				y += (svideo ? mean : s) / lumaWidth;
+			if (!svideo) {
+				// The two halves of the comb, each interpolated at its place between samples
+				float w = 1 - fabsf(distance - 3);
+				y += w > 0 ? s * w / 2 : 0;
+			} else if (distance < 3) {
+				y += mean / 6;
 			}
 			if (distance < chromaWidth / 2) {
 				float c = svideo ? s - mean : s;
