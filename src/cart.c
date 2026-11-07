@@ -383,6 +383,10 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		cart->wramSize = 0x2000;
 	}
 	cart->wram = calloc(1, cart->wramSize);
+	// Battery RAM no game has written yet isn't cleared: games check it and start a fresh save
+	if (cart->battery) {
+		memset(cart->wram, 0xFF, cart->batterySize < cart->wramSize ? cart->batterySize : cart->wramSize);
+	}
 
 	cart->prgCrc = crc32(0, cart->prg, cart->prgSize);
 	return true;
