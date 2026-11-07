@@ -560,3 +560,67 @@ static void vs99Reset(struct NES* nes, bool hard) {
 const struct Board boardVs99 = {
 	.name = "VS. System", .reset = vs99Reset, .out = vs99Out, .sync = vs99Sync, .stateSize = sizeof(struct Vs99),
 };
+
+// Kaiser KS-7030 (347), behaviour per Mesen: an FDS conversion mapping 1 KB pieces. ROM: two
+// registers set by the address written to $8000 and $9000 pick banks at $7000 and at $C000 plus
+// $6C00; the last 32 KB fill the rest of $8000-$FFFF. RAM shows through at $6000-$6BFF,
+// $B800-$BFFF and $CC00-$D7FF. Pages that mix them go through here.
+struct Kaiser7030 {
+	uint8_t regs[2];
+};
+
+static uint8_t* kaiser7030Byte(struct NES* nes, uint16_t address) {
+	const uint8_t* r = STATE(Kaiser7030)->regs;
+	uint8_t* rom = nes->cart.prg;
+	uint8_t* ram = nes->cart.wram;
+	if (address < 0x6C00) {
+		return ram + (address - 0x6000);
+	} else if (address < 0x7000) {
+		return rom + (((r[1] & 0x0F) << 2) + 3) * 0x400 + (address - 0x6C00);
+	} else if (address < 0x8000) {
+		return rom + 0x10000 + (r[0] & 7) * 0x1000 + (address - 0x7000);
+	} else if (address >= 0xB800 && address < 0xC000) {
+		return ram + 0x0C00 + (address - 0xB800);
+	} else if (address >= 0xC000 && address < 0xCC00) {
+		return rom + (r[1] & 0x0F) * 0x1000 + (address - 0xC000);
+	} else if (address >= 0xCC00 && address < 0xD800) {
+		return ram + 0x1400 + (address - 0xCC00);
+	}
+	return rom + 0x18000 + (address - 0x8000);
+}
+
+static uint8_t kaiser7030Read(struct NES* nes, uint16_t address) {
+	return *kaiser7030Byte(nes, address);
+}
+
+static void kaiser7030Write(struct NES* nes, uint16_t address, uint8_t value) {
+	if (address >= 0x8000 && address < 0xA000) {
+		STATE(Kaiser7030)->regs[(address >> 12) & 1] = address & 0x0F;
+		nesSetMirroring(nes, (STATE(Kaiser7030)->regs[0] & 8) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
+		return;
+	}
+	if (address >= 0x6000 && (address < 0x8000 || (address >= 0xB800 && address < 0xD800))) {
+		*kaiser7030Byte(nes, address) = value;
+	}
+}
+
+static void kaiser7030Sync(struct NES* nes) {
+	nesMapPrg(nes, 0x8000, 0x8000, 3);
+	nesUnmapPrg(nes, 0x6000, 0x2000);
+	nesUnmapPrg(nes, 0xB000, 0x3000);
+	nes->readHooks = 1 << 6 | 1 << 7 | 1 << 0xB | 1 << 0xC | 1 << 0xD;
+	chr8(nes, 0);
+	nesSetMirroring(nes, (STATE(Kaiser7030)->regs[0] & 8) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
+}
+
+static void kaiser7030Reset(struct NES* nes, bool hard) {
+	if (hard) {
+		STATE(Kaiser7030)->regs[0] = STATE(Kaiser7030)->regs[1] = 0x0F;
+	}
+	kaiser7030Sync(nes);
+}
+
+const struct Board boardKaiser7030 = {
+	.name = "Kaiser KS-7030", .reset = kaiser7030Reset, .write = kaiser7030Write, .read = kaiser7030Read,
+	.sync = kaiser7030Sync, .stateSize = sizeof(struct Kaiser7030),
+};

@@ -26,6 +26,8 @@ const struct Board* boardFind(const struct Cart* cart) {
 		return &board127;
 	case 99:
 		return &boardVs99;
+	case 347:
+		return &boardKaiser7030;
 	case 169:
 		return &boardYuxing;
 	case 515:
