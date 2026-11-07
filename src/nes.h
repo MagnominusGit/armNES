@@ -265,6 +265,8 @@ struct Cart {
 	// RC2C03 6-7, RC2C05-01 to -05 8-12) and its protection (NES 2.0's hardware type)
 	bool vs;
 	uint8_t vsPpu, vsHardware;
+	// A PlayChoice-10 game, on that cabinet's RGB PPU
+	bool playchoice;
 	enum Mirroring mirroring;
 	enum Region region;
 	uint32_t prgCrc;

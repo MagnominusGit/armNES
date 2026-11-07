@@ -255,7 +255,8 @@ static void dualStart(struct NES* nes) {
 }
 
 // A VS. DualSystem image holds both boards: the first 32 KB of PRG and the first half of CHR are the
-// main board's, the rest the second's. They share 2 KB of RAM.
+// main board's, the rest the second's. They share 2 KB of RAM. On the protected one (hardware type 6)
+// the second board only runs the protection's program, and both take all the CHR.
 bool nesLoadDual(struct NES* nes, struct NES* sub, uint8_t* shared, const uint8_t* data, size_t size) {
 	if (size < 16 || memcmp(data, "NES\x1A", 4) || (data[7] & 0x0F) != 0x09 || (data[13] >> 4) < 5 || (data[13] >> 4) > 6) {
 		return false;
@@ -267,13 +268,14 @@ bool nesLoadDual(struct NES* nes, struct NES* sub, uint8_t* shared, const uint8_
 	uint8_t* half = malloc(16 + prg + chr);
 	bool ok = half != NULL;
 	for (int board = 0; ok && board < 2; board++) {
-		size_t p = board ? prg - 0x8000 : 0x8000, c = chr / 2;
+		bool protection = (data[13] >> 4) == 6;
+		size_t p = board ? prg - 0x8000 : 0x8000, c = protection ? chr : chr / 2;
 		memcpy(half, data, 16);
 		half[4] = (uint8_t) (p / 0x4000);
 		half[5] = (uint8_t) (c / 0x2000);
 		half[9] = 0;
 		memcpy(half + 16, data + 16 + (board ? 0x8000 : 0), p);
-		memcpy(half + 16 + p, data + 16 + prg + (board ? c : 0), c);
+		memcpy(half + 16 + p, data + 16 + prg + (board && !protection ? c : 0), c);
 		ok = nesLoad(board ? sub : nes, half, 16 + p + c);
 	}
 	free(half);
