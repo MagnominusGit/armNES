@@ -734,8 +734,18 @@ static void unload(void) {
 }
 
 static void power(struct NES* n) {
-	unload();
 	struct Cart* cart = &n->cart;
+	// A board's own save buffer goes with the board, so what's in it is kept for the next one
+	uint8_t* kept = NULL;
+	uint32_t keptSize = 0;
+	if (cart->wramBorrowed && cart->wram) {
+		keptSize = cart->wramSize;
+		kept = malloc(keptSize);
+		if (kept) {
+			memcpy(kept, cart->wram, keptSize);
+		}
+	}
+	unload();
 	const uint8_t* h = cart->header;
 	memset(&info, 0, sizeof(info));
 	memset(&X, 0, sizeof(X));
@@ -840,16 +850,20 @@ static void power(struct NES* n) {
 		}
 	}
 
-	// The board's battery RAM becomes the cartridge's, keeping what was there
+	// The board's battery RAM (or flash, or CHR RAM) becomes the cartridge's. Some boards' buffers are
+	// static or their ROM, so the board keeps them.
 	if (info.SaveGame[0] && info.SaveGameLen[0] && info.SaveGame[0] != cart->wram) {
-		uint32_t keep = info.SaveGameLen[0] < cart->wramSize ? info.SaveGameLen[0] : cart->wramSize;
-		memcpy(info.SaveGame[0], cart->wram, keep);
-		free(cart->wram);
-		// Some boards' buffers are static or the CHR RAM, so the board keeps them
+		if (kept) {
+			memcpy(info.SaveGame[0], kept, keptSize < info.SaveGameLen[0] ? keptSize : info.SaveGameLen[0]);
+		}
+		if (!cart->wramBorrowed) {
+			free(cart->wram);
+		}
 		cart->wram = info.SaveGame[0];
 		cart->wramBorrowed = true;
 		cart->wramSize = cart->batterySize = info.SaveGameLen[0];
 	}
+	free(kept);
 }
 
 static void fceuReset(struct NES* n, bool hard) {
