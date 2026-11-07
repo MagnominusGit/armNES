@@ -184,6 +184,11 @@ static int16_t inputState(unsigned port, unsigned device, unsigned index, unsign
 		sscanf(getenv("CORETEST_STICK"), "%d,%d", &x, &y);
 		return id == RETRO_DEVICE_ID_ANALOG_X ? x : y;
 	}
+	// CORETEST_L2=pull: L2 held that far, 0 to 32767
+	if (getenv("CORETEST_L2") && device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_BUTTON &&
+		id == RETRO_DEVICE_ID_JOYPAD_L2) {
+		return atoi(getenv("CORETEST_L2"));
+	}
 	if (getenv("CORETEST_STICK") && device == RETRO_DEVICE_JOYPAD && port == 0 && id == RETRO_DEVICE_ID_JOYPAD_R) {
 		return frame % 30 < 3;
 	}
