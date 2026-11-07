@@ -76,7 +76,8 @@ static void fkSyncPrg(struct NES* nes) {
 	uint32_t base = f->regs[1] & 0x7F;
 	switch (f->subType) {
 	case 1:
-		if (mode == 0 && (f->regs[3] & 2)) {
+		// All 8 bank bits in mode 0 (behaviour per Mesen)
+		if (mode == 0) {
 			mask = 0xFF;
 		}
 		break;
