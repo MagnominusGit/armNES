@@ -518,6 +518,6 @@ uint8_t apuConflictRead(struct NES*, uint8_t value, uint16_t address, bool drive
 void apuLatchIrq(struct NES*);
 
 // boards.c
-const struct Board* boardFind(int mapper, int submapper);
+const struct Board* boardFind(const struct Cart*);
 
 #endif

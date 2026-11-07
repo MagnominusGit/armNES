@@ -165,7 +165,7 @@ bool nesLoad(struct NES* nes, const uint8_t* data, size_t size) {
 	if (!cartLoad(nes, data, size)) {
 		return false;
 	}
-	nes->board = boardFind(nes->cart.mapper, nes->cart.submapper);
+	nes->board = boardFind(&nes->cart);
 	if (!nes->board) {
 		cartFree(nes);
 		return false;

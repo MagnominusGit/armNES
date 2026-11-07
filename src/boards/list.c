@@ -5,8 +5,15 @@
 
 // Boards by iNES/NES 2.0 mapper number
 
-const struct Board* boardFind(int mapper, int submapper) {
+const struct Board* boardFind(const struct Cart* cart) {
+	int mapper = cart->mapper, submapper = cart->submapper;
 	switch (mapper) {
+	case 111:
+		// GTROM has only CHR RAM; with CHR ROM it's the number's older board
+		if (!cart->chrRam) {
+			return &boardMmc1Parallel;
+		}
+		break;
 	case 0:
 		return &boardNrom;
 	case 20:

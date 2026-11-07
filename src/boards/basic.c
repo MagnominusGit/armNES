@@ -190,3 +190,20 @@ const struct Board boardMmc1 = {
 	.name = "MMC1", .reset = mmc1Reset, .write = mmc1Write, .sync = mmc1Sync, .stateSize = sizeof(struct Mmc1),
 };
 
+// MMC1's registers written whole, not serially, with more CHR bank bits: an old 111 board, used for
+// a translation with 256 KB of CHR
+static void mmc1ParallelWrite(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Mmc1* m = STATE(Mmc1);
+	if (address < 0x8000) {
+		return;
+	}
+	uint8_t* regs[4] = { &m->control, &m->chr0, &m->chr1, &m->prg };
+	*regs[(address >> 13) & 3] = value;
+	mmc1Sync(nes);
+}
+
+const struct Board boardMmc1Parallel = {
+	.name = "MMC1 (parallel)", .reset = mmc1Reset, .write = mmc1ParallelWrite, .sync = mmc1Sync,
+	.stateSize = sizeof(struct Mmc1),
+};
+

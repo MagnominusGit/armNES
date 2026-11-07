@@ -73,6 +73,7 @@ BOARD(boardUxrom);
 BOARD(boardCnrom);
 BOARD(boardAxrom);
 BOARD(boardMmc1);
+BOARD(boardMmc1Parallel);
 
 // mmc3.c
 BOARD(boardMmc3);
