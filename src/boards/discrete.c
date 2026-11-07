@@ -172,9 +172,15 @@ static void sync185(struct NES* nes, struct Discrete* d) {
 }
 
 // BNROM (34) and NINA-001 (34 with CHR ROM over 8 KB)
+static bool nina001(const struct NES* nes) {
+	return nes->cart.submapper == 1 || (nes->cart.submapper == 0 && nes->cart.chrSize > 0x2000);
+}
+
 static void sync34(struct NES* nes, struct Discrete* d) {
-	if (nes->cart.submapper == 1 || (nes->cart.submapper == 0 && nes->cart.chrSize > 0x2000)) {
-		prg32(nes, d->outer & 1);
+	if (nina001(nes)) {
+		// One PRG bit on the board; the rest reach the larger ROMs translations use, and wrap to the
+		// same banks on the original carts
+		prg32(nes, d->outer);
 		chr4(nes, 0x0000, d->value & 15);
 		chr4(nes, 0x1000, d->value2 & 15);
 	} else {
@@ -244,6 +250,20 @@ static void sync62(struct NES* nes, struct Discrete* d) {
 static uint8_t jumperRead(struct NES* nes, uint16_t address) {
 	struct Discrete* d = STATE(Discrete);
 	uint8_t jumper = jumperSetting(nes);
+	if (nes->cart.mapper == 242) {
+		// Pads on the low address lines: 16 or 32 menus, or (submapper 3) the chip or open bus
+		nes->hasJumper = nes->cart.submapper > 0;
+		uint8_t mask = nes->cart.submapper == 2 ? 0x1F : nes->cart.submapper == 3 ? 0x01 : 0x0F;
+		if (mask == 1) {
+			if (jumper & 1) {
+				return nes->cpu.openBus;
+			}
+		} else {
+			address = (address & ~mask) | (jumper & mask);
+		}
+		uint8_t* page = nes->prgPages[address >> 12];
+		return page ? page[address & 0xFFF] : nes->cpu.openBus;
+	}
 	nes->hasJumper = true;
 	if (nes->cart.mapper == 227) {
 		address |= jumper;
@@ -358,9 +378,39 @@ static void sync231(struct NES* nes, struct Discrete* d) {
 	mirrorHV(nes, a & 0x80);
 }
 
+// 242, after FCEUmm's 242.c (NewRisingSun): NROM and UNROM-like modes from the address latched, a
+// second chip on two-chip carts, and on multicarts menu pads read in some modes
+static bool twoChips242(const struct NES* nes) {
+	return (nes->cart.prgSize & 0x20000) && nes->cart.prgSize > 0x20000;
+}
+
 static void sync242(struct NES* nes, struct Discrete* d) {
-	prg32(nes, (d->address >> 3) & 0x0F);
-	mirrorHV(nes, d->address & 2);
+	uint16_t a = d->address;
+	bool two = twoChips242(nes);
+	int prg = (a >> 2) & 0x1F;
+	if (two && !(a & 0x600)) {
+		prg = (prg & 7) | 0x20;
+	}
+	if (a & 0x80) {
+		if (a & 1) {
+			prg32(nes, prg >> 1);
+		} else {
+			prg16(nes, 0x8000, prg);
+			prg16(nes, 0xC000, prg);
+		}
+	} else {
+		prg16(nes, 0x8000, prg);
+		prg16(nes, 0xC000, (a & 0x200) ? prg | 7 : prg & ~7);
+	}
+	chr8(nes, 0);
+	// Multicarts protect CHR RAM in the NROM modes
+	bool locked = (a & 0x80) && nes->cart.submapper > 0;
+	for (int i = 0; i < 8; i++) {
+		nes->chrWritable[i] = nes->cart.chrRam && !locked;
+	}
+	mirrorHV(nes, a & 2);
+	bool pads = (a & 0x1FF) == 0x100 || (two && ((a & 0x3FF) == 0xC0 || (a & 0x800)));
+	nes->readHooks = pads ? 0xFF00 : 0;
 }
 
 // Camerica BF9096 (232): the outer 64 KB from $8000-$BFFF, the inner 16 KB from $C000
@@ -449,7 +499,7 @@ static const struct DiscreteBoard boards[] = {
 	{ 232, 0x8000, 0xFFFF, 0, sync232, "Camerica BF9096" },
 	{ 240, 0x4020, 0x5FFF, 0, sync240, "240" },
 	{ 241, 0x8000, 0xFFFF, WRAM, sync241, "241" },
-	{ 242, 0x8000, 0xFFFF, LATCH_ADDRESS, sync242, "242" },
+	{ 242, 0x8000, 0xFFFF, LATCH_ADDRESS | JUMPER | WRAM, sync242, "242" },
 };
 
 static const struct DiscreteBoard* discrete(struct NES* nes) {
@@ -475,6 +525,12 @@ static void discreteWrite(struct NES* nes, uint16_t address, uint8_t value) {
 			} else {
 				d->value2 = value;
 			}
+			discreteSync(nes);
+			return;
+		}
+		// With NINA-001's registers, BNROM's at $8000 still pick the PRG bank, as FCEUmm has it
+		if (address >= 0x8000 && nina001(nes)) {
+			d->outer = value;
 			discreteSync(nes);
 			return;
 		}
