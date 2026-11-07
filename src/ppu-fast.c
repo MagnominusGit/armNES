@@ -1002,6 +1002,37 @@ bool fastStatusAhead(struct NES* nes, uint8_t* out) {
 	return true;
 }
 
+// Dots from where the PPU is before sprite 0 can hit, or -1 if it can't before the next pre-render line:
+// not before its first line, and on its lines not before its first pixel on this one or the next line.
+// None while a register write is still landing.
+int ppuHitHorizon(const struct NES* nes) {
+	const struct Ppu* ppu = &nes->ppu;
+	// A register write still on its way may turn rendering on
+	if (!quiet(nes)) {
+		return 0;
+	}
+	// The pre-render line comes before line 0, and can be a dot short
+	int line = ppu->scanline == preLine(nes) ? -1 : ppu->scanline;
+	if (ppu->hit || !ppu->showBg || !ppu->showSprites || ppu->oam[0] >= 239 || line >= 240) {
+		return -1;
+	}
+	int first = ppu->oam[0] + 1, last = ppu->oam[0] + (ppu->tall ? 16 : 8);
+	if (line < first) {
+		return (first - line) * 341 - ppu->dot - 1;
+	}
+	if (line > last) {
+		return -1;
+	}
+	if (ppu->dot < 256 && ppu->lineHasZero) {
+		for (int x = ppu->dot; x < 256; x++) {
+			if (ppu->lineSprites[x] & SPRITE_ZERO) {
+				return x - ppu->dot;
+			}
+		}
+	}
+	return 341 - ppu->dot;
+}
+
 // $2004 with the PPU behind, when it's in vblank (or not rendering) all the way to the write: the
 // byte goes into OAM without the PPU catching up
 bool fastOamWriteAhead(struct NES* nes, uint8_t value) {

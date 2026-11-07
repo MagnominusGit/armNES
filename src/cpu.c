@@ -802,6 +802,51 @@ uint8_t cpuPeek(struct NES* nes, uint16_t address) {
 	return 0;
 }
 
+// A loop waiting on $2002 (BIT or LDA, then a branch on bit 7 or 6 back to it, 7 cycles a pass):
+// while the flags it reads can't change and nothing else can happen, the passes it would make leave
+// nothing behind but time, as the next read rewrites A, the flags and the PPU's open bus. Called at
+// the read, three cycles into a pass.
+static uint16_t statusPoll(struct NES* nes, uint16_t address) {
+	struct Cpu* cpu = &nes->cpu;
+	struct Ppu* ppu = &nes->ppu;
+	if ((address & 0xE007) != 0x2002 || address >= 0x4000 || nes->exactPpu || nes->slowCycles ||
+		nes->overclockLines || (nes->cheatPages & 4)) {
+		return address;
+	}
+	uint8_t branch = cpuPeek(nes, cpu->pc);
+	uint16_t start = cpu->pc - 3;
+	if (cpuPeek(nes, cpu->pc + 1) != 0xFB || ((start + 5) & 0xFF00) != (start & 0xFF00)) {
+		return address;
+	}
+	nesPpuSync(nes);
+	bool bit7 = ppu->vblank, bit6 = ppu->hit;
+	bool again = branch == 0x10 ? !bit7 : branch == 0x50 && cpuPeek(nes, start) == 0x2C ? !bit6 :
+		branch == 0x70 && cpuPeek(nes, start) == 0x2C ? bit6 : false;
+	// With OAMADDR off 0 another sprite takes sprite 0's place
+	if (!again || bit7 || ppu->resetting || ppu->oamAddr) {
+		return address;
+	}
+	nes->quietBudget = 0;
+	quietAhead(nes);
+	int cycles = nes->quietBudget;
+	int dots = ppuHitHorizon(nes);
+	if (dots >= 0) {
+		int byHit = dots * nes->ppuPeriod / nes->cpuPeriod;
+		cycles = cycles < byHit ? cycles : byHit;
+	}
+	int passes = (cycles - 16) / 7;
+	if (passes > 0) {
+		int skipped = passes * 7, period = nes->cpuPeriod;
+		nes->slotTick = nes->masterClock + (uint64_t) (skipped - 1) * period;
+		nes->masterClock += (uint64_t) skipped * period;
+		nes->ppuLag += skipped * period;
+		nes->apuPending += skipped;
+		cpu->cycles += skipped;
+	}
+	nes->quietBudget = 0;
+	return address;
+}
+
 #define READ(op, mode) doRead(nes, op, mode); break
 #define MODIFY(op, mode) doModify(nes, op, mode); break
 #define STORE(op, mode) doStore(nes, op, mode); break
@@ -872,11 +917,11 @@ void cpuStep(struct NES* nes) {
 	case 0xC4: READ(OP_CPY, addrZp(nes));
 	case 0xCC: READ(OP_CPY, addrAbs(nes));
 	case 0x24: READ(OP_BIT, addrZp(nes));
-	case 0x2C: READ(OP_BIT, addrAbs(nes));
+	case 0x2C: READ(OP_BIT, statusPoll(nes, addrAbs(nes)));
 	case 0xA9: READ(OP_LDA, cpu->pc++);
 	case 0xA5: READ(OP_LDA, addrZp(nes));
 	case 0xB5: READ(OP_LDA, addrZpIndexed(nes, cpu->x));
-	case 0xAD: READ(OP_LDA, addrAbs(nes));
+	case 0xAD: READ(OP_LDA, statusPoll(nes, addrAbs(nes)));
 	case 0xBD: READ(OP_LDA, addrAbsIndexed(nes, cpu->x, false));
 	case 0xB9: READ(OP_LDA, addrAbsIndexed(nes, cpu->y, false));
 	case 0xA1: READ(OP_LDA, addrIndirectX(nes));
