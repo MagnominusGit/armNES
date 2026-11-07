@@ -261,10 +261,10 @@ struct Cart {
 	int mapper, submapper;
 	// An NES 2.0 header, or sizes and submapper from the list of fixed headers
 	bool nes2;
-	// A VS. System board, and its PPU (NES 2.0's numbering: RP2C03 0-1, RP2C04-0001 to -0004 2-5,
-	// RC2C03 6-7, RC2C05-01 to -05 8-12)
+	// A VS. System board, its PPU (NES 2.0's numbering: RP2C03 0-1, RP2C04-0001 to -0004 2-5,
+	// RC2C03 6-7, RC2C05-01 to -05 8-12) and its protection (NES 2.0's hardware type)
 	bool vs;
-	uint8_t vsPpu;
+	uint8_t vsPpu, vsHardware;
 	enum Mirroring mirroring;
 	enum Region region;
 	uint32_t prgCrc;
@@ -305,6 +305,7 @@ struct InputState {
 	uint8_t keyboardRow, paddle;
 	bool keyboardColumn, keyboardEnable;
 	uint8_t lastWrite;
+	uint8_t vsCounter;
 };
 
 struct Cheat {
@@ -467,6 +468,7 @@ static inline bool nesOverclockHold(struct NES* nes, int line) {
 uint32_t inputReport(const struct NES*, int port);
 void inputLatch(struct NES*);
 uint8_t inputBits(struct NES*, int port);
+uint8_t vsProtectionRead(struct NES*, uint16_t address);
 void inputWrite(struct NES*, uint8_t value);
 
 // cheat.c

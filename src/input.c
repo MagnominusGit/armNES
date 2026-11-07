@@ -29,11 +29,47 @@ uint32_t inputReport(const struct NES* nes, int port) {
 	if (in->device[port] != DEVICE_PAD) {
 		return 0;
 	}
+	uint8_t pad = nes->pads[port];
+	// Two VS. boards wire the pads' fourth bit high (behaviour per Mesen)
+	if (nes->cart.vsHardware == 4 || nes->cart.vsHardware == 6) {
+		pad |= 0x08;
+	}
 	if (in->fourScore) {
 		uint8_t signature = port ? 0x20 : 0x10;
-		return (uint32_t) padBits(nes->pads[port]) << 24 | padBits(in->pads[port]) << 16 | signature << 8 | 0xFF;
+		return (uint32_t) padBits(pad) << 24 | padBits(in->pads[port]) << 16 | signature << 8 | 0xFF;
 	}
-	return (uint32_t) padBits(nes->pads[port]) << 24 | 0xFFFFFF;
+	return (uint32_t) padBits(pad) << 24 | 0xFFFFFF;
+}
+
+// The protection chips on three VS. boards: two give a sequence of bytes from $5E01 after a $5E00
+// read (behaviour per Mesen), the third answers at four addresses, two ways that a read of $5567
+// switches between (behaviour per FCEUmm)
+uint8_t vsProtectionRead(struct NES* nes, uint16_t address) {
+	static const uint8_t sequences[2][32] = {
+		{ 0x00, 0x00, 0x00, 0x00, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x6F, 0x00, 0x00, 0x00, 0x00, 0x94 },
+		{ 0xFF, 0xBF, 0xB7, 0x97, 0x97, 0x17, 0x57, 0x4F, 0x6F, 0x6B, 0xEB, 0xA9, 0xB1, 0x90, 0x94, 0x14,
+		  0x56, 0x4E, 0x6F, 0x6B, 0xEB, 0xA9, 0xB1, 0x90, 0xD4, 0x5C, 0x3E, 0x26, 0x87, 0x83, 0x13, 0x00 },
+	};
+	uint8_t* counter = &nes->inputState.vsCounter;
+	if (nes->cart.vsHardware == 3) {
+		switch (address) {
+		case 0x54FF:
+			return 0x05;
+		case 0x5678:
+			return *counter ? 0x00 : 0x01;
+		case 0x578F:
+			return *counter ? 0xD1 : 0x89;
+		case 0x5567:
+			*counter ^= 1;
+			return *counter ? 0x37 : 0x3E;
+		}
+	} else if (address == 0x5E00) {
+		*counter = 0;
+		return 0;
+	} else if (address == 0x5E01) {
+		return sequences[nes->cart.vsHardware - 1][(*counter)++ & 31];
+	}
+	return nes->cpu.openBus;
 }
 
 // The paddle's knob as its counter reads it: 9 bits, the 8-bit range per version

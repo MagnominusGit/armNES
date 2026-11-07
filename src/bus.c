@@ -30,6 +30,8 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 		uint8_t* page = address >= 0x4020 ? nes->prgPages[address >> 12] : NULL;
 		if (page) {
 			value = page[address & 0xFFF];
+		} else if (__builtin_expect(nes->cart.vsHardware - 1u < 3u, 0) && address < 0x6000) {
+			value = vsProtectionRead(nes, address);
 		} else {
 			value = cpu->openBus;
 			driven = false;

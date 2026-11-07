@@ -286,6 +286,7 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		}
 		cart->vs = (h[7] & 3) == 1;
 		cart->vsPpu = h[13] & 15;
+		cart->vsHardware = h[13] >> 4;
 		switch (h[12] & 3) {
 		case 1:
 			cart->region = REGION_PAL;
@@ -308,6 +309,7 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		cart->region = (h[9] & 1) ? REGION_PAL : REGION_NTSC;
 		cart->vs = !(h[7] & 0x0C) && (h[7] & 1);
 		cart->vsPpu = 0;
+		cart->vsHardware = 0;
 		if (!cart->chrSize) {
 			cart->chrSize = 0x2000;
 			cart->chrRam = true;
