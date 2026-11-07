@@ -239,7 +239,9 @@ static void requestDmcDma(struct NES* nes) {
 
 static void dmcStepSample(struct NES* nes) {
 	struct Dmc* d = &nes->apu.dmc;
-	if (d->shifter & 1) {
+	// With the silence flag set, the level stays where it is, as a $4011 write left it
+	if (d->silent) {
+	} else if (d->shifter & 1) {
 		if (d->output <= 125) {
 			d->output += 2;
 			nes->apu.mixDirty = true;
