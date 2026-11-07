@@ -191,122 +191,115 @@ static struct OptionChoice cropChoices[] = {
 	{ "16", 16 },
 };
 
+// Keys and values match saved configurations; labels are what the menu shows. showOptions hides
+// the options that do nothing for the game loaded or with the others' values.
 static struct retro_core_option_v2_definition optionDefinitions[] = {
-	{ "armnes_region", "Region", NULL, "The console the game runs on. Auto takes it from the game's header.", NULL, NULL,
+	{ "armnes_region", "Region", NULL, "The console the game runs on. Auto reads it from the game's header.", NULL, "system",
 		{ { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { "Dendy", NULL }, { NULL, NULL } }, "Auto" },
-	{ "armnes_palette", "Palette", NULL,
-		"The colors. armNES NTSC decodes the console's video signal; the others are measured or tuned "
-		"palettes; Custom loads nes.pal (or custom.pal) from the system folder.",
-		NULL, NULL, { { NULL, NULL } }, "armNES NTSC" },
-	{ "armnes_filter", "NTSC/PAL Filter", NULL,
-		"The picture as a TV decodes the console's video signal, NTSC or PAL by the region: Composite "
-		"with its color fringes and the blending some games' dithering relied on, S-Video sharper. It "
-		"makes its own colors, so the palette doesn't apply. Takes more CPU time. VS. System and "
-		"PlayChoice-10 boards send RGB to an arcade monitor, so it stays off for them.",
-		NULL, NULL, { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_fds_fast", "Disk System Fast Loading", NULL,
-		"Runs the Disk System up to 16 times as fast while the drive reads or writes the disk, showing only "
-		"every 16th frame and dropping its sound.",
-		NULL, NULL, { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_aspect", "Aspect Ratio", NULL,
-		"4:3 is the picture as a TV showed it. 8:7 PAR keeps the console's pixel shape (8:7 on NTSC, about "
-		"11:8 on PAL). 1:1 shows square pixels.",
-		NULL, NULL, { { "4:3", NULL }, { "8:7 PAR", NULL }, { "1:1", NULL }, { NULL, NULL } }, "4:3" },
-	{ "armnes_crop_vertical", "Crop Top and Bottom", NULL,
-		"Pixels hidden at the top and at the bottom, as a TV's overscan hid them.",
-		NULL, NULL, { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
-	{ "armnes_crop_horizontal", "Crop Sides", NULL,
-		"Pixels hidden at the left and at the right edge.",
-		NULL, NULL, { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
 	{ "armnes_overclock", "Overclock", NULL,
-		"Gives the CPU extra time each frame, which removes most slowdown. The picture, sound and game "
-		"speed stay as they are. Not accurate: a few games misbehave, mostly with the extra time in "
-		"vblank; try the other placement for those.",
-		NULL, NULL, { { "Off", NULL }, { "2x (vblank)", NULL }, { "3x (vblank)", NULL }, { "4x (vblank)", NULL },
+		"Extra CPU time each frame, which removes most slowdown without changing game speed. A few games "
+		"misbehave; try the other placement for those.",
+		NULL, "system", { { "Off", NULL }, { "2x (vblank)", NULL }, { "3x (vblank)", NULL }, { "4x (vblank)", NULL },
 		{ "2x (after the picture)", NULL }, { "3x (after the picture)", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_fds_fast", "Disk System Fast Loading", NULL,
+		"Runs up to 16 times as fast while the disk drive reads or writes, without its sound.",
+		NULL, "system", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_jumper", "Cart Jumper", NULL,
+		"The cart's solder pads or DIP switches, which pick its menu, games, language or timing. Auto uses "
+		"the setting known for the dump. Changing it restarts the game.",
+		NULL, "system", { { "Auto", NULL }, { "0", NULL }, { "1", NULL }, { "2", NULL }, { "3", NULL }, { "4", NULL }, { "5", NULL }, { "6", NULL }, { "7", NULL }, { "8", NULL }, { "9", NULL }, { "10", NULL }, { "11", NULL }, { "12", NULL }, { "13", NULL }, { "14", NULL }, { "15", NULL }, { "16", NULL }, { "17", NULL }, { "18", NULL }, { "19", NULL }, { "20", NULL }, { "21", NULL }, { "22", NULL }, { "23", NULL }, { NULL, NULL } }, "Auto" },
+	{ "armnes_palette", "Palette", NULL,
+		"The colors. armNES NTSC decodes the console's video signal; the others are measured or tuned. "
+		"Custom loads nes.pal (or custom.pal) from the system folder.",
+		NULL, "video", { { NULL, NULL } }, "armNES NTSC" },
+	{ "armnes_filter", "NTSC/PAL Filter", NULL,
+		"The picture as a TV decoded it: Composite, with its color fringes and blended dithering, or the "
+		"sharper S-Video. It makes its own colors. Takes more CPU time. Off for arcade boards.",
+		NULL, "video", { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_sprite_limit", "Sprite Limit", NULL,
-		"The console shows 8 sprites on a line and drops the rest, which games turn into flicker. No limit "
-		"shows them all; games still see the console's limit.",
-		NULL, NULL, { { "8 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "8 per line" },
+		"The console shows 8 sprites on a line, which games turn into flicker. No limit shows them all; "
+		"games still see the console's limit.",
+		NULL, "video", { { "8 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "8 per line" },
+	{ "armnes_aspect", "Aspect Ratio", NULL,
+		"4:3 as a TV showed it, 8:7 PAR the console's pixel shape (about 11:8 on PAL), or square pixels.",
+		NULL, "video", { { "4:3", NULL }, { "8:7 PAR", NULL }, { "1:1", NULL }, { NULL, NULL } }, "4:3" },
+	{ "armnes_crop_vertical", "Crop Top and Bottom", NULL,
+		"Pixels hidden at the top and bottom, as a TV's overscan hid them.",
+		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
+	{ "armnes_crop_horizontal", "Crop Sides", NULL,
+		"Pixels hidden at the left and right edges.",
+		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
+	{ "armnes_volume_pulse1", "Pulse 1 Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_pulse1", "Pulse 1 Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
+	{ "armnes_volume_pulse2", "Pulse 2 Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_pulse2", "Pulse 2 Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
+	{ "armnes_volume_triangle", "Triangle Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_triangle", "Triangle Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
+	{ "armnes_volume_noise", "Noise Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_noise", "Noise Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
+	{ "armnes_volume_dmc", "DMC Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_dmc", "DMC Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
+	{ "armnes_volume_cart", "Cart Sound Volume", NULL,
+		"The sound chip in the cart or the Disk System.", NULL, "audio", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_cart", "Cart Sound Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
 	{ "armnes_turbo", "Turbo Speed", NULL,
 		"How fast the turbo buttons (X for A, Y for B) press and release.",
-		NULL, NULL, { { "Off", NULL }, { "30 per second", NULL }, { "20 per second", NULL }, { "15 per second", NULL },
+		NULL, "input", { { "Off", NULL }, { "30 per second", NULL }, { "20 per second", NULL }, { "15 per second", NULL },
 		{ "10 per second", NULL }, { "7.5 per second", NULL }, { NULL, NULL } }, "15 per second" },
 	{ "armnes_opposing", "Allow Opposing Directions", NULL,
-		"Lets left and right (or up and down) be held together, which a pad can't do. A few games glitch "
-		"with it; some speedrun tricks use it.",
-		NULL, NULL, { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+		"Left and right (or up and down) held together, which a real pad can't do. A few games glitch.",
+		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_four_players", "4 Players", NULL,
-		"Players 3 and 4 on controllers 3 and 4, through the NES Four Score or the Famicom's adapter on "
-		"the expansion port. Games read one or the other. Auto uses the one an NES 2.0 header names.",
-		NULL, NULL, { { "Auto", NULL }, { "Off", NULL }, { "Four Score", NULL }, { "Famicom adapter", NULL }, { NULL, NULL } }, "Auto" },
+		"Players 3 and 4 through the NES Four Score or the Famicom's adapter. Auto follows an NES 2.0 header.",
+		NULL, "input", { { "Auto", NULL }, { "Off", NULL }, { "Four Score", NULL }, { "Famicom adapter", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_expansion", "Famicom Expansion Port", NULL,
-		"A device in the Famicom's expansion port. The paddle follows the mouse; the Power Pad (the "
-		"Famicom's, read by rows) takes controller 1's buttons; the keyboard takes the keyboard (turn on "
-		"Game Focus). Auto uses the one an NES 2.0 header names.",
-		NULL, NULL, { { "Auto", NULL }, { "None", NULL }, { "Paddle", NULL }, { "Power Pad", NULL },
+		"The paddle follows the mouse, the Power Pad takes controller 1's buttons, the keyboard the "
+		"keyboard (turn on Game Focus). Auto follows an NES 2.0 header.",
+		NULL, "input", { { "Auto", NULL }, { "None", NULL }, { "Paddle", NULL }, { "Power Pad", NULL },
 		{ "Keyboard", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_zapper_aim", "Zapper Aim", NULL,
-		"How the Zapper aims. Light gun points where the light gun (or the mouse pointer) is. Mouse moves "
-		"a crosshair; the left button fires. Right stick (absolute) puts the crosshair where the stick "
-		"points; Right stick (pan) moves it. With the stick, controller 1's R or R2 fires. Touching the "
-		"screen aims and fires there with any of them.",
-		NULL, NULL, { { "Light gun", NULL }, { "Mouse", NULL }, { "Right stick (absolute)", NULL },
+		"A light gun or mouse pointer, a mouse-moved crosshair (left button fires), or the right stick "
+		"pointing (absolute) or moving (pan) it, R or R2 firing. Touching the screen always aims and fires.",
+		NULL, "input", { { "Light gun", NULL }, { "Mouse", NULL }, { "Right stick (absolute)", NULL },
 		{ "Right stick (pan)", NULL }, { NULL, NULL } }, "Light gun" },
 	{ "armnes_zapper_sensitivity", "Zapper Sensitivity", NULL,
-		"How fast the mouse and Right stick (pan) move the crosshair. Holding L2 aims finer the further "
-		"it's pulled, down to a quarter of the speed; with Right stick (absolute) it makes the stick's "
-		"moves smaller from where the crosshair is.",
-		NULL, NULL, { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
+		"How fast the crosshair moves. Holding L2 aims finer the further it's pulled.",
+		NULL, "input", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
 		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
-	{ "armnes_jumper", "Cart Jumper", NULL,
-		"Some carts have solder pads or DIP switches that pick their menu, the games listed, a language or "
-		"the video timing. Auto uses the setting known for the dump, or 0. Changing it restarts the game, "
-		"as it would on the cart. Other carts ignore it.",
-		NULL, NULL, { { "Auto", NULL }, { "0", NULL }, { "1", NULL }, { "2", NULL }, { "3", NULL }, { "4", NULL }, { "5", NULL }, { "6", NULL }, { "7", NULL }, { "8", NULL }, { "9", NULL }, { "10", NULL }, { "11", NULL }, { "12", NULL }, { "13", NULL }, { "14", NULL }, { "15", NULL }, { "16", NULL }, { "17", NULL }, { "18", NULL }, { "19", NULL }, { "20", NULL }, { "21", NULL }, { "22", NULL }, { "23", NULL }, { NULL, NULL } }, "Auto" },
-	{ "armnes_volume_pulse1", "Sound > Pulse 1 Volume", "Pulse 1 Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
-	{ "armnes_pan_pulse1", "Sound > Pulse 1 Position", "Pulse 1 Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
-	{ "armnes_volume_pulse2", "Sound > Pulse 2 Volume", "Pulse 2 Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
-	{ "armnes_pan_pulse2", "Sound > Pulse 2 Position", "Pulse 2 Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
-	{ "armnes_volume_triangle", "Sound > Triangle Volume", "Triangle Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
-	{ "armnes_pan_triangle", "Sound > Triangle Position", "Triangle Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
-	{ "armnes_volume_noise", "Sound > Noise Volume", "Noise Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
-	{ "armnes_pan_noise", "Sound > Noise Position", "Noise Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
-	{ "armnes_volume_dmc", "Sound > DMC Volume", "DMC Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
-	{ "armnes_pan_dmc", "Sound > DMC Position", "DMC Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
-	{ "armnes_volume_cart", "Sound > Cart Sound Volume", "Cart Sound Volume", NULL, NULL, "sound", VOLUME_VALUES, "100%" },
-	{ "armnes_pan_cart", "Sound > Cart Sound Position", "Cart Sound Position", NULL, NULL, "sound", PAN_VALUES, "Center" },
-	{ "armnes_vs_ppu", "VS. System > PPU", "PPU", "The arcade board's PPU, which sets its colors. Auto takes it from an NES 2.0 header, or the RP2C03.",
+	{ "armnes_vs_ppu", "PPU", NULL, "The board's PPU, which sets its colors. Auto follows an NES 2.0 header, or the RP2C03.",
 		NULL, "vs", { { "Auto", NULL }, { "RP2C03", NULL }, { "RP2C04-0001", NULL }, { "RP2C04-0002", NULL }, { "RP2C04-0003", NULL },
 		{ "RP2C04-0004", NULL }, { "RC2C05-01", NULL }, { "RC2C05-02", NULL }, { "RC2C05-03", NULL }, { "RC2C05-04", NULL },
 		{ "RC2C05-05", NULL }, { NULL, NULL } }, "Auto" },
-	{ "armnes_vs_swap", "VS. System > Swap Controllers", "Swap Controllers",
+	{ "armnes_vs_swap", "Swap Controllers", NULL,
 		"Some cabinets wire player 1 to the second port. Auto follows an NES 2.0 header.",
 		NULL, "vs", { { "Auto", NULL }, { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Auto" },
-	{ "armnes_vs_dip1", "VS. System > DIP Switch 1", "DIP Switch 1", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip2", "VS. System > DIP Switch 2", "DIP Switch 2", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip3", "VS. System > DIP Switch 3", "DIP Switch 3", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip4", "VS. System > DIP Switch 4", "DIP Switch 4", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip5", "VS. System > DIP Switch 5", "DIP Switch 5", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip6", "VS. System > DIP Switch 6", "DIP Switch 6", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip7", "VS. System > DIP Switch 7", "DIP Switch 7", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip8", "VS. System > DIP Switch 8", "DIP Switch 8", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_screens", "VS. System > DualSystem Screens", "DualSystem Screens",
-		"A DualSystem cabinet has two boards and two screens: both side by side, or one of them.",
+	{ "armnes_vs_dip1", "DIP Switch 1", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip2", "DIP Switch 2", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip3", "DIP Switch 3", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip4", "DIP Switch 4", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip5", "DIP Switch 5", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip6", "DIP Switch 6", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip7", "DIP Switch 7", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip8", "DIP Switch 8", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_screens", "DualSystem Screens", NULL,
+		"A DualSystem cabinet's two screens side by side, or one of them.",
 		NULL, "vs", { { "Both", NULL }, { "Main board", NULL }, { "Second board", NULL }, { NULL, NULL } }, "Both" },
-	{ "armnes_vs_dip9", "VS. System > DualSystem DIP Switch 9", "DualSystem DIP Switch 9", "The second board's switches 1 to 8.", NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip10", "VS. System > DualSystem DIP Switch 10", "DualSystem DIP Switch 10", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip11", "VS. System > DualSystem DIP Switch 11", "DualSystem DIP Switch 11", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip12", "VS. System > DualSystem DIP Switch 12", "DualSystem DIP Switch 12", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip13", "VS. System > DualSystem DIP Switch 13", "DualSystem DIP Switch 13", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip14", "VS. System > DualSystem DIP Switch 14", "DualSystem DIP Switch 14", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip15", "VS. System > DualSystem DIP Switch 15", "DualSystem DIP Switch 15", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip16", "VS. System > DualSystem DIP Switch 16", "DualSystem DIP Switch 16", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip9", "DualSystem DIP Switch 9", NULL, "The second board's switches 1 to 8.", NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip10", "DualSystem DIP Switch 10", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip11", "DualSystem DIP Switch 11", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip12", "DualSystem DIP Switch 12", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip13", "DualSystem DIP Switch 13", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip14", "DualSystem DIP Switch 14", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip15", "DualSystem DIP Switch 15", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip16", "DualSystem DIP Switch 16", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
 static struct retro_core_option_v2_category categories[] = {
-	{ "sound", "Sound", "Each channel's volume and where it sits between the speakers. The console mixes in mono." },
+	{ "system", "System", "The console's region and speed, the Disk System and cart settings." },
+	{ "video", "Video", "Colors, the TV filter, sprites and the picture's shape and edges." },
+	{ "audio", "Audio", "Each channel's volume and where it sits between the speakers. The console mixes in mono." },
+	{ "input", "Input", "Turbo, extra players, the expansion port and the Zapper." },
 	{ "vs", "VS. System", "The arcade board's PPU, controller wiring and DIP switches. Select puts in a coin, controller 1's L is the service button. A DualSystem's second board takes controllers 3 and 4 (controller 3's L for its service button)." },
 	{ NULL, NULL, NULL },
 };
@@ -314,6 +307,7 @@ static struct retro_core_option_v2_category categories[] = {
 static struct retro_core_options_v2 options = { categories, optionDefinitions };
 
 static void checkOptions(void);
+static bool showOptions(void);
 
 // The picture: its shape and how much of the edges is cropped
 static int aspect, cropVertical, cropHorizontal, filter;
@@ -548,6 +542,8 @@ void retro_set_environment(retro_environment_t cb) {
 	};
 	cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*) info);
 	optionsGive(cb, &options);
+	static struct retro_core_options_update_display_callback update = { showOptions };
+	cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &update);
 }
 
 void retro_set_video_refresh(retro_video_refresh_t cb) {
@@ -599,6 +595,52 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 
 static uint8_t portDevice[2];
 
+// Whether the cart has its own sound chip: the Disk System's, MMC5's, Namco 163's, VRC6's, Sunsoft's
+// or VRC7's, or an NSF's, which may name any of them.
+static bool cartSound(void) {
+	static const int mappers[] = { 5, 19, 20, 24, 26, 69, 85 };
+	if (nes.cart.disk || nes.board == &boardNsf) {
+		return true;
+	}
+	for (size_t i = 0; i < sizeof(mappers) / sizeof(*mappers); i++) {
+		if (nes.cart.mapper == mappers[i]) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Shows only the options that do something for the game loaded, with the controllers plugged in and
+// the other options' values. Without a game, all of them.
+static bool showOptions(void) {
+	bool const vs = !loaded || nes.cart.vs;
+	bool const dual = !loaded || nes.dual;
+	bool const zapper = !loaded || portDevice[0] == DEVICE_ZAPPER || portDevice[1] == DEVICE_ZAPPER;
+	struct { const char* key; bool show; } const shown[] = {
+		{ "armnes_fds_fast", !loaded || nes.cart.disk },
+		{ "armnes_jumper", !loaded || nes.hasJumper || nes.cart.jumper >= 0 },
+		{ "armnes_palette", !optionIs(environ_cb, "armnes_filter", "Composite") && !optionIs(environ_cb, "armnes_filter", "S-Video") },
+		{ "armnes_volume_cart", !loaded || cartSound() },
+		{ "armnes_pan_cart", !loaded || cartSound() },
+		{ "armnes_zapper_aim", zapper },
+		{ "armnes_zapper_sensitivity", zapper && !optionIs(environ_cb, "armnes_zapper_aim", "Light gun") },
+		{ "armnes_vs_ppu", vs },
+		{ "armnes_vs_swap", vs },
+		{ "armnes_vs_screens", dual },
+	};
+	for (size_t i = 0; i < sizeof(shown) / sizeof(*shown); i++) {
+		struct retro_core_option_display display = { shown[i].key, shown[i].show };
+		environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
+	}
+	for (int i = 1; i <= 16; i++) {
+		char key[32];
+		snprintf(key, sizeof(key), "armnes_vs_dip%d", i);
+		struct retro_core_option_display display = { key, i <= 8 ? vs : dual };
+		environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
+	}
+	return true;
+}
+
 void retro_set_controller_port_device(unsigned port, unsigned device) {
 	if (port < 2) {
 		switch (device) {
@@ -608,6 +650,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {
 		case RETRO_DEVICE_NONE: portDevice[port] = DEVICE_NONE; break;
 		default: portDevice[port] = DEVICE_PAD; break;
 		}
+		showOptions();
 	}
 }
 
@@ -1331,8 +1374,9 @@ static void checkOptions(void) {
 	}
 	if (nes.hasJumper && !jumperNoticed) {
 		jumperNoticed = true;
+		showOptions();
 		char text[200];
-		snprintf(text, sizeof(text), "This cart has solder pads or DIP switches, set to %d%s. Core Options > Cart Jumper changes them.",
+		snprintf(text, sizeof(text), "This cart has solder pads or DIP switches, set to %d%s. Core Options > System > Cart Jumper changes them.",
 			jumperSetting(&nes), nes.jumper < 0 && nes.cart.jumper >= 0 ? " for this dump" : "");
 		struct retro_message message = { text, 480 };
 		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
@@ -1453,6 +1497,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	songFrames = 0;
 	lastNsfPad = 0;
 	loaded = true;
+	showOptions();
 	return true;
 }
 
@@ -1472,6 +1517,7 @@ void retro_unload_game(void) {
 		free(unpacked);
 		unpacked = NULL;
 		loaded = false;
+		showOptions();
 	}
 }
 
