@@ -195,7 +195,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_filter", "NTSC/PAL Filter", NULL,
 		"The picture as a TV decodes the console's video signal, NTSC or PAL by the region: Composite "
 		"with its color fringes and the blending some games' dithering relied on, S-Video sharper. It "
-		"makes its own colors, so the palette doesn't apply. Takes more CPU time.",
+		"makes its own colors, so the palette doesn't apply. Takes more CPU time. VS. System boards send "
+		"RGB to an arcade monitor, so it stays off for them.",
 		NULL, NULL, { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_fds_fast", "Disk System Fast Loading", NULL,
 		"Runs the Disk System up to 16 times as fast while the drive reads or writes the disk, showing only "
@@ -351,7 +352,7 @@ static void readVideoOptions(void) {
 	aspect = optionChoice(environ_cb, "armnes_aspect", aspectChoices, 3, ASPECT_TV);
 	cropVertical = optionChoice(environ_cb, "armnes_crop_vertical", cropChoices, 5, 0);
 	cropHorizontal = optionChoice(environ_cb, "armnes_crop_horizontal", cropChoices, 5, 0);
-	filter = optionChoice(environ_cb, "armnes_filter", filterChoices, 3, COMPOSITE_OFF);
+	filter = nes.cart.vs ? COMPOSITE_OFF : optionChoice(environ_cb, "armnes_filter", filterChoices, 3, COMPOSITE_OFF);
 	screens = optionChoice(environ_cb, "armnes_vs_screens", screenChoices, 3, SCREENS_BOTH);
 }
 
