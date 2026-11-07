@@ -30,6 +30,9 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 			driven = false;
 		}
 	}
+	if (__builtin_expect(nes->cheatPages, 0) && (nes->cheatPages & (1 << (address >> 12)))) {
+		value = nesCheatRead(nes, address, value);
+	}
 	cpu->openBus = value;
 	// The APU's registers answer by the CPU's address bus, which a DMA leaves where the CPU halted
 	if ((cpu->addressBus & 0xFFE0) == 0x4000) {

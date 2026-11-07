@@ -132,6 +132,10 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	uint8_t pads[2] = { nes->pads[0], nes->pads[1] };
 	const uint8_t* fdsBios = nes->fdsBios;
 	int jumper = nes->jumper;
+	struct Cheat cheats[MAX_CHEATS];
+	int cheatCount = nes->cheatCount;
+	uint16_t cheatPages = nes->cheatPages;
+	memcpy(cheats, nes->cheats, sizeof(cheats));
 	int overclockLines = nes->overclockLines;
 	bool overclockPostRender = nes->overclockPostRender, noSpriteLimit = nes->noSpriteLimit;
 
@@ -154,6 +158,9 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->pads[1] = pads[1];
 	nes->fdsBios = fdsBios;
 	nes->jumper = jumper;
+	memcpy(nes->cheats, cheats, sizeof(cheats));
+	nes->cheatCount = cheatCount;
+	nes->cheatPages = cheatPages;
 	nes->overclockLines = overclockLines;
 	nes->overclockPostRender = overclockPostRender;
 	nes->noSpriteLimit = noSpriteLimit;

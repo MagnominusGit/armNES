@@ -362,7 +362,7 @@ static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
 		uint8_t value;
 		if (address < 0x2000) {
 			value = nes->ram[address & 0x7FF];
-		} else if (address >= 0x8000 && page && !(nes->readHooks & (1 << (address >> 12)))) {
+		} else if (address >= 0x8000 && page && !((nes->readHooks | nes->cheatPages) & (1 << (address >> 12)))) {
 			value = page[address & 0xFFF];
 		} else {
 			goto full;
@@ -381,7 +381,7 @@ full:
 	startCycle(nes);
 	uint8_t value;
 	uint8_t* page = nes->prgPages[address >> 12];
-	if (address >= 0x8000 && page && !(nes->readHooks & (1 << (address >> 12)))) {
+	if (address >= 0x8000 && page && !((nes->readHooks | nes->cheatPages) & (1 << (address >> 12)))) {
 		// Program ROM, the common case
 		value = page[address & 0xFFF];
 		cpu->openBus = cpu->internalBus = value;

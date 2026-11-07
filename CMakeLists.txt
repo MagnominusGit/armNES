@@ -28,6 +28,7 @@ set(CORE_SOURCES
 	src/sound/emu2413.c
 	src/bus.c
 	src/cart.c
+	src/cheat.c
 	src/cpu.c
 	src/nes.c
 	src/ppu.c

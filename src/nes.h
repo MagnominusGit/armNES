@@ -266,6 +266,14 @@ struct Cart {
 	uint8_t extraNt[0x800];
 };
 
+enum { MAX_CHEATS = 128 };
+
+struct Cheat {
+	uint16_t address;
+	uint8_t value;
+	int16_t compare;
+};
+
 struct NES {
 	struct Cpu cpu;
 	struct Ppu ppu;
@@ -314,6 +322,8 @@ struct NES {
 
 	// Controllers: buttons pressed, bit 0 A to bit 7 Right
 	uint8_t pads[2];
+	// The 4 KB pages of $8000-$FFFF that cheats change reads of (the cheats are at the end)
+	uint16_t cheatPages;
 	// A keyboard, for the boards that have one: keys down by libretro key code (RETROK_*)
 	uint8_t keys[64];
 	// Solder pads or DIP switches on the cart: the frontend's setting (-1 for the cart's own), and
@@ -351,6 +361,10 @@ struct NES {
 		int32_t level;
 	} audioChanges[8192];
 	int32_t hpPrev, hpOut, lpOut;
+
+	// Cheats from the frontend
+	struct Cheat cheats[MAX_CHEATS];
+	int cheatCount;
 };
 
 // cart.c
@@ -395,6 +409,12 @@ static inline bool nesOverclockHold(struct NES* nes, int line) {
 	}
 	return nes->overclockHolding;
 }
+
+// cheat.c
+void nesCheatClear(struct NES*);
+bool nesCheatAdd(struct NES*, const char* codes);
+uint8_t nesCheatRead(const struct NES*, uint16_t address, uint8_t value);
+void nesCheatFrame(struct NES*);
 
 // cpu.c
 void nesTick(struct NES*);

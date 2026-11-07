@@ -218,6 +218,9 @@ void nesReset(struct NES* nes, bool hard) {
 }
 
 void nesRunFrame(struct NES* nes) {
+	if (nes->cheatCount) {
+		nesCheatFrame(nes);
+	}
 	nes->frameDone = false;
 	nes->audioCount = 0;
 	while (!nes->frameDone) {

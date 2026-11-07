@@ -70,6 +70,21 @@ static struct OptionChoice overclockChoices[] = {
 	{ "3x (after the picture)", -2 },
 };
 
+// Turbo: frames per press and release
+static struct OptionChoice turboChoices[] = {
+	{ "Off", 0 },
+	{ "30 per second", 2 },
+	{ "20 per second", 3 },
+	{ "15 per second", 4 },
+	{ "10 per second", 6 },
+	{ "7.5 per second", 8 },
+};
+
+static struct OptionChoice onOffChoices[] = {
+	{ "Off", 0 },
+	{ "On", 1 },
+};
+
 static struct OptionChoice spriteChoices[] = {
 	{ "8 per line", 0 },
 	{ "No limit", 1 },
@@ -92,6 +107,10 @@ static struct OptionChoice cropChoices[] = {
 static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_region", "Region", NULL, "The console the game runs on. Auto takes it from the game's header.", NULL, NULL,
 		{ { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { "Dendy", NULL }, { NULL, NULL } }, "Auto" },
+	{ "armnes_palette", "Palette", NULL,
+		"The colors. armNES NTSC decodes the console's video signal; the others are measured or tuned "
+		"palettes; Custom loads nes.pal (or custom.pal) from the system folder.",
+		NULL, NULL, { { NULL, NULL } }, "armNES NTSC" },
 	{ "armnes_aspect", "Aspect Ratio", NULL,
 		"4:3 is the picture as a TV showed it. 8:7 PAR keeps the console's pixel shape (8:7 on NTSC, about "
 		"11:8 on PAL). 1:1 shows square pixels.",
@@ -112,6 +131,14 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The console shows 8 sprites on a line and drops the rest, which games turn into flicker. No limit "
 		"shows them all; games still see the console's limit.",
 		NULL, NULL, { { "8 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "8 per line" },
+	{ "armnes_turbo", "Turbo Speed", NULL,
+		"How fast the turbo buttons (X for A, Y for B) press and release.",
+		NULL, NULL, { { "Off", NULL }, { "30 per second", NULL }, { "20 per second", NULL }, { "15 per second", NULL },
+		{ "10 per second", NULL }, { "7.5 per second", NULL }, { NULL, NULL } }, "15 per second" },
+	{ "armnes_opposing", "Allow Opposing Directions", NULL,
+		"Lets left and right (or up and down) be held together, which a pad can't do. A few games glitch "
+		"with it; some speedrun tricks use it.",
+		NULL, NULL, { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_jumper", "Cart Jumper", NULL,
 		"Some carts have solder pads or DIP switches that pick their menu, the games listed, a language or "
 		"the video timing. Auto uses the setting known for the dump, or 0. Changing it restarts the game, "
@@ -164,16 +191,67 @@ static void geometry(struct retro_game_geometry* g) {
 	}
 }
 
-// The NTSC signal's levels decoded to RGB (Bisqwit's method), with the emphasis bits dimming the
-// other two channels
-static void buildPalette(void) {
+// Palettes from FCEUmm's set, and one loaded from the system folder (64 colors, or 512 with the
+// emphasis combinations)
+static const struct {
+	const char* name;
+	uint32_t rgb[64];
+} palettes[] = {
+#include "palettes.inc"
+};
+
+enum { PALETTE_NTSC = 0, PALETTE_CUSTOM = 1 + sizeof(palettes) / sizeof(palettes[0]) };
+
+static uint32_t customPalette[512];
+static int customColors;
+
+static bool loadCustomPalette(void) {
+	const char* dir = NULL;
+	if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &dir) || !dir) {
+		return false;
+	}
+	static const char* names[] = { "nes.pal", "custom.pal" };
+	for (int i = 0; i < 2; i++) {
+		char path[1024];
+		snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+		FILE* f = fopen(path, "rb");
+		if (!f) {
+			continue;
+		}
+		uint8_t data[1536];
+		size_t size = fread(data, 1, sizeof(data), f);
+		fclose(f);
+		if (size != 192 && size != 1536) {
+			continue;
+		}
+		customColors = (int) size / 3;
+		for (int c = 0; c < customColors; c++) {
+			customPalette[c] = data[c * 3] << 16 | data[c * 3 + 1] << 8 | data[c * 3 + 2];
+		}
+		return true;
+	}
+	return false;
+}
+
+// The NTSC signal's levels decoded to RGB (Bisqwit's method), or a palette's colors, with the
+// emphasis bits dimming the other two channels
+static void buildPalette(int which) {
 	static const float low[4] = { 0.350f, 0.518f, 0.962f, 1.550f };
 	static const float high[4] = { 1.094f, 1.506f, 1.962f, 1.962f };
 	const float black = 0.518f, white = 1.962f, hue = 4.25f, saturation = 1.15f;
 	for (int entry = 0; entry < 512; entry++) {
 		int color = entry & 15, level = (entry >> 4) & 3;
 		float rgb[3] = { 0, 0, 0 };
-		if (color < 14) {
+		const uint32_t* table = which > PALETTE_NTSC && which < PALETTE_CUSTOM ? palettes[which - 1].rgb : NULL;
+		if (which == PALETTE_CUSTOM && customColors) {
+			table = customPalette;
+		}
+		if (table) {
+			uint32_t c = table[customColors == 512 && table == customPalette ? entry : entry & 0x3F];
+			rgb[0] = (c >> 16) / 255.0f;
+			rgb[1] = ((c >> 8) & 0xFF) / 255.0f;
+			rgb[2] = (c & 0xFF) / 255.0f;
+		} else if (color < 14) {
 			float y = 0, i = 0, q = 0;
 			for (int p = 0; p < 12; p++) {
 				bool on = (color + p) % 12 < 6;
@@ -190,7 +268,7 @@ static void buildPalette(void) {
 			rgb[2] = y - 1.108545f * i + 1.709007f * q;
 		}
 		int emphasis = entry >> 6;
-		if (emphasis) {
+		if (emphasis && !(table == customPalette && customColors == 512)) {
 			for (int c = 0; c < 3; c++) {
 				if (!(emphasis & (1 << c))) {
 					rgb[c] *= 0.816f;
@@ -204,8 +282,40 @@ static void buildPalette(void) {
 	}
 }
 
+static struct OptionChoice paletteChoices[PALETTE_CUSTOM + 1];
+
+static int palette = -1;
+
+static void readPaletteOption(void) {
+	int which = optionChoice(environ_cb, "armnes_palette", paletteChoices, PALETTE_CUSTOM + 1, PALETTE_NTSC);
+	if (which == PALETTE_CUSTOM && !loadCustomPalette()) {
+		struct retro_message message = { "armNES: no nes.pal or custom.pal (192 or 1536 bytes) in the system folder", 300 };
+		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+		which = PALETTE_NTSC;
+	}
+	if (which != palette) {
+		palette = which;
+		buildPalette(which);
+	}
+}
+
 void retro_set_environment(retro_environment_t cb) {
 	environ_cb = cb;
+	// The palette option's values: ours, the table's, and the system folder's
+	for (struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
+		if (!strcmp(d->key, "armnes_palette")) {
+			paletteChoices[0] = (struct OptionChoice) { "armNES NTSC", PALETTE_NTSC };
+			for (int i = 1; i < PALETTE_CUSTOM; i++) {
+				paletteChoices[i] = (struct OptionChoice) { palettes[i - 1].name, i };
+			}
+			paletteChoices[PALETTE_CUSTOM] = (struct OptionChoice) { "Custom", PALETTE_CUSTOM };
+			for (int i = 0; i <= PALETTE_CUSTOM; i++) {
+				d->values[i].value = paletteChoices[i].value;
+				d->values[i].label = NULL;
+			}
+			d->values[PALETTE_CUSTOM + 1].value = NULL;
+		}
+	}
 	bool noGame = false;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &noGame);
 	optionsGive(cb, &options);
@@ -232,7 +342,7 @@ void retro_set_input_state(retro_input_state_t cb) {
 }
 
 void retro_init(void) {
-	buildPalette();
+	buildPalette(PALETTE_NTSC);
 }
 
 void retro_deinit(void) {
@@ -269,6 +379,15 @@ void retro_reset(void) {
 	}
 }
 
+static int turboPeriod = 4;
+static bool allowOpposing;
+static unsigned turboFrame;
+
+static void readInputOptions(void) {
+	turboPeriod = optionChoice(environ_cb, "armnes_turbo", turboChoices, 6, 4);
+	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
+}
+
 static uint8_t readPad(unsigned port) {
 	// NES bits: A, B, Select, Start, Up, Down, Left, Right
 	static const unsigned ids[8] = {
@@ -281,18 +400,30 @@ static uint8_t readPad(unsigned port) {
 			pad |= 1 << i;
 		}
 	}
-	// A pad can't press opposite directions at once
-	if ((pad & 0x30) == 0x30) {
-		pad &= ~0x30;
+	// Turbo A and B: held for the first half of each period
+	if (turboPeriod && turboFrame % turboPeriod < turboPeriod / 2) {
+		if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X)) {
+			pad |= 0x01;
+		}
+		if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y)) {
+			pad |= 0x02;
+		}
 	}
-	if ((pad & 0xC0) == 0xC0) {
-		pad &= ~0xC0;
+	// A pad can't press opposite directions at once
+	if (!allowOpposing) {
+		if ((pad & 0x30) == 0x30) {
+			pad &= ~0x30;
+		}
+		if ((pad & 0xC0) == 0xC0) {
+			pad &= ~0xC0;
+		}
 	}
 	return pad;
 }
 
 void retro_run(void) {
 	input_poll_cb();
+	turboFrame++;
 	nes.pads[0] = readPad(0);
 	nes.pads[1] = readPad(1);
 	if (nes.board == &boardYuxing) {
@@ -396,6 +527,8 @@ static void checkOptions(void) {
 		int oldAspect = aspect, oldVertical = cropVertical, oldHorizontal = cropHorizontal;
 		readVideoOptions();
 		readSpeedOptions();
+		readPaletteOption();
+		readInputOptions();
 		if (aspect != oldAspect || cropVertical != oldVertical || cropHorizontal != oldHorizontal) {
 			struct retro_game_geometry g;
 			geometry(&g);
@@ -419,6 +552,26 @@ static void checkOptions(void) {
 	}
 }
 
+// Where the console's RAM and the cart's work RAM sit, for achievements and cheat searches
+static void setMemoryMaps(void) {
+	static struct retro_memory_descriptor descriptors[2];
+	static struct retro_memory_map map;
+	unsigned count = 0;
+	descriptors[count++] = (struct retro_memory_descriptor) { RETRO_MEMDESC_SYSTEM_RAM, nes.ram, 0, 0x0000, 0, 0, sizeof(nes.ram), NULL };
+	if (nes.cart.wram) {
+		// $6000-$7FFF, or the Disk System's $6000-$DFFF
+		size_t length = nes.cart.disk ? 0x8000 : 0x2000;
+		length = nes.cart.wramSize < length ? nes.cart.wramSize : length;
+		descriptors[count++] = (struct retro_memory_descriptor) {
+			nes.cart.battery ? RETRO_MEMDESC_SAVE_RAM : 0, nes.cart.wram, 0, 0x6000, 0, 0, length, NULL };
+	}
+	map.descriptors = descriptors;
+	map.num_descriptors = count;
+	environ_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &map);
+	bool achievements = true;
+	environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+}
+
 bool retro_load_game(const struct retro_game_info* game) {
 	if (!game || !game->data) {
 		return false;
@@ -436,6 +589,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
 		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Left" },
 		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Up" },
 		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Down" },
@@ -444,6 +599,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" },
 		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" },
 		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
 		{ 0, 0, 0, 0, NULL },
 	};
 	environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
@@ -477,6 +634,9 @@ bool retro_load_game(const struct retro_game_info* game) {
 		nesReset(&nes, true);
 	}
 	readSpeedOptions();
+	readPaletteOption();
+	readInputOptions();
+	setMemoryMaps();
 	loaded = true;
 	return true;
 }
@@ -512,12 +672,15 @@ bool retro_unserialize(const void* data, size_t size) {
 }
 
 void retro_cheat_reset(void) {
+	nesCheatClear(&nes);
 }
 
 void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 	(void) index;
-	(void) enabled;
-	(void) code;
+	if (enabled && code && !nesCheatAdd(&nes, code)) {
+		struct retro_message message = { "armNES: a cheat code wasn't understood", 180 };
+		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+	}
 }
 
 void* retro_get_memory_data(unsigned id) {

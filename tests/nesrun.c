@@ -78,6 +78,15 @@ int main(int argc, char** argv) {
 	nes.overclockLines = getenv("NESRUN_OVERCLOCK") ? atoi(getenv("NESRUN_OVERCLOCK")) : 0;
 	nes.overclockPostRender = getenv("NESRUN_POSTRENDER") != NULL;
 	nes.noSpriteLimit = getenv("NESRUN_SPRITES") != NULL;
+	// NESRUN_CHEAT=codes: cheats, as the frontend would give them
+	if (getenv("NESRUN_CHEAT")) {
+		if (!nesCheatAdd(&nes, getenv("NESRUN_CHEAT"))) {
+			fprintf(stderr, "cheat not understood\n");
+		}
+		for (int i = 0; i < nes.cheatCount; i++) {
+			fprintf(stderr, "cheat %04X:%02X compare %d\n", nes.cheats[i].address, nes.cheats[i].value, nes.cheats[i].compare);
+		}
+	}
 	// NESRUN_JUMPER=n: the cart's solder pads or DIP switches
 	if (getenv("NESRUN_JUMPER")) {
 		nes.jumper = atoi(getenv("NESRUN_JUMPER"));
