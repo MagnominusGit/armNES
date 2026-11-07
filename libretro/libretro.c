@@ -581,7 +581,7 @@ static int turboPeriod = 4;
 static bool allowOpposing;
 static unsigned turboFrame;
 static int fourPlayers, expansion, zapperAim, zapperSpeed = 100;
-static bool vsSwap;
+static int vsSwap;
 static unsigned coinFrames[2];
 static bool fdsFast;
 
