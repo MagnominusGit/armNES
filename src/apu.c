@@ -961,7 +961,9 @@ void apuReset(struct NES* nes, bool hard) {
 	apu->quarterClock = apu->halfClock = false;
 	// A reset rewrites $4017 with its last value (zero at power-on)
 	apu->fiveStep = hard ? false : fiveStep;
-	apu->irqInhibit = hard ? false : inhibit;
+	// Power-on as FCEUmm does, with the frame IRQ off: hardware has it on, but code that never
+	// meant to use it then hangs on clones' carts, and games that use it turn it on
+	apu->irqInhibit = hard ? true : inhibit;
 	apu->frameCounter = 0;
 	apu->frameReset = 0xFF;
 	apu->strobing = apu->strobed = false;
