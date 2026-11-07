@@ -199,8 +199,10 @@ struct Namco108Variant {
 static void namco108Sync(struct NES* nes) {
 	struct Mmc3* m = STATE(Mmc3);
 	const struct Namco108Variant* v = nes->board->data;
-	prg8(nes, 0x8000, m->banks[6] & 0x0F);
-	prg8(nes, 0xA000, m->banks[7] & 0x0F);
+	// The chip has 4 bank bits; 6, as MMC3 has, reach the larger ROMs translations use, and wrap to
+	// the same banks on the original carts
+	prg8(nes, 0x8000, m->banks[6] & 0x3F);
+	prg8(nes, 0xA000, m->banks[7] & 0x3F);
 	prg8(nes, 0xC000, -2);
 	prg8(nes, 0xE000, -1);
 	if (v && v->chr) {
