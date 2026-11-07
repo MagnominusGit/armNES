@@ -44,7 +44,7 @@ add_library(armnes STATIC ${CORE_SOURCES} src/fceu/bridge.c ${FCEU_BOARDS})
 target_include_directories(armnes PUBLIC src src/boards)
 target_include_directories(armnes PRIVATE src/fceu src/fceu/boards armulators/libretro)
 target_link_libraries(armnes PUBLIC ZLIB::ZLIB m)
-target_compile_options(armnes PRIVATE -O3)
+target_compile_options(armnes PRIVATE -O3 -falign-functions=64)
 set_source_files_properties(src/sound/emu2413.c PROPERTIES COMPILE_OPTIONS "-w")
 # The core's parts call each other every master clock: let the compiler inline across its files
 include(CheckIPOSupported)
