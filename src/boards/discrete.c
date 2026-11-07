@@ -460,7 +460,7 @@ static void sync241(struct NES* nes, struct Discrete* d) {
 }
 
 static const struct DiscreteBoard boards[] = {
-	{ 11, 0x8000, 0xFFFF, BUS_CONFLICT, syncColorDreams, "Color Dreams" },
+	{ 11, 0x8000, 0xFFFF, 0, syncColorDreams, "Color Dreams" },
 	{ 13, 0x8000, 0xFFFF, BUS_CONFLICT | CHR_RAM_16K, sync13, "CPROM" },
 	{ 15, 0x8000, 0xFFFF, LATCH_ADDRESS, sync15, "K-1029" },
 	{ 34, 0x8000, 0xFFFF, BUS_CONFLICT | WRAM, sync34, "BNROM/NINA-001" },
