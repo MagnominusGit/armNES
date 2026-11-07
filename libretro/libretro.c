@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "libretro.h"
 #include "board.h"
+#include "composite.h"
 #include "options.h"
 
 #include <math.h>
@@ -21,7 +22,7 @@ static retro_input_state_t input_state_cb;
 static struct NES nes;
 static bool loaded;
 static uint16_t palette565[512];
-static uint16_t video[NES_WIDTH * NES_HEIGHT];
+static uint16_t video[COMPOSITE_WIDTH * NES_HEIGHT];
 static int16_t audio[8192];
 
 static struct OptionChoice regionChoices[] = {
@@ -112,6 +113,12 @@ static struct OptionChoice aimChoices[] = {
 	{ "Right stick (pan)", AIM_STICK_PAN },
 };
 
+static struct OptionChoice filterChoices[] = {
+	{ "Off", COMPOSITE_OFF },
+	{ "Composite", COMPOSITE },
+	{ "S-Video", COMPOSITE_SVIDEO },
+};
+
 static struct OptionChoice spriteChoices[] = {
 	{ "8 per line", 0 },
 	{ "No limit", 1 },
@@ -138,6 +145,11 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The colors. armNES NTSC decodes the console's video signal; the others are measured or tuned "
 		"palettes; Custom loads nes.pal (or custom.pal) from the system folder.",
 		NULL, NULL, { { NULL, NULL } }, "armNES NTSC" },
+	{ "armnes_filter", "NTSC/PAL Filter", NULL,
+		"The picture as a TV decodes the console's video signal, NTSC or PAL by the region: Composite "
+		"with its color fringes and the blending some games' dithering relied on, S-Video sharper. It "
+		"makes its own colors, so the palette doesn't apply. Takes more CPU time.",
+		NULL, NULL, { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_aspect", "Aspect Ratio", NULL,
 		"4:3 is the picture as a TV showed it. 8:7 PAR keeps the console's pixel shape (8:7 on NTSC, about "
 		"11:8 on PAL). 1:1 shows square pixels.",
@@ -196,7 +208,7 @@ static struct retro_core_options_v2 options = { NULL, optionDefinitions };
 static void checkOptions(void);
 
 // The picture: its shape and how much of the edges is cropped
-static int aspect, cropVertical, cropHorizontal;
+static int aspect, cropVertical, cropHorizontal, filter;
 
 // Applied at once: the line count follows the region (262 lines NTSC, 312 PAL and Dendy)
 static void readSpeedOptions(void) {
@@ -211,15 +223,16 @@ static void readVideoOptions(void) {
 	aspect = optionChoice(environ_cb, "armnes_aspect", aspectChoices, 3, ASPECT_TV);
 	cropVertical = optionChoice(environ_cb, "armnes_crop_vertical", cropChoices, 5, 0);
 	cropHorizontal = optionChoice(environ_cb, "armnes_crop_horizontal", cropChoices, 5, 0);
+	filter = optionChoice(environ_cb, "armnes_filter", filterChoices, 3, COMPOSITE_OFF);
 }
 
 static void geometry(struct retro_game_geometry* g) {
 	unsigned width = NES_WIDTH - 2 * cropHorizontal, height = NES_HEIGHT - 2 * cropVertical;
 	// NTSC pixels are 8:7; PAL's are 2950000:2128137
 	float pixel = nes.region == REGION_NTSC ? 8.0f / 7.0f : 2950000.0f / 2128137.0f;
-	g->base_width = width;
+	g->base_width = filter ? width * COMPOSITE_SCALE : width;
 	g->base_height = height;
-	g->max_width = NES_WIDTH;
+	g->max_width = COMPOSITE_WIDTH;
 	g->max_height = NES_HEIGHT;
 	switch (aspect) {
 	case ASPECT_PAR:
@@ -278,7 +291,7 @@ static bool loadCustomPalette(void) {
 }
 
 // The NTSC signal's levels decoded to RGB (Bisqwit's method), or a palette's colors, with the
-// emphasis bits dimming the other two channels
+// emphasis bits dimming the other two channels (red and green swapped on PAL and Dendy)
 static void buildPalette(int which) {
 	static const float low[4] = { 0.350f, 0.518f, 0.962f, 1.550f };
 	static const float high[4] = { 1.094f, 1.506f, 1.962f, 1.962f };
@@ -312,6 +325,9 @@ static void buildPalette(int which) {
 			rgb[2] = y - 1.108545f * i + 1.709007f * q;
 		}
 		int emphasis = entry >> 6;
+		if (nes.region != REGION_NTSC) {
+			emphasis = (emphasis & 4) | (emphasis & 1) << 1 | (emphasis & 2) >> 1;
+		}
 		if (emphasis && !(table == customPalette && customColors == 512)) {
 			for (int c = 0; c < 3; c++) {
 				if (!(emphasis & (1 << c))) {
@@ -328,7 +344,7 @@ static void buildPalette(int which) {
 
 static struct OptionChoice paletteChoices[PALETTE_CUSTOM + 1];
 
-static int palette = -1;
+static int palette = -1, paletteRegion = -1;
 
 static void readPaletteOption(void) {
 	int which = optionChoice(environ_cb, "armnes_palette", paletteChoices, PALETTE_CUSTOM + 1, PALETTE_NTSC);
@@ -337,8 +353,9 @@ static void readPaletteOption(void) {
 		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 		which = PALETTE_NTSC;
 	}
-	if (which != palette) {
+	if (which != palette || (int) nes.region != paletteRegion) {
 		palette = which;
+		paletteRegion = nes.region;
 		buildPalette(which);
 	}
 }
@@ -553,7 +570,7 @@ static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 	return true;
 }
 
-static void drawCrosshair(void) {
+static void drawCrosshair(int scale) {
 	int cx = crossX >> 8, cy = crossY >> 8;
 	for (int pass = 0; pass < 2; pass++) {
 		for (int d = -4; d <= 4; d++) {
@@ -565,7 +582,9 @@ static void drawCrosshair(void) {
 				for (int i = 0; i < 2; i++) {
 					int x = points[i][0], y = points[i][1];
 					if (x >= 0 && x < NES_WIDTH && y >= 0 && y < NES_HEIGHT) {
-						video[y * NES_WIDTH + x] = pass ? 0xFFFF : 0x0000;
+						for (int s = 0; s < scale; s++) {
+							video[(y * NES_WIDTH + x) * scale + s] = pass ? 0xFFFF : 0x0000;
+						}
 					}
 				}
 			}
@@ -656,14 +675,20 @@ void retro_run(void) {
 	}
 	nesRunFrame(&nes);
 	checkOptions();
-	for (int i = 0; i < NES_WIDTH * NES_HEIGHT; i++) {
-		video[i] = palette565[nes.frameBuffer[i] & 0x1FF];
+	int scale = 1;
+	if (filter) {
+		scale = COMPOSITE_SCALE;
+		compositeFrame(filter, nes.region != REGION_NTSC, nes.ppu.oddFrame, nes.frameBuffer, video);
+	} else {
+		for (int i = 0; i < NES_WIDTH * NES_HEIGHT; i++) {
+			video[i] = palette565[nes.frameBuffer[i] & 0x1FF];
+		}
 	}
 	if (crossShown) {
-		drawCrosshair();
+		drawCrosshair(scale);
 	}
-	video_cb(video + cropVertical * NES_WIDTH + cropHorizontal, NES_WIDTH - 2 * cropHorizontal,
-		NES_HEIGHT - 2 * cropVertical, NES_WIDTH * sizeof(uint16_t));
+	video_cb(video + (cropVertical * NES_WIDTH + cropHorizontal) * scale, (NES_WIDTH - 2 * cropHorizontal) * scale,
+		NES_HEIGHT - 2 * cropVertical, NES_WIDTH * scale * sizeof(uint16_t));
 	if (nes.audioCount) {
 		audio_batch_cb(nes.audioOut, nes.audioCount / 2);
 	}
@@ -747,12 +772,12 @@ static bool jumperNoticed;
 static void checkOptions(void) {
 	bool updated = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
-		int oldAspect = aspect, oldVertical = cropVertical, oldHorizontal = cropHorizontal;
+		int oldAspect = aspect, oldVertical = cropVertical, oldHorizontal = cropHorizontal, oldFilter = filter;
 		readVideoOptions();
 		readSpeedOptions();
 		readPaletteOption();
 		readInputOptions();
-		if (aspect != oldAspect || cropVertical != oldVertical || cropHorizontal != oldHorizontal) {
+		if (aspect != oldAspect || cropVertical != oldVertical || cropHorizontal != oldHorizontal || filter != oldFilter) {
 			struct retro_game_geometry g;
 			geometry(&g);
 			environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g);

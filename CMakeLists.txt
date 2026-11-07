@@ -62,7 +62,7 @@ target_link_libraries(selfdiff armnes)
 
 # The libretro core, with Armulators' libretro pieces (libretro.h, core options)
 add_subdirectory(armulators)
-add_library(armnes_libretro SHARED libretro/libretro.c)
+add_library(armnes_libretro SHARED libretro/libretro.c libretro/composite.c)
 if(ANDROID)
 	set_target_properties(armnes_libretro PROPERTIES OUTPUT_NAME armnes_libretro_android)
 endif()
