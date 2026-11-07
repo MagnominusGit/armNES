@@ -313,7 +313,30 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		cart->vsPpu = 0;
 		cart->vsHardware = 0;
 		if (!cart->chrSize) {
-			cart->chrSize = 0x2000;
+			// CHR RAM: 8 KB, or as much as the boards with more have (sizes per FCEUmm)
+			switch (cart->mapper) {
+			case 13:
+				cart->chrSize = 0x4000;
+				break;
+			case 6:
+			case 28:
+			case 29:
+			case 30:
+			case 45:
+			case 96:
+			case 513:
+				cart->chrSize = 0x8000;
+				break;
+			case 176:
+				cart->chrSize = 0x20000;
+				break;
+			case 268:
+				cart->chrSize = 0x40000;
+				break;
+			default:
+				cart->chrSize = 0x2000;
+				break;
+			}
 			cart->chrRam = true;
 		}
 	}
