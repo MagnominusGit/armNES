@@ -177,8 +177,9 @@ bool nesLoad(struct NES* nes, const uint8_t* data, size_t size) {
 
 void nesReset(struct NES* nes, bool hard) {
 	if (hard) {
-		// Power-on RAM: a pattern most games accept
-		memset(nes->ram, 0, sizeof(nes->ram));
+		// Power-on RAM: $FF, as FCEUmm has it; real RAM starts unknown, and some games only work when
+		// it isn't zero
+		memset(nes->ram, 0xFF, sizeof(nes->ram));
 		memset(nes->boardState, 0, sizeof(nes->boardState));
 		memset(nes->prgPages, 0, sizeof(nes->prgPages));
 		memset(nes->prgWritable, 0, sizeof(nes->prgWritable));
