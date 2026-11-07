@@ -123,6 +123,16 @@ static struct OptionChoice aimChoices[] = {
 	{ "Right stick (pan)", AIM_STICK_PAN },
 };
 
+static struct OptionChoice sensitivityChoices[] = {
+	{ "25%", 25 },
+	{ "50%", 50 },
+	{ "75%", 75 },
+	{ "100%", 100 },
+	{ "150%", 150 },
+	{ "200%", 200 },
+	{ "300%", 300 },
+};
+
 static struct OptionChoice filterChoices[] = {
 	{ "Off", COMPOSITE_OFF },
 	{ "Composite", COMPOSITE },
@@ -229,6 +239,12 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"screen aims and fires there with any of them.",
 		NULL, NULL, { { "Light gun", NULL }, { "Mouse", NULL }, { "Right stick (absolute)", NULL },
 		{ "Right stick (pan)", NULL }, { NULL, NULL } }, "Light gun" },
+	{ "armnes_zapper_sensitivity", "Zapper Sensitivity", NULL,
+		"How fast the mouse and Right stick (pan) move the crosshair. Holding L2 aims finer the further "
+		"it's pulled, down to a quarter of the speed; with Right stick (absolute) it makes the stick's "
+		"moves smaller from where the crosshair is.",
+		NULL, NULL, { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
+		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
 	{ "armnes_jumper", "Cart Jumper", NULL,
 		"Some carts have solder pads or DIP switches that pick their menu, the games listed, a language or "
 		"the video timing. Auto uses the setting known for the dump, or 0. Changing it restarts the game, "
@@ -564,7 +580,7 @@ void retro_reset(void) {
 static int turboPeriod = 4;
 static bool allowOpposing;
 static unsigned turboFrame;
-static int fourPlayers, expansion, zapperAim;
+static int fourPlayers, expansion, zapperAim, zapperSpeed = 100;
 static bool vsSwap;
 static unsigned coinFrames[2];
 static bool fdsFast;
@@ -574,6 +590,7 @@ static void readInputOptions(void) {
 	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
 	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 4, AUTO);
 	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 4, AIM_LIGHT_GUN);
+	zapperSpeed = optionChoice(environ_cb, "armnes_zapper_sensitivity", sensitivityChoices, 7, 100);
 	fdsFast = optionChoice(environ_cb, "armnes_fds_fast", onOffChoices, 2, 0);
 	vsSwap = optionChoice(environ_cb, "armnes_vs_swap", autoOnOffChoices, 3, AUTO);
 	nes.input.vsDip = 0;
@@ -640,17 +657,28 @@ static int touchX, touchY, touchFrames;
 // The crosshair the mouse and stick move, in 256ths of a pixel, and whether it's drawn
 static int crossX = 128 << 8, crossY = 120 << 8;
 static bool crossShown;
+static int stickX = -1, stickY;
+
+// Fine aim: the crosshair's speed in 256ths, from all of it down to a quarter as L2 is pulled
+static int fineAim(void) {
+	int pull = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_BUTTON, RETRO_DEVICE_ID_JOYPAD_L2);
+	if (!pull && input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2)) {
+		pull = 0x7FFF;
+	}
+	return 256 - pull * 192 / 0x7FFF;
+}
 
 // Aim from the mouse or the stick: false for the light gun
 static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 	int left = cropHorizontal << 8, right = (NES_WIDTH - 1 - cropHorizontal) << 8;
 	int top = cropVertical << 8, bottom = (NES_HEIGHT - 1 - cropVertical) << 8;
+	int fine = fineAim(), speed = zapperSpeed * fine;
 	switch (zapperAim) {
 	case AIM_MOUSE:
-		// Half a pixel a count, from this port's mouse and the first one
+		// Half a pixel a count at 100%, from this port's mouse and the first one
 		for (unsigned p = 0; p <= port; p += port ? port : 1) {
-			crossX += input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X) * 128;
-			crossY += input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y) * 128;
+			crossX += input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X) * 128 * speed / 25600;
+			crossY += input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y) * 128 * speed / 25600;
 			*trigger |= input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_LEFT) != 0;
 			*away |= input_state_cb(p, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_RIGHT) != 0;
 		}
@@ -660,12 +688,22 @@ static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 		int x = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
 		int y = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
 		if (zapperAim == AIM_STICK) {
-			crossX = left + (x + 0x8000) * ((right - left) >> 8) / 0xFFFF * 256;
-			crossY = top + (y + 0x8000) * ((bottom - top) >> 8) / 0xFFFF * 256;
+			// With fine aim, the stick's moves count for less from where the crosshair is
+			int sx = left + (x + 0x8000) * ((right - left) >> 8) / 0xFFFF * 256;
+			int sy = top + (y + 0x8000) * ((bottom - top) >> 8) / 0xFFFF * 256;
+			if (fine < 256 && stickX >= 0) {
+				crossX += (sx - stickX) * fine / 256;
+				crossY += (sy - stickY) * fine / 256;
+			} else {
+				crossX = sx;
+				crossY = sy;
+			}
+			stickX = sx;
+			stickY = sy;
 		} else {
-			// Up to 4 pixels a frame, past a small dead zone
-			crossX += abs(x) > 0x1000 ? x / 32 : 0;
-			crossY += abs(y) > 0x1000 ? y / 32 : 0;
+			// Up to 4 pixels a frame at 100%, past a small dead zone
+			crossX += abs(x) > 0x1000 ? x / 32 * speed / 25600 : 0;
+			crossY += abs(y) > 0x1000 ? y / 32 * speed / 25600 : 0;
 		}
 		*trigger |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R) ||
 			input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2);
@@ -1112,7 +1150,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select (VS. System: Coin)" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
 		{ RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" }, { RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
 	};
-	static struct retro_input_descriptor descriptors[4 * 10 + 7];
+	static struct retro_input_descriptor descriptors[4 * 10 + 8];
 	unsigned count = 0;
 	for (unsigned port = 0; port < 4; port++) {
 		for (unsigned i = 0; i < 10; i++) {
@@ -1125,6 +1163,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Zapper Trigger" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Zapper Fine Aim" };
 	descriptors[count] = (struct retro_input_descriptor) { 0, 0, 0, 0, NULL };
 	environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
 
