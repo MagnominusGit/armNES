@@ -526,6 +526,9 @@ void retro_set_environment(retro_environment_t cb) {
 	}
 	bool noGame = false;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &noGame);
+	// A .zip is opened here, by its path: it may be a MAME set needing its parent's .zip too
+	static const struct retro_system_content_info_override zips[] = { { "zip", true, false }, { NULL, false, false } };
+	cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE, (void*) zips);
 	static const struct retro_controller_description ports[] = {
 		{ "Controller", RETRO_DEVICE_JOYPAD },
 		{ "Zapper", DEVICE_ID_ZAPPER },
@@ -1125,14 +1128,13 @@ static bool loadFdsBios(void) {
 }
 
 // A .zip: the game file in it, or a MAME VS. System or PlayChoice-10 set, whose clones may keep only
-// their own chips and need the parent set's .zip from the same folder
+// their own chips and need the parent set's .zip from the same folder. Frontends hand a .zip over by
+// its path (see retro_set_environment), anything else by its contents.
 static uint8_t* unpacked;
 static char romDir[1024];
 
-static uint8_t* loadSet(const char* set, size_t* size) {
-	char path[1100];
-	snprintf(path, sizeof(path), "%s%s.zip", romDir, set);
-	FILE* f = fopen(path, "rb");
+static uint8_t* readFile(const char* path, size_t* size) {
+	FILE* f = path ? fopen(path, "rb") : NULL;
 	if (!f) {
 		return NULL;
 	}
@@ -1149,27 +1151,30 @@ static uint8_t* loadSet(const char* set, size_t* size) {
 	return data;
 }
 
-static bool unpack(const struct retro_game_info* game, const uint8_t** data, size_t* size) {
-	*data = game->data;
-	*size = game->size;
-	if (!zipIs(game->data, game->size)) {
-		return true;
-	}
+static uint8_t* loadSet(const char* set, size_t* size) {
+	char path[1100];
+	snprintf(path, sizeof(path), "%s%s.zip", romDir, set);
+	return readFile(path, size);
+}
+
+static bool unpackZip(const char* path, const uint8_t* zip, size_t zipSize, const uint8_t** data, size_t* size) {
 	static struct ZipEntry entries[256];
-	int count = zipList(game->data, game->size, entries, 256);
+	int count = zipList(zip, zipSize, entries, 256);
 	for (int i = 0; i < count; i++) {
 		const char* dot = strrchr(entries[i].name, '.');
 		if (dot && (!strcasecmp(dot, ".nes") || !strcasecmp(dot, ".fds") || !strcasecmp(dot, ".unf") ||
 			!strcasecmp(dot, ".unif") || !strcasecmp(dot, ".nsf"))) {
-			unpacked = zipRead(game->data, game->size, &entries[i]);
+			unpacked = zipRead(zip, zipSize, &entries[i]);
 			*size = entries[i].size;
 			*data = unpacked;
 			return unpacked != NULL;
 		}
 	}
 	char name[256] = "";
-	const char* path = game->path ? game->path : "";
+	path = path ? path : "";
 	const char* base = strrchr(path, '/');
+	const char* backslash = strrchr(path, '\\');
+	base = backslash && (!base || backslash > base) ? backslash : base;
 	base = base ? base + 1 : path;
 	snprintf(romDir, sizeof(romDir), "%.*s", (int) (base - path), path);
 	snprintf(name, sizeof(name), "%s", base);
@@ -1177,9 +1182,29 @@ static bool unpack(const struct retro_game_info* game, const uint8_t** data, siz
 	if (dot) {
 		*dot = 0;
 	}
-	unpacked = arcadeBuild(game->data, game->size, name[0] ? name : NULL, loadSet, size);
+	unpacked = arcadeBuild(zip, zipSize, name[0] ? name : NULL, loadSet, size);
 	*data = unpacked;
 	return unpacked != NULL;
+}
+
+static bool unpack(const struct retro_game_info* game, const uint8_t** data, size_t* size) {
+	*data = game->data;
+	*size = game->size;
+	uint8_t* file = NULL;
+	if (!game->data) {
+		file = readFile(game->path, size);
+		if (!file) {
+			return false;
+		}
+		*data = file;
+	}
+	if (!zipIs(*data, *size)) {
+		unpacked = file;
+		return true;
+	}
+	bool ok = unpackZip(game->path, *data, *size, data, size);
+	free(file);
+	return ok;
 }
 
 static bool isDisk(const uint8_t* data, size_t size) {
@@ -1284,7 +1309,7 @@ static void setMemoryMaps(void) {
 }
 
 bool retro_load_game(const struct retro_game_info* game) {
-	if (!game || !game->data) {
+	if (!game || (!game->data && !game->path)) {
 		return false;
 	}
 	enum retro_pixel_format format = RETRO_PIXEL_FORMAT_RGB565;
