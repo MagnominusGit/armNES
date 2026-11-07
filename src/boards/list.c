@@ -10,10 +10,7 @@ const struct Board* boardFind(const struct Cart* cart) {
 	switch (mapper) {
 	case 111:
 		// GTROM has only CHR RAM; with CHR ROM it's the number's older board
-		if (!cart->chrRam) {
-			return &boardMmc1Parallel;
-		}
-		break;
+		return cart->chrRam ? fceuFind(mapper) : &boardMmc1Parallel;
 	case 0:
 		return &boardNrom;
 	case 20:
