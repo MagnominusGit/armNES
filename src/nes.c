@@ -196,7 +196,8 @@ void nesReset(struct NES* nes, bool hard) {
 	apuReset(nes, hard);
 	if (hard) {
 		nes->cpuClock = 0;
-		nes->ppuClock = 0;
+		// A Dendy powers on at any of five CPU/PPU alignments; this one keeps $2002 reads off the dot edge
+		nes->ppuClock = nes->region == REGION_DENDY ? 1 : 0;
 		nes->ppuCpuClock = 0;
 		nes->ppuLag = 0;
 		nes->ppuQuietTicks = 0;
