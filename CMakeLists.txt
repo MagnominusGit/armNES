@@ -36,7 +36,6 @@ set(CORE_SOURCES
 	src/ppu.c
 	src/ppu-fast.c
 	src/state.c
-	src/zip.c
 	src/arcade.c
 )
 # FCEUmm's board files, for the mappers without a board of armNES's own
@@ -65,11 +64,19 @@ target_link_libraries(selfdiff armnes)
 
 # The libretro core, with Armulators' libretro pieces (libretro.h, core options)
 add_subdirectory(armulators)
+# RetroArch's archive reading (libretro/deps), for games in a .zip or .7z, as armGBA has it
+file(GLOB_RECURSE ARCHIVE_SOURCES libretro/deps/libretro-common/*.c libretro/deps/7zip/*.c)
+add_library(retro-archive STATIC ${ARCHIVE_SOURCES})
+target_include_directories(retro-archive PUBLIC libretro/deps/libretro-common/include PRIVATE libretro/deps)
+target_compile_definitions(retro-archive PRIVATE HAVE_ZLIB HAVE_7ZIP)
+target_compile_options(retro-archive PRIVATE -w -O2)
+set_target_properties(retro-archive PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(armnes_libretro SHARED libretro/libretro.c libretro/composite.c)
 if(ANDROID)
 	set_target_properties(armnes_libretro PROPERTIES OUTPUT_NAME armnes_libretro_android)
 endif()
-target_link_libraries(armnes_libretro armnes armulators-libretro m)
+target_link_libraries(armnes_libretro armnes armulators-libretro retro-archive ZLIB::ZLIB m)
 set_target_properties(armnes_libretro PROPERTIES PREFIX "")
 target_link_options(armnes_libretro PRIVATE -Wl,--version-script=${ARMULATORS_LINK_SCRIPT} -Wl,--no-undefined)
 

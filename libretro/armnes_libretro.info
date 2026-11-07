@@ -1,6 +1,6 @@
 display_name = "Nintendo - NES / Famicom (armNES)"
 authors = "Magnominus"
-supported_extensions = "nes|fds|unf|unif|nsf|zip"
+supported_extensions = "nes|fds|unf|unif|nsf|zip|7z"
 corename = "armNES"
 manufacturer = "Nintendo"
 categories = "Emulator"

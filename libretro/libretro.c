@@ -5,13 +5,17 @@
 #include "board.h"
 #include "composite.h"
 #include "options.h"
-#include "zip.h"
+#include "arcade.h"
+
+#include <file/archive_file.h>
+#include <file/file_path.h>
+#include <lists/string_list.h>
+#include <zlib.h>
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
 // The libretro core: one NES, its picture through an NTSC palette, its sound at 48 kHz, two pads.
 
@@ -526,8 +530,8 @@ void retro_set_environment(retro_environment_t cb) {
 	}
 	bool noGame = false;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &noGame);
-	// A .zip is opened here, by its path: it may be a MAME set needing its parent's .zip too
-	static const struct retro_system_content_info_override zips[] = { { "zip", true, false }, { NULL, false, false } };
+	// Archives are opened here, by their path: one may be a MAME set needing its parent's archive too
+	static const struct retro_system_content_info_override zips[] = { { "zip|7z", true, false }, { NULL, false, false } };
 	cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE, (void*) zips);
 	static const struct retro_controller_description ports[] = {
 		{ "Controller", RETRO_DEVICE_JOYPAD },
@@ -581,7 +585,7 @@ void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armNES";
 	info->library_version = "0.1";
-	info->valid_extensions = "nes|fds|unf|unif|nsf|zip";
+	info->valid_extensions = "nes|fds|unf|unif|nsf|zip|7z";
 	info->need_fullpath = false;
 	info->block_extract = true;
 }
@@ -1127,9 +1131,10 @@ static bool loadFdsBios(void) {
 	return false;
 }
 
-// A .zip: the game file in it, or a MAME VS. System or PlayChoice-10 set, whose clones may keep only
-// their own chips and need the parent set's .zip from the same folder. Frontends hand a .zip over by
-// its path (see retro_set_environment), anything else by its contents.
+// A .zip or .7z: the game file in it, or a MAME VS. System or PlayChoice-10 set, whose clones may keep
+// only their own chips and need the parent set's archive from the same folder. Read with RetroArch's
+// own archive code, as armGBA does; frontends hand archives over by their path (see
+// retro_set_environment).
 static uint8_t* unpacked;
 static char romDir[1024];
 
@@ -1151,27 +1156,76 @@ static uint8_t* readFile(const char* path, size_t* size) {
 	return data;
 }
 
-static uint8_t* loadSet(const char* set, size_t* size) {
-	char path[1100];
-	snprintf(path, sizeof(path), "%s%s.zip", romDir, set);
-	return readFile(path, size);
+// One file from an archive
+static void* archiveRead(const char* archive, const char* name, size_t* size) {
+	char inner[4096];
+	snprintf(inner, sizeof(inner), "%s#%s", archive, name);
+	void* data = NULL;
+	int64_t length = 0;
+	if (!file_archive_compressed_read(inner, &data, NULL, &length) || length <= 0) {
+		free(data);
+		return NULL;
+	}
+	*size = (size_t) length;
+	return data;
 }
 
-static bool unpackZip(const char* path, const uint8_t* zip, size_t zipSize, const uint8_t** data, size_t* size) {
-	static struct ZipEntry entries[256];
-	int count = zipList(zip, zipSize, entries, 256);
-	for (int i = 0; i < count; i++) {
-		const char* dot = strrchr(entries[i].name, '.');
-		if (dot && (!strcasecmp(dot, ".nes") || !strcasecmp(dot, ".fds") || !strcasecmp(dot, ".unf") ||
-			!strcasecmp(dot, ".unif") || !strcasecmp(dot, ".nsf"))) {
-			unpacked = zipRead(zip, zipSize, &entries[i]);
-			*size = entries[i].size;
-			*data = unpacked;
-			return unpacked != NULL;
+// Every file in an archive, as chips by their CRC
+struct Chips {
+	struct ArcadeChip* chips;
+	int count;
+};
+
+static void readChips(const char* archive, struct Chips* out) {
+	out->chips = NULL;
+	out->count = 0;
+	struct string_list* entries = file_archive_get_file_list(archive, NULL);
+	if (!entries) {
+		return;
+	}
+	out->chips = calloc(entries->size + 1, sizeof(struct ArcadeChip));
+	for (size_t i = 0; out->chips && i < entries->size; i++) {
+		size_t size = 0;
+		uint8_t* data = archiveRead(archive, entries->elems[i].data, &size);
+		if (data) {
+			out->chips[out->count++] = (struct ArcadeChip) { (uint32_t) crc32(0, data, (uInt) size), data, size };
 		}
 	}
-	char name[256] = "";
-	path = path ? path : "";
+	string_list_free(entries);
+}
+
+static void freeChips(struct Chips* c) {
+	for (int i = 0; i < c->count; i++) {
+		free((void*) c->chips[i].data);
+	}
+	free(c->chips);
+	c->chips = NULL;
+	c->count = 0;
+}
+
+static struct Chips parent;
+
+static const struct ArcadeChip* parentChips(const char* set, int* count) {
+	static const char* const kinds[] = { "zip", "7z" };
+	for (int i = 0; i < 2 && !parent.count; i++) {
+		char path[1100];
+		snprintf(path, sizeof(path), "%s%s.%s", romDir, set, kinds[i]);
+		readChips(path, &parent);
+	}
+	*count = parent.count;
+	return parent.chips;
+}
+
+static bool unpackArchive(const char* path, const uint8_t** data, size_t* size) {
+	struct string_list* games = file_archive_get_file_list(path, "nes|fds|unf|unif|nsf");
+	if (games && games->size) {
+		unpacked = archiveRead(path, games->elems[0].data, size);
+		string_list_free(games);
+		*data = unpacked;
+		return unpacked != NULL;
+	}
+	string_list_free(games);
+	char name[256];
 	const char* base = strrchr(path, '/');
 	const char* backslash = strrchr(path, '\\');
 	base = backslash && (!base || backslash > base) ? backslash : base;
@@ -1182,29 +1236,26 @@ static bool unpackZip(const char* path, const uint8_t* zip, size_t zipSize, cons
 	if (dot) {
 		*dot = 0;
 	}
-	unpacked = arcadeBuild(zip, zipSize, name[0] ? name : NULL, loadSet, size);
+	struct Chips own;
+	readChips(path, &own);
+	unpacked = arcadeBuild(own.chips, own.count, name, parentChips, size);
+	freeChips(&own);
+	freeChips(&parent);
 	*data = unpacked;
 	return unpacked != NULL;
 }
 
 static bool unpack(const struct retro_game_info* game, const uint8_t** data, size_t* size) {
+	if (game->path && path_is_compressed_file(game->path)) {
+		return unpackArchive(game->path, data, size);
+	}
 	*data = game->data;
 	*size = game->size;
-	uint8_t* file = NULL;
 	if (!game->data) {
-		file = readFile(game->path, size);
-		if (!file) {
-			return false;
-		}
-		*data = file;
+		unpacked = readFile(game->path, size);
+		*data = unpacked;
 	}
-	if (!zipIs(*data, *size)) {
-		unpacked = file;
-		return true;
-	}
-	bool ok = unpackZip(game->path, *data, *size, data, size);
-	free(file);
-	return ok;
+	return *data != NULL;
 }
 
 static bool isDisk(const uint8_t* data, size_t size) {
