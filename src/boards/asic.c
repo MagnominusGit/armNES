@@ -742,17 +742,19 @@ static void vrc1Sync(struct NES* nes) {
 static void vrc1Write(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Vrc1* v = STATE(Vrc1);
 	switch (address & 0xF000) {
+	// The chip has 4 PRG bits; the rest reach the larger ROMs re-releases use, and wrap to the same
+	// banks on the original carts
 	case 0x8000:
-		v->prg[0] = value & 15;
+		v->prg[0] = value;
 		break;
 	case 0x9000:
 		v->control = value;
 		break;
 	case 0xA000:
-		v->prg[1] = value & 15;
+		v->prg[1] = value;
 		break;
 	case 0xC000:
-		v->prg[2] = value & 15;
+		v->prg[2] = value;
 		break;
 	case 0xE000:
 		v->chr[0] = value;
