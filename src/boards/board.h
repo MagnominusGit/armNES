@@ -115,6 +115,7 @@ BOARD(boardJy);
 
 // bandai.c
 BOARD(boardBandai);
+bool datachSwipe(struct NES*, const char* digits);
 
 // mmc5.c
 BOARD(boardMmc5);

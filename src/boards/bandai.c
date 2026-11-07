@@ -16,12 +16,20 @@ struct Eeprom {
 	bool scl, sda, out, read;
 };
 
+// The Datach's barcode reader (157): a swiped code's bars, one every 1000 cycles on bit 3, inverted
+struct Barcode {
+	uint8_t bars[176];
+	uint8_t count, position, out;
+	uint16_t cycles;
+};
+
 struct Bandai {
 	uint8_t regs[10];
 	uint16_t latch;
 	int32_t counter;
 	bool irqEnabled;
 	struct Eeprom eeprom;
+	struct Barcode barcode;
 };
 
 #define BD STATE(Bandai)
@@ -129,8 +137,9 @@ static void bandaiSync(struct NES* nes) {
 		prg16(nes, 0x8000, (b->regs[8] & 0x0F) | base);
 		prg16(nes, 0xC000, 0x0F | base);
 	} else {
+		// With CHR RAM (the Datach's) there's nothing to bank
 		for (int i = 0; i < 8; i++) {
-			chr1(nes, i * 0x400, b->regs[i]);
+			chr1(nes, i * 0x400, nes->cart.chrRam ? i : b->regs[i]);
 		}
 		prg16(nes, 0x8000, b->regs[8]);
 		prg16(nes, 0xC000, -1);
@@ -177,11 +186,21 @@ static void bandaiWrite(struct NES* nes, uint16_t address, uint8_t value) {
 }
 
 static uint8_t bandaiRead(struct NES* nes, uint16_t address) {
-	return (nes->cpu.openBus & 0xEF) | (BD->eeprom.out << 4);
+	return (nes->cpu.openBus & 0xE7) | (BD->eeprom.out << 4) | BD->barcode.out;
 }
 
 static void bandaiCycle(struct NES* nes) {
 	struct Bandai* b = BD;
+	struct Barcode* c = &b->barcode;
+	if (c->count && ++c->cycles >= 1000) {
+		c->cycles = 0;
+		if (c->position < c->count) {
+			c->out = (c->bars[c->position++] ^ 1) << 3;
+		} else {
+			c->out = 0;
+			c->count = 0;
+		}
+	}
 	if (b->irqEnabled && --b->counter < 0) {
 		nesSetIrq(nes, IRQ_MAPPER, true);
 		b->irqEnabled = false;
@@ -207,6 +226,58 @@ static void bandaiReset(struct NES* nes, bool hard) {
 		nes->readHooks |= 1 << 6 | 1 << 7;
 	}
 	bandaiSync(nes);
+}
+
+// EAN-13 and EAN-8: each digit 7 modules, the left half's in odd (L) or even (G) parity, which for
+// EAN-13 encodes the first digit; the right half's (R) are L's complement
+static const uint8_t eanL[10] = { 0x0D, 0x19, 0x13, 0x3D, 0x23, 0x31, 0x2F, 0x3B, 0x37, 0x0B };
+static const uint8_t eanG[10] = { 0x27, 0x33, 0x1B, 0x21, 0x1D, 0x39, 0x05, 0x11, 0x09, 0x17 };
+static const uint8_t eanParity[10] = { 0x00, 0x0B, 0x0D, 0x0E, 0x13, 0x19, 0x1C, 0x15, 0x16, 0x1A };
+
+static void bars(struct Barcode* c, unsigned pattern, int length) {
+	for (int i = length - 1; i >= 0; i--) {
+		c->bars[c->count++] = (pattern >> i) & 1;
+	}
+}
+
+// Digits of an EAN-13 or EAN-8 code, its check digit worked out when left off; false if it isn't one
+bool datachSwipe(struct NES* nes, const char* text) {
+	if (nes->board != &boardBandai || nes->cart.mapper != 157) {
+		return false;
+	}
+	int digits[13], length = 0;
+	for (; *text && length < 13; text++) {
+		if (*text >= '0' && *text <= '9') {
+			digits[length++] = *text - '0';
+		}
+	}
+	if (length == 12 || length == 7) {
+		int sum = 0;
+		for (int i = 0; i < length; i++) {
+			sum += digits[i] * ((i & 1) == (length == 12) ? 3 : 1);
+		}
+		digits[length++] = (10 - sum % 10) % 10;
+	}
+	if (length != 13 && length != 8) {
+		return false;
+	}
+	struct Barcode* c = &BD->barcode;
+	memset(c, 0, sizeof(*c));
+	bars(c, 0, 32);
+	bars(c, 5, 3);
+	int left = length == 13 ? 1 : 0, half = length == 13 ? 6 : 4;
+	for (int i = 0; i < half; i++) {
+		bool even = length == 13 && (eanParity[digits[0]] >> (5 - i)) & 1;
+		bars(c, even ? eanG[digits[left + i]] : eanL[digits[left + i]], 7);
+	}
+	bars(c, 0x0A, 5);
+	for (int i = left + half; i < length; i++) {
+		bars(c, eanL[digits[i]] ^ 0x7F, 7);
+	}
+	bars(c, 5, 3);
+	bars(c, 0, 32);
+	c->out = 8;
+	return true;
 }
 
 const struct Board boardBandai = {

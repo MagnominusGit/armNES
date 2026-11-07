@@ -854,10 +854,67 @@ static void runNsf(void) {
 	}
 }
 
+// The Datach's reader: L swipes the next code from datach.txt in the system folder, one to a line,
+// or any valid one, as games take a product's barcode
+static unsigned barcodeLine;
+static bool lastSwipe;
+
+static void swipeBarcode(void) {
+	bool held = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
+	bool pressed = held && !lastSwipe;
+	lastSwipe = held;
+	if (!pressed || nes.cart.mapper != 157) {
+		return;
+	}
+	char code[32] = "";
+	const char* dir = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &dir) && dir) {
+		char path[1024];
+		snprintf(path, sizeof(path), "%s/datach.txt", dir);
+		FILE* f = fopen(path, "r");
+		if (f) {
+			// The next line with a code, back to the first after the last
+			char line[64], first[32] = "";
+			unsigned lines = 0;
+			while (fgets(line, sizeof(line), f)) {
+				if (line[0] >= '0' && line[0] <= '9') {
+					if (!lines) {
+						snprintf(first, sizeof(first), "%s", line);
+					}
+					if (lines++ == barcodeLine) {
+						snprintf(code, sizeof(code), "%s", line);
+					}
+				}
+			}
+			fclose(f);
+			if (lines && !code[0]) {
+				memcpy(code, first, sizeof(first));
+				barcodeLine = 0;
+			}
+			barcodeLine++;
+		}
+	}
+	if (!code[0]) {
+		static uint32_t seed = 1;
+		seed = seed * 1103515245 + 12345 + turboFrame;
+		for (int i = 0; i < 12; i++) {
+			code[i] = (char) ('0' + (seed >> (i + 8)) % 10);
+			seed = seed * 1103515245 + 12345;
+		}
+		code[12] = 0;
+	}
+	char text[80];
+	code[strcspn(code, "\r\n")] = 0;
+	snprintf(text, sizeof(text), datachSwipe(&nes, code) ? "Barcode %s swiped" : "%s isn't an EAN-13 or EAN-8 barcode", code);
+	struct retro_message message = { text, 180 };
+	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+}
+
 void retro_run(void) {
 	input_poll_cb();
 	turboFrame++;
 	readDevices();
+	swipeBarcode();
 	if (playingNsf) {
 		runNsf();
 		return;
@@ -1044,7 +1101,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		}
 	}
 	descriptors[count++] = (struct retro_input_descriptor) { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Microphone" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "VS. System: Service" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "VS. System: Service; Datach: Swipe Barcode" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Zapper Aim X" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
