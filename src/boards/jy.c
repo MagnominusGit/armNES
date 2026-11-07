@@ -32,13 +32,14 @@ static void jySyncPrg(struct NES* nes, int and, int or) {
 	uint8_t last = (j->mode[0] & 4) ? j->prg[3] : 0xFF;
 	uint8_t bank6000 = 0;
 	switch (j->mode[0] & 3) {
+	// In the 32 and 16 KB modes the registers count banks of that size (behaviour per Mesen)
 	case 0:
-		prg32(nes, ((last & and) >> 2) | (or >> 2));
+		prg32(nes, (last & (and >> 2)) | (or >> 2));
 		bank6000 = (j->prg[3] << 2) | 3;
 		break;
 	case 1:
-		prg16(nes, 0x8000, ((j->prg[1] & and) >> 1) | (or >> 1));
-		prg16(nes, 0xC000, ((last & and) >> 1) | (or >> 1));
+		prg16(nes, 0x8000, (j->prg[1] & (and >> 1)) | (or >> 1));
+		prg16(nes, 0xC000, (last & (and >> 1)) | (or >> 1));
 		bank6000 = (j->prg[3] << 1) | 1;
 		break;
 	case 2:
