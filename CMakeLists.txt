@@ -23,6 +23,7 @@ set(CORE_SOURCES
 	src/boards/mmc3.c
 	src/boards/mmc5.c
 	src/boards/multicart.c
+	src/boards/nsf.c
 	src/boards/rare.c
 	src/boards/sachen.c
 	src/sound/emu2413.c

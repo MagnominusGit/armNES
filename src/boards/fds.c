@@ -20,19 +20,6 @@ enum {
 	SPIN_UP = 50000,
 };
 
-struct FdsSound {
-	uint8_t wave[64], modTable[64];
-	uint8_t volume, volumeSpeed, modGain, modSpeed, masterSpeed, masterVolume;
-	bool volumeIncrease, volumeDirect, modIncrease, modDirect;
-	uint16_t pitch, modPitch;
-	bool waveHalt, envelopeHalt, modHalt, waveWrite;
-	int8_t modCounter;
-	uint8_t modPosition, waveOutput;
-	uint32_t wavePhase, modPhase;
-	int32_t volumeTimer, modTimer;
-	int32_t filtered;
-};
-
 struct Fds {
 	uint16_t timerReload, timerCounter;
 	bool timerRepeat, timerEnabled, timerIrq, diskIrq;
@@ -176,7 +163,7 @@ static int modulatedPitch(const struct FdsSound* s) {
 	return pitch < 0 ? 0 : pitch;
 }
 
-static void soundCycle(struct FdsSound* s) {
+void fdsSoundCycle(struct FdsSound* s) {
 	if (!s->envelopeHalt && !s->waveHalt && s->masterSpeed) {
 		if (!s->volumeDirect && --s->volumeTimer <= 0) {
 			s->volumeTimer = 8 * (s->volumeSpeed + 1) * s->masterSpeed;
@@ -210,7 +197,27 @@ static void soundCycle(struct FdsSound* s) {
 	s->filtered += ((level - s->filtered) * 460) >> 16;
 }
 
-static void soundWrite(struct FdsSound* s, uint16_t address, uint8_t value) {
+void fdsSoundReset(struct FdsSound* s) {
+	memset(s, 0, sizeof(*s));
+	s->masterSpeed = 0xE8;
+	s->waveHalt = s->modHalt = true;
+}
+
+// $4040-$4092
+uint8_t fdsSoundRead(const struct FdsSound* s, uint16_t address, uint8_t open) {
+	if (address >= 0x4040 && address < 0x4080) {
+		return (open & 0xC0) | (s->waveWrite ? s->wave[address & 0x3F] : s->waveOutput);
+	}
+	if (address == 0x4090) {
+		return (open & 0xC0) | s->volume;
+	}
+	if (address == 0x4092) {
+		return (open & 0xC0) | s->modGain;
+	}
+	return open;
+}
+
+void fdsSoundWrite(struct FdsSound* s, uint16_t address, uint8_t value) {
 	if (address < 0x4080) {
 		if (s->waveWrite) {
 			s->wave[address & 0x3F] = value & 0x3F;
@@ -344,17 +351,8 @@ static uint8_t fdsRead(struct NES* nes, uint16_t address) {
 			return (f->external & 0x7F) | 0x80;
 		}
 	}
-	if (f->soundEnabled && address >= 0x4040 && address <= 0x4092) {
-		struct FdsSound* s = &f->sound;
-		if (address < 0x4080) {
-			return (open & 0xC0) | (s->waveWrite ? s->wave[address & 0x3F] : s->waveOutput);
-		}
-		if (address == 0x4090) {
-			return (open & 0xC0) | s->volume;
-		}
-		if (address == 0x4092) {
-			return (open & 0xC0) | s->modGain;
-		}
+	if (f->soundEnabled) {
+		return fdsSoundRead(&f->sound, address, open);
 	}
 	return open;
 }
@@ -373,7 +371,7 @@ static void fdsWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	}
 	if (address >= 0x4040 && address <= 0x408A) {
 		if (f->soundEnabled) {
-			soundWrite(&f->sound, address, value);
+			fdsSoundWrite(&f->sound, address, value);
 		}
 		return;
 	}
@@ -429,7 +427,7 @@ static void fdsCycle(struct NES* nes) {
 		}
 	}
 	driveCycle(nes);
-	soundCycle(&f->sound);
+	fdsSoundCycle(&f->sound);
 }
 
 static int fdsAudio(struct NES* nes) {
@@ -450,8 +448,7 @@ static void fdsReset(struct NES* nes, bool hard) {
 		memset(f, 0, sizeof(*f));
 		f->side = nes->cart.diskSides ? 0 : -1;
 		f->endOfHead = true;
-		f->sound.masterSpeed = 0xE8;
-		f->sound.waveHalt = f->sound.modHalt = true;
+		fdsSoundReset(&f->sound);
 	}
 	fdsSync(nes);
 }

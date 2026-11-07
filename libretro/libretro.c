@@ -485,7 +485,7 @@ void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armNES";
 	info->library_version = "0.1";
-	info->valid_extensions = "nes|fds|unf|unif";
+	info->valid_extensions = "nes|fds|unf|unif|nsf";
 	info->need_fullpath = false;
 	info->block_extract = false;
 }
@@ -717,10 +717,92 @@ static void readDevices(void) {
 	}
 }
 
+// NSF files: the tune's names and which song plays, picked with the pad
+static const struct {
+	uint8_t width;
+	uint16_t rows[12];
+} font[] = {
+#include "font.inc"
+};
+
+static bool playingNsf;
+static unsigned songFrames;
+static uint8_t lastNsfPad;
+
+static int textWidth(const char* text) {
+	int width = 0;
+	for (; *text; text++) {
+		int c = (unsigned char) *text;
+		width += font[c >= 32 && c < 127 ? c - 32 : '?' - 32].width + 1;
+	}
+	return width;
+}
+
+// A line centered at y; characters outside ASCII show as ?
+static void drawText(int y, const char* text, uint16_t color) {
+	int x = (NES_WIDTH - textWidth(text)) / 2;
+	x = x < 4 ? 4 : x;
+	for (; *text; text++) {
+		int c = (unsigned char) *text;
+		c = c >= 32 && c < 127 ? c - 32 : '?' - 32;
+		for (int row = 0; row < 12; row++) {
+			for (int bit = 0; bit < font[c].width; bit++) {
+				int px = x + bit;
+				if ((font[c].rows[row] >> bit) & 1 && px < NES_WIDTH - 4) {
+					video[(y + row) * NES_WIDTH + px] = color;
+				}
+			}
+		}
+		x += font[c].width + 1;
+	}
+}
+
+static void runNsf(void) {
+	struct NsfInfo info;
+	nsfInfo(&nes, &info);
+	// Right and left change the song, A starts it again
+	uint8_t pad = nes.pads[0], pressed = pad & ~lastNsfPad;
+	lastNsfPad = pad;
+	int song = info.song;
+	if (pressed & 0x80) {
+		song = (song + 1) % info.songs;
+	} else if (pressed & 0x40) {
+		song = (song + info.songs - 1) % info.songs;
+	}
+	if (song != info.song || (pressed & 0x01)) {
+		nsfSelect(&nes, song);
+		songFrames = 0;
+		info.song = song;
+	}
+	nes.pads[0] = 0;
+	nesRunFrame(&nes);
+	checkOptions();
+	songFrames++;
+	memset(video, 0, NES_WIDTH * NES_HEIGHT * sizeof(video[0]));
+	char line[64];
+	drawText(40, info.title, 0xFFFF);
+	drawText(60, info.artist, 0xC618);
+	drawText(76, info.copyright, 0xC618);
+	snprintf(line, sizeof(line), "Song %d of %d", info.song + 1, info.songs);
+	drawText(112, line, 0xFFFF);
+	unsigned seconds = songFrames / (nes.region == REGION_NTSC ? 60 : 50);
+	snprintf(line, sizeof(line), "%u:%02u", seconds / 60, seconds % 60);
+	drawText(128, line, 0xC618);
+	drawText(184, "Left / Right: song    A: from the start", 0x8410);
+	video_cb(video, NES_WIDTH, NES_HEIGHT, NES_WIDTH * sizeof(uint16_t));
+	if (nes.audioCount) {
+		audio_batch_cb(nes.audioOut, nes.audioCount / 2);
+	}
+}
+
 void retro_run(void) {
 	input_poll_cb();
 	turboFrame++;
 	readDevices();
+	if (playingNsf) {
+		runNsf();
+		return;
+	}
 	if (nes.board == &boardYuxing || nes.input.expansion == EXPANSION_KEYBOARD) {
 		memset(nes.keys, 0, sizeof(nes.keys));
 		for (unsigned key = 1; key < RETROK_LAST; key++) {
@@ -943,6 +1025,9 @@ bool retro_load_game(const struct retro_game_info* game) {
 	readInputOptions();
 	readSoundOptions();
 	setMemoryMaps();
+	playingNsf = nes.board == &boardNsf;
+	songFrames = 0;
+	lastNsfPad = 0;
 	loaded = true;
 	return true;
 }

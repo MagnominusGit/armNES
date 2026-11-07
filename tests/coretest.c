@@ -179,6 +179,10 @@ static int16_t inputState(unsigned port, unsigned device, unsigned index, unsign
 		static const unsigned held[4] = { 0, RETRO_DEVICE_ID_JOYPAD_B, RETRO_DEVICE_ID_JOYPAD_SELECT, RETRO_DEVICE_ID_JOYPAD_UP };
 		return port < 4 && id == held[port];
 	}
+	// CORETEST_IDLE: controller 1 left alone
+	if (getenv("CORETEST_IDLE")) {
+		return 0;
+	}
 	return port == 0 && ((id == RETRO_DEVICE_ID_JOYPAD_START && frame % 300 < 6) ||
 		(id == RETRO_DEVICE_ID_JOYPAD_RIGHT && frame % 240 < 120) || (id == RETRO_DEVICE_ID_JOYPAD_A && frame % 60 < 20));
 }

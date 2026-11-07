@@ -136,6 +136,111 @@ bool fdsBusy(struct NES*);
 // discrete.c
 const struct Board* discreteFind(int mapper, int submapper);
 
+// nsf.c: music files, played by a driver of armNES's own, as a mapper number past NES 2.0's
+#define NSF_MAPPER 0x1000
+BOARD(boardNsf);
+bool nsfCartLoad(struct NES*, const uint8_t* data, size_t size);
+struct NsfInfo {
+	const char *title, *artist, *copyright;
+	int songs, song;
+};
+bool nsfInfo(struct NES*, struct NsfInfo* info);
+void nsfSelect(struct NES*, int song);
+
+// The sound chips on carts, for their boards and for NSF files
+
+// asic.c: Sunsoft 5B, an AY-3-8910's three square channels, noise and envelope
+struct Sunsoft5b {
+	uint8_t address, regs[16];
+	uint16_t toneTimer[3];
+	bool toneOut[3];
+	uint8_t noiseTimer;
+	uint32_t noiseShift;
+	uint32_t envelopeTimer;
+	uint8_t envelopeStep;
+	bool envelopeHolding;
+	uint8_t divider;
+};
+void sunsoft5bWrite(struct Sunsoft5b*, uint8_t value);
+void sunsoft5bCycle(struct Sunsoft5b*);
+int sunsoft5bOutput(const struct Sunsoft5b*);
+
+// asic.c: VRC6, two pulses and a sawtooth at $9000-$B002
+struct Vrc6Pulse {
+	uint8_t control;
+	uint16_t period, timer;
+	uint8_t step;
+	bool enabled;
+};
+struct Vrc6Sound {
+	struct Vrc6Pulse pulse[2];
+	uint8_t sawRate, sawStep, sawAccumulator;
+	uint16_t sawPeriod, sawTimer;
+	bool sawEnabled;
+};
+void vrc6SoundWrite(struct Vrc6Sound*, int channel, int reg, uint8_t value);
+void vrc6SoundCycle(struct Vrc6Sound*);
+int vrc6SoundOutput(const struct Vrc6Sound*);
+
+// asic.c: VRC7's FM synthesizer, through emu2413; one at a time
+struct Vrc7Sound {
+	uint8_t address, regs[0x40];
+	uint8_t clock;
+	int16_t sample;
+};
+void vrc7SoundReset(struct Vrc7Sound*, bool hard);
+void vrc7SoundRestore(const struct Vrc7Sound*);
+void vrc7SoundWrite(struct Vrc7Sound*, uint8_t value);
+void vrc7SoundCycle(struct Vrc7Sound*, bool silenced);
+int vrc7SoundOutput(const struct Vrc7Sound*);
+
+// asic.c: Namco 163, up to 8 wavetable channels in 128 bytes of RAM
+struct Namco163Sound {
+	uint8_t address;
+	uint8_t ram[128];
+	int8_t output[8];
+	uint8_t channel, tick;
+};
+uint8_t namco163SoundRead(struct Namco163Sound*);
+void namco163SoundWrite(struct Namco163Sound*, uint8_t value);
+void namco163SoundCycle(struct Namco163Sound*, bool disabled);
+int namco163SoundOutput(const struct Namco163Sound*);
+
+// mmc5.c: MMC5's two pulses and PCM at $5000-$5015
+struct Mmc5Pulse {
+	uint8_t control, length, envelopeDivider, envelopeDecay, step;
+	uint16_t period, timer;
+	bool envelopeStart, enabled;
+};
+struct Mmc5Sound {
+	struct Mmc5Pulse pulse[2];
+	uint8_t pcm;
+	uint16_t frameTimer;
+	bool odd;
+};
+void mmc5SoundWrite(struct Mmc5Sound*, uint16_t address, uint8_t value);
+uint8_t mmc5SoundStatus(const struct Mmc5Sound*);
+void mmc5SoundCycle(struct Mmc5Sound*);
+int mmc5SoundOutput(const struct Mmc5Sound*);
+
+// fds.c: the Disk System's wavetable channel with its modulator at $4040-$408A
+struct FdsSound {
+	uint8_t wave[64], modTable[64];
+	uint8_t volume, volumeSpeed, modGain, modSpeed, masterSpeed, masterVolume;
+	bool volumeIncrease, volumeDirect, modIncrease, modDirect;
+	uint16_t pitch, modPitch;
+	bool waveHalt, envelopeHalt, modHalt, waveWrite;
+	int8_t modCounter;
+	uint8_t modPosition, waveOutput;
+	uint32_t wavePhase, modPhase;
+	int32_t volumeTimer, modTimer;
+	int32_t filtered;
+};
+void fdsSoundReset(struct FdsSound*);
+void fdsSoundWrite(struct FdsSound*, uint16_t address, uint8_t value);
+uint8_t fdsSoundRead(const struct FdsSound*, uint16_t address, uint8_t open);
+void fdsSoundCycle(struct FdsSound*);
+
 // fceu/bridge.c: FCEUmm's boards, for the rest
 BOARD(boardFceu);
 BOARD(boardFceuCycle);

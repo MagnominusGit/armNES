@@ -84,19 +84,8 @@ const struct Board boardMmc2 = {
 
 // Sunsoft FME-7 (69)
 // Sunsoft 5B's sound (FME-7's sound version): an AY-3-8910's three square channels, noise and
-// envelope, clocked at half the CPU's rate and counted in 16s
-struct Sunsoft5b {
-	uint8_t address, regs[16];
-	uint16_t toneTimer[3];
-	bool toneOut[3];
-	uint8_t noiseTimer;
-	uint32_t noiseShift;
-	uint32_t envelopeTimer;
-	uint8_t envelopeStep;
-	bool envelopeHolding;
-	uint8_t divider;
-};
-
+// envelope, clocked at half the CPU's rate and counted in 16s: a tone flips every period, noise
+// shifts every two, and the envelope's 32 steps (a YM2149's) take one each
 struct Fme7 {
 	uint8_t command, regs[16];
 	uint16_t counter;
@@ -107,7 +96,7 @@ struct Fme7 {
 // 3 dB per volume step, 0 to 15
 static const uint16_t ayVolume[16] = { 0, 45, 63, 89, 126, 178, 251, 355, 501, 708, 1000, 1413, 1995, 2818, 3981, 5623 };
 
-static void sunsoft5bWrite(struct Sunsoft5b* a, uint8_t value) {
+void sunsoft5bWrite(struct Sunsoft5b* a, uint8_t value) {
 	a->regs[a->address & 15] = value;
 	if ((a->address & 15) == 13) {
 		a->envelopeStep = 0;
@@ -116,14 +105,14 @@ static void sunsoft5bWrite(struct Sunsoft5b* a, uint8_t value) {
 	}
 }
 
-static void sunsoft5bCycle(struct Sunsoft5b* a) {
+void sunsoft5bCycle(struct Sunsoft5b* a) {
 	if (++a->divider < 16) {
 		return;
 	}
 	a->divider = 0;
 	for (int i = 0; i < 3; i++) {
 		uint16_t period = a->regs[i * 2] | ((a->regs[i * 2 + 1] & 15) << 8);
-		if (++a->toneTimer[i] >= (period ? period : 1) * 2) {
+		if (++a->toneTimer[i] >= (period ? period : 1)) {
 			a->toneTimer[i] = 0;
 			a->toneOut[i] = !a->toneOut[i];
 		}
@@ -135,7 +124,7 @@ static void sunsoft5bCycle(struct Sunsoft5b* a) {
 		a->noiseShift = (a->noiseShift >> 1) | (bit << 16);
 	}
 	uint32_t envelopePeriod = a->regs[11] | (a->regs[12] << 8);
-	if (!a->envelopeHolding && ++a->envelopeTimer >= (envelopePeriod ? envelopePeriod : 1) * 2) {
+	if (!a->envelopeHolding && ++a->envelopeTimer >= (envelopePeriod ? envelopePeriod : 1)) {
 		a->envelopeTimer = 0;
 		if (++a->envelopeStep >= 32) {
 			uint8_t shape = a->regs[13];
@@ -149,7 +138,7 @@ static void sunsoft5bCycle(struct Sunsoft5b* a) {
 	}
 }
 
-static int sunsoft5bOutput(const struct Sunsoft5b* a) {
+int sunsoft5bOutput(const struct Sunsoft5b* a) {
 	uint8_t shape = a->regs[13];
 	int level = a->envelopeStep >> 1;
 	bool attack = shape & 4;
@@ -570,13 +559,55 @@ const struct Board boardSs88006 = {
 struct Namco163 {
 	uint8_t chr[8], nt[4], prg[3];
 	uint16_t counter;
-	uint8_t address;
-	uint8_t ram[128];
-	uint32_t phase[8];
-	int8_t output[8];
-	uint8_t channel, tick;
+	struct Namco163Sound sound;
 	uint8_t mirroring;
 };
+
+// The RAM through the data port, stepping the address when it's set to
+uint8_t namco163SoundRead(struct Namco163Sound* n) {
+	uint8_t value = n->ram[n->address & 0x7F];
+	if (n->address & 0x80) {
+		n->address = 0x80 | ((n->address + 1) & 0x7F);
+	}
+	return value;
+}
+
+void namco163SoundWrite(struct Namco163Sound* n, uint8_t value) {
+	n->ram[n->address & 0x7F] = value;
+	if (n->address & 0x80) {
+		n->address = 0x80 | ((n->address + 1) & 0x7F);
+	}
+}
+
+// One channel stepped every 15 cycles, from the last down
+void namco163SoundCycle(struct Namco163Sound* n, bool disabled) {
+	if (++n->tick < 15 || disabled) {
+		return;
+	}
+	n->tick = 0;
+	int channels = ((n->ram[0x7F] >> 4) & 7) + 1;
+	int c = 7 - n->channel;
+	uint8_t* r = &n->ram[0x40 + c * 8];
+	uint32_t freq = r[0] | (r[2] << 8) | ((r[4] & 3) << 16);
+	uint32_t length = (256 - (r[4] & 0xFC)) << 16;
+	uint32_t phase = r[1] | (r[3] << 8) | (r[5] << 16);
+	phase = (phase + freq) % length;
+	r[1] = phase;
+	r[3] = phase >> 8;
+	r[5] = phase >> 16;
+	uint8_t index = ((phase >> 16) + r[6]) & 0xFF;
+	int sample = (n->ram[index >> 1] >> ((index & 1) * 4)) & 15;
+	n->output[c] = (sample - 8) * (r[7] & 15);
+	n->channel = (n->channel + 1) % channels;
+}
+
+int namco163SoundOutput(const struct Namco163Sound* n) {
+	int channels = ((n->ram[0x7F] >> 4) & 7) + 1, sum = 0;
+	for (int c = 8 - channels; c < 8; c++) {
+		sum += n->output[c];
+	}
+	return sum * 64 / channels;
+}
 
 static void namco163Sync(struct NES* nes) {
 	struct Namco163* n = STATE(Namco163);
@@ -614,13 +645,8 @@ static void namco163Sync(struct NES* nes) {
 static uint8_t namco163Read(struct NES* nes, uint16_t address) {
 	struct Namco163* n = STATE(Namco163);
 	switch (address & 0xF800) {
-	case 0x4800: {
-		uint8_t value = n->ram[n->address & 0x7F];
-		if (n->address & 0x80) {
-			n->address = 0x80 | ((n->address + 1) & 0x7F);
-		}
-		return value;
-	}
+	case 0x4800:
+		return namco163SoundRead(&n->sound);
 	case 0x5000:
 		return n->counter & 0xFF;
 	case 0x5800:
@@ -633,10 +659,7 @@ static void namco163Write(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Namco163* n = STATE(Namco163);
 	switch (address & 0xF800) {
 	case 0x4800:
-		n->ram[n->address & 0x7F] = value;
-		if (n->address & 0x80) {
-			n->address = 0x80 | ((n->address + 1) & 0x7F);
-		}
+		namco163SoundWrite(&n->sound, value);
 		return;
 	case 0x5000:
 		n->counter = (n->counter & 0xFF00) | value;
@@ -647,7 +670,7 @@ static void namco163Write(struct NES* nes, uint16_t address, uint8_t value) {
 		nesSetIrq(nes, IRQ_MAPPER, false);
 		return;
 	case 0xF800:
-		n->address = value;
+		n->sound.address = value;
 		return;
 	}
 	if (address >= 0x8000 && address < 0xC000) {
@@ -667,37 +690,14 @@ static void namco163Cycle(struct NES* nes) {
 	if ((n->counter & 0x8000) && (n->counter & 0x7FFF) != 0x7FFF && ++n->counter == 0xFFFF) {
 		nesSetIrq(nes, IRQ_MAPPER, true);
 	}
-	// Sound: one channel stepped every 15 cycles, from the last down
-	if (++n->tick < 15 || (n->prg[0] & 0x40)) {
-		return;
-	}
-	n->tick = 0;
-	int channels = ((n->ram[0x7F] >> 4) & 7) + 1;
-	int c = 7 - n->channel;
-	uint8_t* r = &n->ram[0x40 + c * 8];
-	uint32_t freq = r[0] | (r[2] << 8) | ((r[4] & 3) << 16);
-	uint32_t length = (256 - (r[4] & 0xFC)) << 16;
-	uint32_t phase = r[1] | (r[3] << 8) | (r[5] << 16);
-	phase = (phase + freq) % length;
-	r[1] = phase;
-	r[3] = phase >> 8;
-	r[5] = phase >> 16;
-	uint8_t index = ((phase >> 16) + r[6]) & 0xFF;
-	int sample = (n->ram[index >> 1] >> ((index & 1) * 4)) & 15;
-	n->output[c] = (sample - 8) * (r[7] & 15);
-	n->channel = (n->channel + 1) % channels;
+	namco163SoundCycle(&n->sound, n->prg[0] & 0x40);
 }
 
 static int namco163Audio(struct NES* nes) {
-	struct Namco163* n = STATE(Namco163);
 	if (nes->cart.mapper != 19) {
 		return 0;
 	}
-	int channels = ((n->ram[0x7F] >> 4) & 7) + 1, sum = 0;
-	for (int c = 8 - channels; c < 8; c++) {
-		sum += n->output[c];
-	}
-	return sum * 64 / channels;
+	return namco163SoundOutput(&STATE(Namco163)->sound);
 }
 
 static void namco163Reset(struct NES* nes, bool hard) {
@@ -846,21 +846,73 @@ const struct Board boardVrc3 = {
 };
 
 // VRC6 (24, and 26 with A0 and A1 swapped): two pulse channels and a sawtooth beside the APU
-struct Vrc6Pulse {
-	uint8_t control;
-	uint16_t period, timer;
-	uint8_t step;
-	bool enabled;
-};
-
 struct Vrc6 {
 	uint8_t prg[2], chr[8], banking;
 	struct VrcIrq irq;
-	struct Vrc6Pulse pulse[2];
-	uint8_t sawRate, sawStep, sawAccumulator;
-	uint16_t sawPeriod, sawTimer;
-	bool sawEnabled;
+	struct Vrc6Sound sound;
 };
+
+// A pulse's (channel 0 and 1) or the sawtooth's (2) register 0 to 2
+void vrc6SoundWrite(struct Vrc6Sound* v, int channel, int reg, uint8_t value) {
+	if (channel < 2) {
+		struct Vrc6Pulse* p = &v->pulse[channel];
+		if (reg == 0) {
+			p->control = value;
+		} else if (reg == 1) {
+			p->period = (p->period & 0xF00) | value;
+		} else {
+			p->period = (p->period & 0x0FF) | ((value & 15) << 8);
+			p->enabled = value & 0x80;
+			if (!p->enabled) {
+				p->step = 0;
+			}
+		}
+	} else if (reg == 0) {
+		v->sawRate = value & 0x3F;
+	} else if (reg == 1) {
+		v->sawPeriod = (v->sawPeriod & 0xF00) | value;
+	} else {
+		v->sawPeriod = (v->sawPeriod & 0x0FF) | ((value & 15) << 8);
+		v->sawEnabled = value & 0x80;
+		if (!v->sawEnabled) {
+			v->sawStep = 0;
+			v->sawAccumulator = 0;
+		}
+	}
+}
+
+void vrc6SoundCycle(struct Vrc6Sound* v) {
+	for (int i = 0; i < 2; i++) {
+		struct Vrc6Pulse* p = &v->pulse[i];
+		if (p->enabled && p->timer-- == 0) {
+			p->timer = p->period;
+			p->step = (p->step + 1) & 15;
+		}
+	}
+	if (v->sawEnabled && v->sawTimer-- == 0) {
+		v->sawTimer = v->sawPeriod;
+		if (++v->sawStep == 14) {
+			v->sawStep = 0;
+			v->sawAccumulator = 0;
+		} else if (!(v->sawStep & 1)) {
+			v->sawAccumulator += v->sawRate;
+		}
+	}
+}
+
+int vrc6SoundOutput(const struct Vrc6Sound* v) {
+	int out = 0;
+	for (int i = 0; i < 2; i++) {
+		const struct Vrc6Pulse* p = &v->pulse[i];
+		if (p->enabled && ((p->control & 0x80) || p->step <= ((p->control >> 4) & 7))) {
+			out += p->control & 15;
+		}
+	}
+	if (v->sawEnabled) {
+		out += v->sawAccumulator >> 3;
+	}
+	return out * 380;
+}
 
 static void vrc6Sync(struct NES* nes) {
 	struct Vrc6* v = STATE(Vrc6);
@@ -890,41 +942,17 @@ static void vrc6Write(struct NES* nes, uint16_t address, uint8_t value) {
 		v->prg[0] = value & 15;
 		break;
 	case 0x9000:
-	case 0xA000: {
-		if (sub == 3) {
+	case 0xA000:
+	case 0xB000:
+		if (sub < 3) {
+			vrc6SoundWrite(&v->sound, (address >> 12) - 9, sub, value);
 			return;
 		}
-		struct Vrc6Pulse* p = &v->pulse[(address >> 12) - 9];
-		if (sub == 0) {
-			p->control = value;
-		} else if (sub == 1) {
-			p->period = (p->period & 0xF00) | value;
-		} else {
-			p->period = (p->period & 0x0FF) | ((value & 15) << 8);
-			p->enabled = value & 0x80;
-			if (!p->enabled) {
-				p->step = 0;
-			}
+		if ((address & 0xF000) != 0xB000) {
+			return;
 		}
-		return;
-	}
-	case 0xB000:
-		if (sub == 0) {
-			v->sawRate = value & 0x3F;
-		} else if (sub == 1) {
-			v->sawPeriod = (v->sawPeriod & 0xF00) | value;
-		} else if (sub == 2) {
-			v->sawPeriod = (v->sawPeriod & 0x0FF) | ((value & 15) << 8);
-			v->sawEnabled = value & 0x80;
-			if (!v->sawEnabled) {
-				v->sawStep = 0;
-				v->sawAccumulator = 0;
-			}
-		} else {
-			v->banking = value;
-			break;
-		}
-		return;
+		v->banking = value;
+		break;
 	case 0xC000:
 		v->prg[1] = value & 0x1F;
 		break;
@@ -948,37 +976,11 @@ static void vrc6Write(struct NES* nes, uint16_t address, uint8_t value) {
 static void vrc6Cycle(struct NES* nes) {
 	struct Vrc6* v = STATE(Vrc6);
 	vrcIrqCycle(nes, &v->irq);
-	for (int i = 0; i < 2; i++) {
-		struct Vrc6Pulse* p = &v->pulse[i];
-		if (p->enabled && p->timer-- == 0) {
-			p->timer = p->period;
-			p->step = (p->step + 1) & 15;
-		}
-	}
-	if (v->sawEnabled && v->sawTimer-- == 0) {
-		v->sawTimer = v->sawPeriod;
-		if (++v->sawStep == 14) {
-			v->sawStep = 0;
-			v->sawAccumulator = 0;
-		} else if (!(v->sawStep & 1)) {
-			v->sawAccumulator += v->sawRate;
-		}
-	}
+	vrc6SoundCycle(&v->sound);
 }
 
 static int vrc6Audio(struct NES* nes) {
-	struct Vrc6* v = STATE(Vrc6);
-	int out = 0;
-	for (int i = 0; i < 2; i++) {
-		struct Vrc6Pulse* p = &v->pulse[i];
-		if (p->enabled && ((p->control & 0x80) || p->step <= ((p->control >> 4) & 7))) {
-			out += p->control & 15;
-		}
-	}
-	if (v->sawEnabled) {
-		out += v->sawAccumulator >> 3;
-	}
-	return out * 380;
+	return vrc6SoundOutput(&STATE(Vrc6)->sound);
 }
 
 static void vrc6Reset(struct NES* nes, bool hard) {
@@ -999,14 +1001,49 @@ const struct Board boardVrc6 = {
 #include "sound/emu2413.h"
 
 struct Vrc7 {
-	uint8_t prg[3], chr[8], control, audioAddress;
-	uint8_t audioRegs[0x40];
+	uint8_t prg[3], chr[8], control;
 	struct VrcIrq irq;
-	uint8_t audioClock;
-	int16_t sample;
+	struct Vrc7Sound sound;
 };
 
 static OPLL* opll;
+
+void vrc7SoundReset(struct Vrc7Sound* v, bool hard) {
+	if (!opll) {
+		opll = OPLL_new(3579545, 49716);
+		OPLL_setChipType(opll, 1);
+	}
+	if (hard) {
+		memset(v, 0, sizeof(*v));
+		OPLL_reset(opll);
+	}
+}
+
+void vrc7SoundRestore(const struct Vrc7Sound* v) {
+	if (opll) {
+		for (int i = 0; i < 0x40; i++) {
+			OPLL_writeReg(opll, i, v->regs[i]);
+		}
+	}
+}
+
+void vrc7SoundWrite(struct Vrc7Sound* v, uint8_t value) {
+	v->regs[v->address & 0x3F] = value;
+	if (opll) {
+		OPLL_writeReg(opll, v->address, value);
+	}
+}
+
+void vrc7SoundCycle(struct Vrc7Sound* v, bool silenced) {
+	if (++v->clock == 36) {
+		v->clock = 0;
+		v->sample = silenced || !opll ? 0 : OPLL_calc(opll);
+	}
+}
+
+int vrc7SoundOutput(const struct Vrc7Sound* v) {
+	return v->sample * 6;
+}
 
 static void vrc7Banks(struct NES* nes) {
 	struct Vrc7* v = STATE(Vrc7);
@@ -1028,13 +1065,8 @@ static void vrc7Banks(struct NES* nes) {
 
 // After a state load: the banks, and the synthesizer's registers again
 static void vrc7Sync(struct NES* nes) {
-	struct Vrc7* v = STATE(Vrc7);
 	vrc7Banks(nes);
-	if (opll) {
-		for (int i = 0; i < 0x40; i++) {
-			OPLL_writeReg(opll, i, v->audioRegs[i]);
-		}
-	}
+	vrc7SoundRestore(&STATE(Vrc7)->sound);
 }
 
 static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
@@ -1053,13 +1085,10 @@ static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
 		if (!odd) {
 			v->prg[2] = value & 0x3F;
 		} else if (address & 0x20) {
-			v->audioRegs[v->audioAddress & 0x3F] = value;
-			if (opll) {
-				OPLL_writeReg(opll, v->audioAddress, value);
-			}
+			vrc7SoundWrite(&v->sound, value);
 			return;
 		} else {
-			v->audioAddress = value;
+			v->sound.address = value;
 			return;
 		}
 		break;
@@ -1090,25 +1119,18 @@ static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
 static void vrc7Cycle(struct NES* nes) {
 	struct Vrc7* v = STATE(Vrc7);
 	vrcIrqCycle(nes, &v->irq);
-	if (++v->audioClock == 36) {
-		v->audioClock = 0;
-		v->sample = (v->control & 0x40) || !opll ? 0 : OPLL_calc(opll);
-	}
+	vrc7SoundCycle(&v->sound, v->control & 0x40);
 }
 
 static int vrc7Audio(struct NES* nes) {
-	return STATE(Vrc7)->sample * 2;
+	return vrc7SoundOutput(&STATE(Vrc7)->sound);
 }
 
 static void vrc7Reset(struct NES* nes, bool hard) {
-	if (!opll) {
-		opll = OPLL_new(3579545, 49716);
-		OPLL_setChipType(opll, 1);
-	}
 	if (hard) {
 		memset(nes->boardState, 0, sizeof(struct Vrc7));
-		OPLL_reset(opll);
 	}
+	vrc7SoundReset(&STATE(Vrc7)->sound, hard);
 	vrc7Banks(nes);
 }
 

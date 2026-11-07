@@ -246,7 +246,7 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 		free(image);
 		return loaded;
 	}
-	if (fdsCartLoad(nes, data, size)) {
+	if (fdsCartLoad(nes, data, size) || nsfCartLoad(nes, data, size)) {
 		return true;
 	}
 	if (size < 16 || memcmp(data, "NES\x1A", 4)) {
