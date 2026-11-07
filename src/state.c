@@ -125,6 +125,9 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	struct Cart cart = nes->cart;
 	const struct Board* board = nes->board;
 	uint16_t* frameBuffer = nes->frameBuffer;
+	struct NES* dual = nes->dual;
+	uint8_t* vsShared = nes->vsShared;
+	bool vsSub = nes->vsSub;
 	int16_t* audioOut = nes->audioOut;
 	size_t audioCapacity = nes->audioCapacity;
 	int sampleRate = nes->sampleRate;
@@ -151,6 +154,9 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->cart.disk = cart.disk;
 	nes->board = board;
 	nes->frameBuffer = frameBuffer;
+	nes->dual = dual;
+	nes->vsShared = vsShared;
+	nes->vsSub = vsSub;
 	nes->audioOut = audioOut;
 	nes->audioCapacity = audioCapacity;
 	nes->sampleRate = sampleRate;

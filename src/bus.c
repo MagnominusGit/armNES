@@ -22,10 +22,15 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 			value = (value & 0xC0) | ids[nes->cart.vsPpu - 8];
 		}
 	} else if (nes->readHooks & (1 << (address >> 12))) {
-		nesPpuSync(nes);
-		value = nes->board->read(nes, address);
-		// The read may have acknowledged the board's IRQ
-		nes->mapperQuietTicks = 0;
+		if (nes->vsShared && (address & 0xE000) == 0x6000) {
+			value = nes->vsRamAccess ? nes->vsShared[address & 0x7FF] : cpu->openBus;
+			driven = nes->vsRamAccess;
+		} else {
+			nesPpuSync(nes);
+			value = nes->board->read(nes, address);
+			// The read may have acknowledged the board's IRQ
+			nes->mapperQuietTicks = 0;
+		}
 	} else {
 		uint8_t* page = address >= 0x4020 ? nes->prgPages[address >> 12] : NULL;
 		if (page) {
@@ -79,6 +84,8 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		}
 		if (nes->prgWritable[page] && nes->prgPages[page]) {
 			nes->prgPages[page][address & 0xFFF] = value;
+		} else if (__builtin_expect(nes->vsShared != NULL, 0) && (address & 0xE000) == 0x6000 && nes->vsRamAccess) {
+			nes->vsShared[address & 0x7FF] = value;
 		}
 		if (nes->board->write) {
 			nes->board->write(nes, address, value);

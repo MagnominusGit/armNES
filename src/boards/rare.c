@@ -539,7 +539,10 @@ static void vs99Sync(struct NES* nes) {
 		prg32(nes, 0);
 	}
 	chr8(nes, bank);
-	wram8(nes);
+	// A DualSystem's boards share RAM there instead (nes.c)
+	if (!nes->vsShared) {
+		wram8(nes);
+	}
 }
 
 static void vs99Out(struct NES* nes, uint8_t value) {

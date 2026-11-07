@@ -18,7 +18,7 @@ enum Mirroring { MIRROR_HORIZONTAL, MIRROR_VERTICAL, MIRROR_SCREEN_A, MIRROR_SCR
 enum { NES_WIDTH = 256, NES_HEIGHT = 240 };
 
 // Interrupt sources that share the CPU's IRQ line.
-enum { IRQ_FRAME = 1, IRQ_DMC = 2, IRQ_MAPPER = 4, IRQ_FDS = 8 };
+enum { IRQ_FRAME = 1, IRQ_DMC = 2, IRQ_MAPPER = 4, IRQ_FDS = 8, IRQ_DUAL = 16 };
 
 struct NES;
 
@@ -419,6 +419,12 @@ struct NES {
 		int32_t lastRight, accumRight, levelRight;
 		int32_t hpPrev, hpOut, lpOut;
 	} mixer;
+
+	// A VS. DualSystem: the other board, the 2 KB both reach at $6000-$7FFF, whether this board can
+	// reach it now, and whether this is the second board
+	struct NES* dual;
+	uint8_t* vsShared;
+	bool vsSub, vsRamAccess;
 };
 
 // cart.c
@@ -430,6 +436,9 @@ void nesInit(struct NES*);
 bool nesLoad(struct NES*, const uint8_t* data, size_t size);
 void nesReset(struct NES*, bool hard);
 void nesRunFrame(struct NES*);
+bool nesLoadDual(struct NES*, struct NES* sub, uint8_t* shared, const uint8_t* data, size_t size);
+void nesRunFrameDual(struct NES*, uint16_t* subPicture);
+void nesResetDual(struct NES*, bool hard);
 void nesFree(struct NES*);
 void nesSetRegion(struct NES*, enum Region);
 

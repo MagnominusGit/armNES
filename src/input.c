@@ -221,7 +221,7 @@ uint8_t inputBits(struct NES* nes, int port) {
 		if (port) {
 			bits |= in->vsDip & 0xFC;
 		} else {
-			bits |= in->vsService << 2 | (in->vsDip & 3) << 3 | in->vsCoin[0] << 5 | in->vsCoin[1] << 6;
+			bits |= in->vsService << 2 | (in->vsDip & 3) << 3 | in->vsCoin[0] << 5 | in->vsCoin[1] << 6 | nes->vsSub << 7;
 		}
 	}
 	return bits;
@@ -232,6 +232,16 @@ void inputWrite(struct NES* nes, uint8_t value) {
 	struct InputState* st = &nes->inputState;
 	if (nes->board->out) {
 		nes->board->out(nes, value);
+	}
+	// A VS. DualSystem: bit 1 low raises the other board's IRQ, and the main board's gives the shared
+	// RAM to the second (behaviour per Mesen)
+	if (nes->dual && ((st->lastWrite ^ value) & 2)) {
+		nesSetIrq(nes->dual, IRQ_DUAL, !(value & 2));
+		nes->dual->quietBudget = 0;
+		if (!nes->vsSub) {
+			nes->vsRamAccess = value & 2;
+			nes->dual->vsRamAccess = !(value & 2);
+		}
 	}
 	if (nes->input.expansion == EXPANSION_KEYBOARD) {
 		if (value & 1) {

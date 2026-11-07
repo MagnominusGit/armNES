@@ -22,8 +22,15 @@ static retro_input_state_t input_state_cb;
 static struct NES nes;
 static bool loaded;
 static uint16_t palette565[512];
-static uint16_t video[COMPOSITE_WIDTH * NES_HEIGHT];
+static uint16_t video[2 * COMPOSITE_WIDTH * NES_HEIGHT];
 static int16_t audio[8192];
+
+// A VS. DualSystem's second board, the RAM the two share, and its sound
+static struct NES sub;
+static uint8_t vsShared[0x800];
+static int16_t subAudio[8192];
+static uint16_t subPicture[NES_WIDTH * NES_HEIGHT];
+
 
 static struct OptionChoice regionChoices[] = {
 	{ "Auto", -1 },
@@ -277,12 +284,23 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_vs_dip6", "VS. System > DIP Switch 6", "DIP Switch 6", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_vs_dip7", "VS. System > DIP Switch 7", "DIP Switch 7", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_vs_dip8", "VS. System > DIP Switch 8", "DIP Switch 8", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_screens", "VS. System > DualSystem Screens", "DualSystem Screens",
+		"A DualSystem cabinet has two boards and two screens: both side by side, or one of them.",
+		NULL, "vs", { { "Both", NULL }, { "Main board", NULL }, { "Second board", NULL }, { NULL, NULL } }, "Both" },
+	{ "armnes_vs_dip9", "VS. System > DualSystem DIP Switch 9", "DualSystem DIP Switch 9", "The second board's switches 1 to 8.", NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip10", "VS. System > DualSystem DIP Switch 10", "DualSystem DIP Switch 10", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip11", "VS. System > DualSystem DIP Switch 11", "DualSystem DIP Switch 11", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip12", "VS. System > DualSystem DIP Switch 12", "DualSystem DIP Switch 12", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip13", "VS. System > DualSystem DIP Switch 13", "DualSystem DIP Switch 13", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip14", "VS. System > DualSystem DIP Switch 14", "DualSystem DIP Switch 14", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip15", "VS. System > DualSystem DIP Switch 15", "DualSystem DIP Switch 15", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip16", "VS. System > DualSystem DIP Switch 16", "DualSystem DIP Switch 16", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
 static struct retro_core_option_v2_category categories[] = {
 	{ "sound", "Sound", "Each channel's volume and where it sits between the speakers. The console mixes in mono." },
-	{ "vs", "VS. System", "The arcade board's PPU, controller wiring and DIP switches. Select puts in a coin, controller 1's L is the service button." },
+	{ "vs", "VS. System", "The arcade board's PPU, controller wiring and DIP switches. Select puts in a coin, controller 1's L is the service button. A DualSystem's second board takes controllers 3 and 4 (controller 3's L for its service button)." },
 	{ NULL, NULL, NULL },
 };
 
@@ -292,6 +310,15 @@ static void checkOptions(void);
 
 // The picture: its shape and how much of the edges is cropped
 static int aspect, cropVertical, cropHorizontal, filter;
+
+enum { SCREENS_BOTH, SCREENS_MAIN, SCREENS_SECOND };
+static int screens;
+
+static struct OptionChoice screenChoices[] = {
+	{ "Both", SCREENS_BOTH },
+	{ "Main board", SCREENS_MAIN },
+	{ "Second board", SCREENS_SECOND },
+};
 
 // Applied at once: the line count follows the region (262 lines NTSC, 312 PAL and Dendy)
 static void readSpeedOptions(void) {
@@ -325,15 +352,17 @@ static void readVideoOptions(void) {
 	cropVertical = optionChoice(environ_cb, "armnes_crop_vertical", cropChoices, 5, 0);
 	cropHorizontal = optionChoice(environ_cb, "armnes_crop_horizontal", cropChoices, 5, 0);
 	filter = optionChoice(environ_cb, "armnes_filter", filterChoices, 3, COMPOSITE_OFF);
+	screens = optionChoice(environ_cb, "armnes_vs_screens", screenChoices, 3, SCREENS_BOTH);
 }
 
 static void geometry(struct retro_game_geometry* g) {
 	unsigned width = NES_WIDTH - 2 * cropHorizontal, height = NES_HEIGHT - 2 * cropVertical;
 	// NTSC pixels are 8:7; PAL's are 2950000:2128137
 	float pixel = nes.region == REGION_NTSC ? 8.0f / 7.0f : 2950000.0f / 2128137.0f;
-	g->base_width = filter ? width * COMPOSITE_SCALE : width;
+	unsigned count = nes.dual && screens == SCREENS_BOTH ? 2 : 1;
+	g->base_width = (filter ? width * COMPOSITE_SCALE : width) * count;
 	g->base_height = height;
-	g->max_width = COMPOSITE_WIDTH;
+	g->max_width = 2 * COMPOSITE_WIDTH;
 	g->max_height = NES_HEIGHT;
 	switch (aspect) {
 	case ASPECT_PAR:
@@ -347,6 +376,7 @@ static void geometry(struct retro_game_geometry* g) {
 		g->aspect_ratio = (4.0f / 3.0f) * (width / (float) NES_WIDTH) / (height / (float) NES_HEIGHT);
 		break;
 	}
+	g->aspect_ratio *= count;
 }
 
 // Palettes from FCEUmm's set, and one loaded from the system folder (64 colors, or 512 with the
@@ -573,7 +603,11 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {
 
 void retro_reset(void) {
 	if (loaded) {
-		nesReset(&nes, false);
+		if (nes.dual) {
+			nesResetDual(&nes, false);
+		} else {
+			nesReset(&nes, false);
+		}
 	}
 }
 
@@ -582,7 +616,7 @@ static bool allowOpposing;
 static unsigned turboFrame;
 static int fourPlayers, expansion, zapperAim, zapperSpeed = 100;
 static int vsSwap;
-static unsigned coinFrames[2];
+static unsigned coinFrames[4];
 static bool fdsFast;
 
 static void readInputOptions(void) {
@@ -593,11 +627,14 @@ static void readInputOptions(void) {
 	zapperSpeed = optionChoice(environ_cb, "armnes_zapper_sensitivity", sensitivityChoices, 7, 100);
 	fdsFast = optionChoice(environ_cb, "armnes_fds_fast", onOffChoices, 2, 0);
 	vsSwap = optionChoice(environ_cb, "armnes_vs_swap", autoOnOffChoices, 3, AUTO);
-	nes.input.vsDip = 0;
-	for (int i = 0; i < 8; i++) {
-		char key[24];
-		snprintf(key, sizeof(key), "armnes_vs_dip%d", i + 1);
-		nes.input.vsDip |= optionChoice(environ_cb, key, onOffChoices, 2, 0) << i;
+	for (int board = 0; board < 2; board++) {
+		struct InputConfig* in = board ? &sub.input : &nes.input;
+		in->vsDip = 0;
+		for (int i = 0; i < 8; i++) {
+			char key[24];
+			snprintf(key, sizeof(key), "armnes_vs_dip%d", board * 8 + i + 1);
+			in->vsDip |= optionChoice(environ_cb, key, onOffChoices, 2, 0) << i;
+		}
 	}
 	expansion = optionChoice(environ_cb, "armnes_expansion", expansionChoices, 5, AUTO);
 }
@@ -770,6 +807,16 @@ static void readDevices(void) {
 		}
 		in->vsService = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
 		in->mic = false;
+		// A DualSystem's second board: controllers 3 and 4
+		for (unsigned port = 0; nes.dual && port < 2; port++) {
+			uint8_t pad = readPad(port + 2);
+			bool held = pad & 0x04;
+			coinFrames[port + 2] = held ? coinFrames[port + 2] + 1 : 0;
+			sub.input.device[port] = DEVICE_PAD;
+			sub.input.vsCoin[port] = held && coinFrames[port + 2] <= 4;
+			sub.pads[port] = (pad & ~0x0C) | (pad & 0x08) >> 1;
+			sub.input.vsService = input_state_cb(2, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
+		}
 		if (vsSwap == AUTO ? named == 0x05 : vsSwap) {
 			uint8_t pad = nes.pads[0];
 			nes.pads[0] = nes.pads[1];
@@ -967,6 +1014,39 @@ static void swipeBarcode(void) {
 	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 }
 
+// A DualSystem: both boards' pictures side by side, or one, and their sound mixed
+static void runDual(void) {
+	static uint16_t screen[COMPOSITE_WIDTH * NES_HEIGHT];
+	nesRunFrameDual(&nes, subPicture);
+	checkOptions();
+	int scale = filter ? COMPOSITE_SCALE : 1;
+	int width = (NES_WIDTH - 2 * cropHorizontal) * scale, height = NES_HEIGHT - 2 * cropVertical;
+	int count = screens == SCREENS_BOTH ? 2 : 1;
+	for (int i = 0; i < count; i++) {
+		const struct NES* board = (i || screens == SCREENS_SECOND) ? &sub : &nes;
+		const uint16_t* picture = board == &sub ? subPicture : nes.frameBuffer;
+		if (filter) {
+			compositeFrame(filter, false, board->ppu.oddFrame, picture, screen);
+		} else {
+			for (int p = 0; p < NES_WIDTH * NES_HEIGHT; p++) {
+				screen[p] = palette565[picture[p] & 0x1FF];
+			}
+		}
+		for (int y = 0; y < height; y++) {
+			memcpy(video + (y * count + i) * width, screen + ((y + cropVertical) * NES_WIDTH + cropHorizontal) * scale,
+				width * sizeof(uint16_t));
+		}
+	}
+	video_cb(video, width * count, height, width * count * sizeof(uint16_t));
+	size_t samples = nes.audioCount < sub.audioCount ? nes.audioCount : sub.audioCount;
+	for (size_t i = 0; i < samples; i++) {
+		nes.audioOut[i] = (int16_t) ((nes.audioOut[i] + sub.audioOut[i]) / 2);
+	}
+	if (samples) {
+		audio_batch_cb(nes.audioOut, samples / 2);
+	}
+}
+
 void retro_run(void) {
 	input_poll_cb();
 	turboFrame++;
@@ -983,6 +1063,10 @@ void retro_run(void) {
 				nes.keys[key >> 3] |= 1 << (key & 7);
 			}
 		}
+	}
+	if (nes.dual) {
+		runDual();
+		return;
 	}
 	nesRunFrame(&nes);
 	for (int extra = 0; fdsFast && extra < 15 && fdsBusy(&nes); extra++) {
@@ -1086,13 +1170,14 @@ static bool jumperNoticed;
 static void checkOptions(void) {
 	bool updated = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
-		int oldAspect = aspect, oldVertical = cropVertical, oldHorizontal = cropHorizontal, oldFilter = filter;
+		int oldAspect = aspect, oldVertical = cropVertical, oldHorizontal = cropHorizontal, oldFilter = filter, oldScreens = screens;
 		readVideoOptions();
 		readSpeedOptions();
 		readPaletteOption();
 		readInputOptions();
 		readSoundOptions();
-		if (aspect != oldAspect || cropVertical != oldVertical || cropHorizontal != oldHorizontal || filter != oldFilter) {
+		if (aspect != oldAspect || cropVertical != oldVertical || cropHorizontal != oldHorizontal || filter != oldFilter ||
+			screens != oldScreens) {
 			struct retro_game_geometry g;
 			geometry(&g);
 			environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g);
@@ -1182,22 +1267,34 @@ bool retro_load_game(const struct retro_game_info* game) {
 	}
 	nes.jumper = optionChoice(environ_cb, "armnes_jumper", jumperChoices, 25, -1);
 	jumperNoticed = false;
-	if (!nesLoad(&nes, game->data, game->size)) {
-		if (nes.cart.mapper || nes.cart.prgSize) {
-			struct retro_message message = { "armNES: this game's board isn't supported yet", 360 };
-			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+	nesInit(&sub);
+	sub.audioOut = subAudio;
+	sub.audioCapacity = sizeof(subAudio) / sizeof(subAudio[0]);
+	memset(subPicture, 0, sizeof(subPicture));
+	if (!nesLoadDual(&nes, &sub, vsShared, game->data, game->size)) {
+		nesFree(&sub);
+		if (!nesLoad(&nes, game->data, game->size)) {
+			if (nes.cart.mapper || nes.cart.prgSize) {
+				struct retro_message message = { "armNES: this game's board isn't supported yet", 360 };
+				environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+			}
+			return false;
 		}
-		return false;
 	}
 	readVideoOptions();
 	int vsPpu = optionChoice(environ_cb, "armnes_vs_ppu", vsPpuChoices, 11, -1);
 	if (nes.cart.vs && vsPpu >= 0) {
-		nes.cart.vsPpu = (uint8_t) vsPpu;
+		nes.cart.vsPpu = sub.cart.vsPpu = (uint8_t) vsPpu;
 	}
 	int region = optionChoice(environ_cb, "armnes_region", regionChoices, 4, -1);
 	if (region >= 0 && region != (int) nes.region) {
 		nesSetRegion(&nes, region);
-		nesReset(&nes, true);
+		if (nes.dual) {
+			nesSetRegion(&sub, region);
+			nesResetDual(&nes, true);
+		} else {
+			nesReset(&nes, true);
+		}
 	}
 	readSpeedOptions();
 	readPaletteOption();
@@ -1220,6 +1317,9 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 
 void retro_unload_game(void) {
 	if (loaded) {
+		if (nes.dual) {
+			nesFree(&sub);
+		}
 		nesFree(&nes);
 		loaded = false;
 	}
@@ -1229,16 +1329,44 @@ unsigned retro_get_region(void) {
 	return nes.region == REGION_NTSC ? RETRO_REGION_NTSC : RETRO_REGION_PAL;
 }
 
+// A DualSystem's state: both boards', then the RAM they share, the second's last picture and the one
+// it's drawing (its frames run out of step with the main board's)
 size_t retro_serialize_size(void) {
-	return loaded ? nesStateSize(&nes) : 0;
+	if (!loaded) {
+		return 0;
+	}
+	return nes.dual ? nesStateSize(&nes) + nesStateSize(&sub) + sizeof(vsShared) + 2 * sizeof(subPicture) : nesStateSize(&nes);
 }
 
 bool retro_serialize(void* data, size_t size) {
-	return loaded && nesSaveState(&nes, data, size);
+	if (!loaded || size < retro_serialize_size()) {
+		return false;
+	}
+	if (!nes.dual) {
+		return nesSaveState(&nes, data, size);
+	}
+	size_t first = nesStateSize(&nes), second = nesStateSize(&sub);
+	memcpy((uint8_t*) data + first + second, vsShared, sizeof(vsShared));
+	memcpy((uint8_t*) data + first + second + sizeof(vsShared), subPicture, sizeof(subPicture));
+	memcpy((uint8_t*) data + first + second + sizeof(vsShared) + sizeof(subPicture), sub.frameBuffer, sizeof(subPicture));
+	return nesSaveState(&nes, data, first) && nesSaveState(&sub, (uint8_t*) data + first, second);
 }
 
 bool retro_unserialize(const void* data, size_t size) {
-	return loaded && nesLoadState(&nes, data, size);
+	if (!loaded || size < retro_serialize_size()) {
+		return false;
+	}
+	if (!nes.dual) {
+		return nesLoadState(&nes, data, size);
+	}
+	size_t first = nesStateSize(&nes), second = nesStateSize(&sub);
+	if (!nesLoadState(&nes, data, first) || !nesLoadState(&sub, (const uint8_t*) data + first, second)) {
+		return false;
+	}
+	memcpy(vsShared, (const uint8_t*) data + first + second, sizeof(vsShared));
+	memcpy(subPicture, (const uint8_t*) data + first + second + sizeof(vsShared), sizeof(subPicture));
+	memcpy(sub.frameBuffer, (const uint8_t*) data + first + second + sizeof(vsShared) + sizeof(subPicture), sizeof(subPicture));
+	return true;
 }
 
 void retro_cheat_reset(void) {

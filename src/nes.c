@@ -236,3 +236,93 @@ void nesRunFrame(struct NES* nes) {
 	nesApuSync(nes);
 	apuFlushAudio(nes);
 }
+
+// A DualSystem starts with the main board's $4016 bit 1 low and the second's high, so the second
+// board's IRQ is raised and it has the shared RAM (behaviour per Mesen)
+static void dualStart(struct NES* nes) {
+	struct NES* sub = nes->dual;
+	nes->inputState.lastWrite &= ~2;
+	sub->inputState.lastWrite |= 2;
+	nesSetIrq(sub, IRQ_DUAL, true);
+	nesSetIrq(nes, IRQ_DUAL, false);
+	nes->vsRamAccess = false;
+	sub->vsRamAccess = true;
+	for (int board = 0; board < 2; board++) {
+		struct NES* n = board ? sub : nes;
+		nesUnmapPrg(n, 0x6000, 0x2000);
+		n->readHooks |= 1 << 6 | 1 << 7;
+	}
+}
+
+// A VS. DualSystem image holds both boards: the first 32 KB of PRG and the first half of CHR are the
+// main board's, the rest the second's. They share 2 KB of RAM.
+bool nesLoadDual(struct NES* nes, struct NES* sub, uint8_t* shared, const uint8_t* data, size_t size) {
+	if (size < 16 || memcmp(data, "NES\x1A", 4) || (data[7] & 0x0F) != 0x09 || (data[13] >> 4) < 5 || (data[13] >> 4) > 6) {
+		return false;
+	}
+	size_t prg = (data[4] | (data[9] & 0x0F) << 8) * 0x4000, chr = (data[5] | (data[9] & 0xF0) << 4) * 0x2000;
+	if (prg <= 0x8000 || size < 16 + prg + chr) {
+		return false;
+	}
+	uint8_t* half = malloc(16 + prg + chr);
+	bool ok = half != NULL;
+	for (int board = 0; ok && board < 2; board++) {
+		size_t p = board ? prg - 0x8000 : 0x8000, c = chr / 2;
+		memcpy(half, data, 16);
+		half[4] = (uint8_t) (p / 0x4000);
+		half[5] = (uint8_t) (c / 0x2000);
+		half[9] = 0;
+		memcpy(half + 16, data + 16 + (board ? 0x8000 : 0), p);
+		memcpy(half + 16 + p, data + 16 + prg + (board ? c : 0), c);
+		ok = nesLoad(board ? sub : nes, half, 16 + p + c);
+	}
+	free(half);
+	if (!ok) {
+		return false;
+	}
+	memset(shared, 0, 0x800);
+	nes->dual = sub;
+	sub->dual = nes;
+	nes->vsShared = sub->vsShared = shared;
+	sub->vsSub = true;
+	dualStart(nes);
+	return true;
+}
+
+void nesResetDual(struct NES* nes, bool hard) {
+	nesReset(nes, hard);
+	nesReset(nes->dual, hard);
+	dualStart(nes);
+}
+
+// A frame of the main board of a VS. DualSystem, the second's CPU kept within a few cycles of the
+// first's (behaviour per Mesen). The boards' frames drift apart, so the second's last whole picture
+// goes to subPicture.
+void nesRunFrameDual(struct NES* nes, uint16_t* subPicture) {
+	struct NES* sub = nes->dual;
+	if (nes->cheatCount) {
+		nesCheatFrame(nes);
+	}
+	nes->frameDone = false;
+	nes->audioCount = sub->audioCount = 0;
+	while (!nes->frameDone) {
+		cpuStep(nes);
+		if (nes->ppuLag >= nes->ppuQuietTicks) {
+			nesPpuSync(nes);
+		}
+		while (sub->cpu.cycles + 5 < nes->cpu.cycles) {
+			cpuStep(sub);
+			if (sub->ppuLag >= sub->ppuQuietTicks) {
+				nesPpuSync(sub);
+			}
+			if (sub->frameDone) {
+				sub->frameDone = false;
+				memcpy(subPicture, sub->frameBuffer, NES_WIDTH * NES_HEIGHT * sizeof(uint16_t));
+			}
+		}
+	}
+	nesApuSync(nes);
+	apuFlushAudio(nes);
+	nesApuSync(sub);
+	apuFlushAudio(sub);
+}
