@@ -142,6 +142,10 @@ int main(int argc, char** argv) {
 			p = strchr(p, ',');
 			p = p ? p + 1 : NULL;
 		}
+		// NESRUN_RESET=frame: the reset button pressed then
+		if (getenv("NESRUN_RESET") && frame == atoi(getenv("NESRUN_RESET"))) {
+			nesReset(&nes, false);
+		}
 		// NESRUN_DISK="frame:side,...": the disk in the drive from then, -1 for none
 		for (const char* p = getenv("NESRUN_DISK"); p && *p;) {
 			int at = 0, side = 0;
