@@ -648,7 +648,18 @@ static void fceuCycle(struct NES* n) {
 	leave();
 }
 
+// FCEUmm's renderer shows its boards the name table and pattern fetches, not the attribute ones,
+// which come with A13 still high from the name table's: name table addresses go to the board as
+// A13 rises
+static bool busA13;
+
 static void fceuPpuBus(struct NES* n, uint16_t address) {
+	bool a13 = (address & 0x3000) == 0x2000;
+	bool was = busA13;
+	busA13 = a13;
+	if (a13 && was) {
+		return;
+	}
 	if (PPU_hook) {
 		enter(n);
 		PPU_hook(address);
