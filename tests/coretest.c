@@ -49,6 +49,10 @@ static bool environment(unsigned cmd, void* data) {
 		fprintf(stderr, "MESSAGE: %s\n", ((const struct retro_message*) data)->msg);
 		return true;
 	// CORETEST_SYSTEM=<dir>: where cores find BIOS files
+	// CORETEST_SAVE=<dir>: where cores keep saves (the system folder if not given)
+	case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+		*(const char**) data = getenv("CORETEST_SAVE") ? getenv("CORETEST_SAVE") : getenv("CORETEST_SYSTEM");
+		return *(const char**) data != NULL;
 	case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
 		*(const char**) data = getenv("CORETEST_SYSTEM");
 		return *(const char**) data != NULL;
@@ -246,13 +250,14 @@ int main(int argc, char** argv) {
 	SYM(retro_deinit);
 	SYM(retro_set_controller_port_device);
 	SYM(retro_get_memory_data);
+	// Some cores set up in retro_init what the other callbacks use
 	p_retro_set_environment(environment);
+	p_retro_init();
 	p_retro_set_video_refresh(video);
 	p_retro_set_audio_sample(audioSample);
 	p_retro_set_audio_sample_batch(audioBatch);
 	p_retro_set_input_poll(inputPoll);
 	p_retro_set_input_state(inputState);
-	p_retro_init();
 
 	FILE* f = fopen(argv[2], "rb");
 	if (!f) {
