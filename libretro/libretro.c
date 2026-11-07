@@ -91,13 +91,23 @@ static struct OptionChoice onOffChoices[] = {
 	{ "On", 1 },
 };
 
+#define AUTO (-1)
+
+static struct OptionChoice autoOnOffChoices[] = {
+	{ "Auto", AUTO },
+	{ "Off", 0 },
+	{ "On", 1 },
+};
+
 static struct OptionChoice fourPlayerChoices[] = {
+	{ "Auto", AUTO },
 	{ "Off", 0 },
 	{ "Four Score", 1 },
 	{ "Famicom adapter", 2 },
 };
 
 static struct OptionChoice expansionChoices[] = {
+	{ "Auto", AUTO },
 	{ "None", EXPANSION_NONE },
 	{ "Paddle", EXPANSION_PADDLE },
 	{ "Power Pad", EXPANSION_MAT },
@@ -204,14 +214,14 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, NULL, { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_four_players", "4 Players", NULL,
 		"Players 3 and 4 on controllers 3 and 4, through the NES Four Score or the Famicom's adapter on "
-		"the expansion port. Games read one or the other.",
-		NULL, NULL, { { "Off", NULL }, { "Four Score", NULL }, { "Famicom adapter", NULL }, { NULL, NULL } }, "Off" },
+		"the expansion port. Games read one or the other. Auto uses the one an NES 2.0 header names.",
+		NULL, NULL, { { "Auto", NULL }, { "Off", NULL }, { "Four Score", NULL }, { "Famicom adapter", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_expansion", "Famicom Expansion Port", NULL,
 		"A device in the Famicom's expansion port. The paddle follows the mouse; the Power Pad (the "
 		"Famicom's, read by rows) takes controller 1's buttons; the keyboard takes the keyboard (turn on "
-		"Game Focus).",
-		NULL, NULL, { { "None", NULL }, { "Paddle", NULL }, { "Power Pad", NULL },
-		{ "Keyboard", NULL }, { NULL, NULL } }, "None" },
+		"Game Focus). Auto uses the one an NES 2.0 header names.",
+		NULL, NULL, { { "Auto", NULL }, { "None", NULL }, { "Paddle", NULL }, { "Power Pad", NULL },
+		{ "Keyboard", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_zapper_aim", "Zapper Aim", NULL,
 		"How the Zapper aims. Light gun points where the light gun (or the mouse pointer) is. Mouse moves "
 		"a crosshair; the left button fires. Right stick (absolute) puts the crosshair where the stick "
@@ -240,8 +250,9 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "vs", { { "Auto", NULL }, { "RP2C03", NULL }, { "RP2C04-0001", NULL }, { "RP2C04-0002", NULL }, { "RP2C04-0003", NULL },
 		{ "RP2C04-0004", NULL }, { "RC2C05-01", NULL }, { "RC2C05-02", NULL }, { "RC2C05-03", NULL }, { "RC2C05-04", NULL },
 		{ "RC2C05-05", NULL }, { NULL, NULL } }, "Auto" },
-	{ "armnes_vs_swap", "VS. System > Swap Controllers", "Swap Controllers", "Some cabinets wire player 1 to the second port.",
-		NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_swap", "VS. System > Swap Controllers", "Swap Controllers",
+		"Some cabinets wire player 1 to the second port. Auto follows an NES 2.0 header.",
+		NULL, "vs", { { "Auto", NULL }, { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_vs_dip1", "VS. System > DIP Switch 1", "DIP Switch 1", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_vs_dip2", "VS. System > DIP Switch 2", "DIP Switch 2", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_vs_dip3", "VS. System > DIP Switch 3", "DIP Switch 3", NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
@@ -561,17 +572,17 @@ static bool fdsFast;
 static void readInputOptions(void) {
 	turboPeriod = optionChoice(environ_cb, "armnes_turbo", turboChoices, 6, 4);
 	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
-	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 3, 0);
+	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 4, AUTO);
 	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 4, AIM_LIGHT_GUN);
 	fdsFast = optionChoice(environ_cb, "armnes_fds_fast", onOffChoices, 2, 0);
-	vsSwap = optionChoice(environ_cb, "armnes_vs_swap", onOffChoices, 2, 0);
+	vsSwap = optionChoice(environ_cb, "armnes_vs_swap", autoOnOffChoices, 3, AUTO);
 	nes.input.vsDip = 0;
 	for (int i = 0; i < 8; i++) {
 		char key[24];
 		snprintf(key, sizeof(key), "armnes_vs_dip%d", i + 1);
 		nes.input.vsDip |= optionChoice(environ_cb, key, onOffChoices, 2, 0) << i;
 	}
-	expansion = optionChoice(environ_cb, "armnes_expansion", expansionChoices, 4, EXPANSION_NONE);
+	expansion = optionChoice(environ_cb, "armnes_expansion", expansionChoices, 5, AUTO);
 }
 
 static uint8_t readPad(unsigned port) {
@@ -695,8 +706,16 @@ static void readDevices(void) {
 	crossShown = false;
 	in->device[0] = portDevice[0];
 	in->device[1] = portDevice[1];
-	in->fourScore = fourPlayers == 1;
-	in->expansion = fourPlayers == 2 ? EXPANSION_HORI : (uint8_t) expansion;
+	// Auto: what an NES 2.0 header's default expansion device names
+	uint8_t named = nes.cart.nes2 ? nes.cart.header[15] & 0x3F : 0;
+	int players = fourPlayers != AUTO ? fourPlayers : named == 0x02 ? 1 : (named == 0x03 || named == 0x06) ? 2 : 0;
+	int port = expansion;
+	if (port == AUTO) {
+		port = named == 0x10 || named == 0x11 ? EXPANSION_PADDLE : named == 0x0D || named == 0x0E ? EXPANSION_MAT
+			: named == 0x23 ? EXPANSION_KEYBOARD : EXPANSION_NONE;
+	}
+	in->fourScore = players == 1;
+	in->expansion = players == 2 ? EXPANSION_HORI : (uint8_t) port;
 	for (unsigned port = 0; port < 2; port++) {
 		nes.pads[port] = in->device[port] == DEVICE_PAD ? readPad(port) : 0;
 		in->pads[port] = fourPlayers ? readPad(port + 2) : 0;
@@ -713,7 +732,7 @@ static void readDevices(void) {
 		}
 		in->vsService = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
 		in->mic = false;
-		if (vsSwap) {
+		if (vsSwap == AUTO ? named == 0x05 : vsSwap) {
 			uint8_t pad = nes.pads[0];
 			nes.pads[0] = nes.pads[1];
 			nes.pads[1] = pad;
