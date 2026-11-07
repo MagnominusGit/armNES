@@ -334,15 +334,25 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 		videoHash = audioHash = 0;
+		static uint32_t frameHashes[120];
+		bool told = false;
 		for (frame = start; frame < start + 120; frame++) {
 			p_retro_run();
+			// The first frame where the replay's picture differs, and where in it
+			uint32_t* h = &frameHashes[frame - start];
+			if (pass && *h != videoHash && !told) {
+				printf("replay picture differs from frame %u\n", frame);
+				told = true;
+			}
+			*h = videoHash;
 		}
 		hashes[pass][0] = videoHash;
 		hashes[pass][1] = audioHash;
 	}
 	bool same = hashes[0][0] == hashes[1][0] && hashes[0][1] == hashes[1][1];
 	printf("%s %ux%u aspect %.4f %.4f fps %.0f Hz, state %zu bytes, %zu audio frames, replay %s\n", same ? "OK" : "FAIL",
-		frameWidth, frameHeight, av.geometry.aspect_ratio, av.timing.fps, av.timing.sample_rate, stateSize, audioFrames, same ? "same" : "DIFFERS");
+		frameWidth, frameHeight, av.geometry.aspect_ratio, av.timing.fps, av.timing.sample_rate, stateSize, audioFrames,
+		same ? "same" : hashes[0][0] != hashes[1][0] ? "DIFFERS (picture)" : "DIFFERS (sound)");
 	// CORETEST_RAM=n: the first n bytes of the console's RAM
 	if (getenv("CORETEST_RAM")) {
 		const uint8_t* ram = p_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
