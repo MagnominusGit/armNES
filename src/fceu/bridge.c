@@ -853,8 +853,13 @@ static void power(struct NES* n) {
 	// The board's battery RAM (or flash, or CHR RAM) becomes the cartridge's. Some boards' buffers are
 	// static or their ROM, so the board keeps them.
 	if (info.SaveGame[0] && info.SaveGameLen[0] && info.SaveGame[0] != cart->wram) {
+		uint8_t* save = info.SaveGame[0];
+		bool rom = (save >= PRGptr[0] && save < PRGptr[0] + PRGsize[0]) || (save >= CHRptr[0] && save < CHRptr[0] + CHRsize[0]);
 		if (kept) {
-			memcpy(info.SaveGame[0], kept, keptSize < info.SaveGameLen[0] ? keptSize : info.SaveGameLen[0]);
+			memcpy(save, kept, keptSize < info.SaveGameLen[0] ? keptSize : info.SaveGameLen[0]);
+		} else if (!rom) {
+			// Battery RAM starts as the cart's does ($FF), unlike flash or CHR RAM
+			memcpy(save, cart->wram, cart->wramSize < info.SaveGameLen[0] ? cart->wramSize : info.SaveGameLen[0]);
 		}
 		if (!cart->wramBorrowed) {
 			free(cart->wram);
