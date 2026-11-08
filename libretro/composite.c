@@ -9,10 +9,9 @@
 
 // The picture as a TV decodes the console's composite signal. The PPU draws each pixel as a square
 // wave between two levels, 12 samples to a cycle of the color carrier: 8 samples a pixel on NTSC, 10
-// on PAL. The TV takes luma as the average of the signal and itself half a carrier cycle later, which
-// cancels the carrier as a notch filter does and keeps the edges sharp (S-Video's luma has no carrier
-// and is only smoothed), and chroma with a filter two cycles long; that leaves the fringes and dot
-// crawl. PAL mirrors the carrier's phase every other line, and the TV
+// on PAL. The TV takes chroma with a filter two carrier cycles long, and luma with a notch filter, as
+// TVs of the time did: the signal less its carrier band, which keeps broad detail sharp and leaves the
+// fringes and dot crawl at edges (S-Video's luma has no carrier and is only smoothed). PAL mirrors the carrier's phase every other line, and the TV
 // averages each line's color with the line before, which blurs color vertically and cancels hue
 // errors.
 //
@@ -29,12 +28,25 @@
 #define PAD 6
 // White is 4080; about four pixels add up at an output pixel, which stays within 16 bits
 #define ONE 4080
+// The triangle's response at the carrier: sinc(1/3) squared
+#define NOTCH 0.68389f
 
 static int16_t ntscKernel[512][3][PADDED];
 static int16_t palLuma[512][6][PADDED];
 static int16_t palChroma[512][6][2][PADDED];
 static const int16_t blank[PADDED];
 static int built = -1;
+
+// How much of the luma triangle (8 samples wide, area 1) lies before x
+static float triangleArea(float x) {
+	if (x <= -4) {
+		return 0;
+	}
+	if (x >= 4) {
+		return 1;
+	}
+	return x < 0 ? (x + 4) * (x + 4) / 32 : 1 - (4 - x) * (4 - x) / 32;
+}
 
 static bool on(int color, int phase) {
 	return (color + phase) % 12 < 6;
@@ -81,9 +93,14 @@ static void decode(int entry, int phase, bool pal, bool mirrored, bool svideo, f
 			float distance = fabsf(k + 0.5f - center);
 			float s = signal[k];
 			if (!svideo) {
-				// The two halves of the comb, each interpolated at its place between samples
-				float w = 1 - fabsf(distance - 3);
-				y += w > 0 ? s * w / 2 : 0;
+				// Luma: the signal smoothed by a triangle 8 samples wide (to the TV's bandwidth),
+				// less the carrier band rebuilt from two cycles around (the notch), scaled to what
+				// the smoothing leaves of the carrier so a flat color cancels. Each sample holds its
+				// level for its whole length, so the filter is summed across it.
+				float a = k - center, b = a + 1;
+				float from = fmaxf(a, -12), to = fminf(b, 12);
+				float band = to > from ? NOTCH * (sinf(3.14159265f * to / 6) - sinf(3.14159265f * from / 6)) / (12 * 3.14159265f / 6) : 0;
+				y += s * (triangleArea(b) - triangleArea(a) - band);
 			} else if (distance < 3) {
 				y += mean / 6;
 			}
