@@ -21,8 +21,9 @@ ones come from FCEUmm. See Credits for the full list.
 - NES and Famicom games: `.nes` (iNES and NES 2.0) and `.unf`/`.unif`, with hundreds of mappers,
   including unlicensed boards and multicarts. Carts with solder pads or DIP switches that pick their
   menu or language get the Cart Jumper option.
-- Famicom Disk System games (`.fds`), with `disksys.rom` in the frontend's system folder. Disk sides
-  change through the frontend's disc menu, and the core turns to the side the BIOS asks for.
+- Famicom Disk System games (`.fds`), with `disksys.rom` in the frontend's system folder. The core
+  turns to the side the BIOS asks for; L3 takes the disk out and puts the next side in, as does the
+  frontend's disc menu.
 - VS. System and PlayChoice-10 arcade games, from MAME's `.zip` or `.7z` sets (a clone finds its
   parent beside it), with each board's PPU colors, protection chips, coins and DIP switches. A
   DualSystem's two boards run together, their screens side by side. The armNES app opens these sets.
@@ -41,7 +42,8 @@ ones come from FCEUmm. See Credits for the full list.
 | R2 | Fast-forward while held |
 | L2 | Zapper fine aim: the further it's pulled, the slower the crosshair moves |
 | R3 | Zapper: centers the crosshair |
-| L3 | VS. System service button; on controller 2, the Famicom's microphone; on Datach games, a barcode swipe |
+| L3 | On Disk System games, takes the disk out, then puts the next side in; VS. System service button; on controller 2, the Famicom's microphone; on Datach games, a barcode swipe |
+| Left stick | The D-pad too, unless Left Stick as D-Pad is off |
 
 Plug in a Zapper, Arkanoid paddle or Power Pad through the frontend's controller port types. The
 Zapper aims with a light gun or mouse pointer, a mouse-moved crosshair, or the right stick, and a
@@ -60,7 +62,7 @@ Sound only for carts with their own sound chip, and the Zapper options only with
 | System | Region (Auto, NTSC, PAL, Dendy), Overclock, Disk System Fast Loading, Cart Jumper |
 | Video | Palette, NTSC/PAL Filter (Composite, S-Video), Scanlines, Sprite Limit, Aspect Ratio, Crop Top and Bottom, Crop Sides |
 | Audio | Volume and stereo position for each channel, and for the cart's sound chip |
-| Input | Turbo Speed, Allow Opposing Directions, 4 Players, Famicom Expansion Port, Zapper Aim, Zapper Sensitivity |
+| Input | Turbo Speed, Allow Opposing Directions, Left Stick as D-Pad, 4 Players, Famicom Expansion Port, Zapper Aim, Zapper Sensitivity |
 | VS. System | PPU, Swap Controllers, DIP switches, DualSystem Screens |
 
 The NTSC/PAL filter decodes the console's video signal as a TV of the time did: Composite with its

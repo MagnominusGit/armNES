@@ -261,6 +261,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_opposing", "Allow Opposing Directions", NULL,
 		"Left and right (or up and down) held together, which a real pad can't do. A few games glitch.",
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_left_stick_dpad", "Left Stick as D-Pad", NULL, "The left stick presses the D-pad too.",
+		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "On" },
 	{ "armnes_four_players", "4 Players", NULL,
 		"Players 3 and 4 through the NES Four Score or the Famicom's adapter. Auto follows an NES 2.0 header.",
 		NULL, "input", { { "Auto", NULL }, { "Off", NULL }, { "Four Score", NULL }, { "Famicom adapter", NULL }, { NULL, NULL } }, "Auto" },
@@ -321,6 +323,7 @@ static struct retro_core_options_v2 options = { categories, optionDefinitions };
 
 static void checkOptions(void);
 static bool showOptions(void);
+static void swapDisk(void);
 
 // The picture: its shape and how much of the edges is cropped
 static int aspect, cropVertical, cropHorizontal, filter, scanlines = 256;
@@ -693,6 +696,7 @@ void retro_reset(void) {
 
 static int turboPeriod = 4;
 static bool allowOpposing;
+static bool leftStickDpad;
 static unsigned turboFrame;
 static int fourPlayers, expansion, zapperAim, zapperSpeed = 100;
 static int vsSwap;
@@ -702,6 +706,7 @@ static bool fdsFast;
 static void readInputOptions(void) {
 	turboPeriod = optionChoice(environ_cb, "armnes_turbo", turboChoices, 6, 4);
 	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
+	leftStickDpad = optionChoice(environ_cb, "armnes_left_stick_dpad", onOffChoices, 2, 1);
 	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 4, AUTO);
 	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 4, AIM_LIGHT_GUN);
 	zapperSpeed = optionChoice(environ_cb, "armnes_zapper_sensitivity", sensitivityChoices, 7, 100);
@@ -739,6 +744,11 @@ static uint8_t readPad(unsigned port) {
 		if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y)) {
 			pad |= 0x02;
 		}
+	}
+	if (leftStickDpad) {
+		int x = input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+		int y = input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
+		pad |= (y < -0x4000 ? 0x10 : 0) | (y > 0x4000 ? 0x20 : 0) | (x < -0x4000 ? 0x40 : 0) | (x > 0x4000 ? 0x80 : 0);
 	}
 	// A pad can't press opposite directions at once
 	if (!allowOpposing) {
@@ -1042,8 +1052,8 @@ static void runNsf(void) {
 	}
 }
 
-// The Datach's reader: L3 swipes the next code from datach.txt in the system folder, one to a line,
-// or any valid one, as games take a product's barcode
+// L3: in a Disk System game, the disk swap; on the Datach's reader, a swipe of the next code from
+// datach.txt in the system folder, one to a line, or any valid one, as games take a product's barcode
 static unsigned barcodeLine;
 static bool lastSwipe;
 
@@ -1051,6 +1061,9 @@ static void swipeBarcode(void) {
 	bool held = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3);
 	bool pressed = held && !lastSwipe;
 	lastSwipe = held;
+	if (pressed && nes.cart.diskSides) {
+		swapDisk();
+	}
 	if (!pressed || nes.cart.mapper != 157) {
 		return;
 	}
@@ -1406,6 +1419,25 @@ static struct retro_disk_control_callback diskControl = {
 	setEjectState, getEjectState, getImageIndex, setImageIndex, getNumImages, NULL, NULL,
 };
 
+// L3 in a Disk System game: takes the disk out, then puts the next side in
+static void swapDisk(void) {
+	char text[40];
+	if (fdsSide(&nes) >= 0) {
+		setEjectState(true);
+		snprintf(text, sizeof(text), "Disk out");
+	} else {
+		diskIndex = (diskIndex + 1) % (unsigned) nes.cart.diskSides;
+		setEjectState(false);
+		if (nes.cart.diskSides > 2) {
+			snprintf(text, sizeof(text), "Disk %u side %c in", diskIndex / 2 + 1, 'A' + diskIndex % 2);
+		} else {
+			snprintf(text, sizeof(text), "Side %c in", 'A' + diskIndex % 2);
+		}
+	}
+	struct retro_message message = { text, 120 };
+	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+}
+
 // Options changed while running: the picture's shape at once; a cart's solder pads or DIP switches
 // restart the game. Carts with them say so once the game looks at them.
 static bool jumperNoticed;
@@ -1487,7 +1519,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		}
 	}
 	descriptors[count++] = (struct retro_input_descriptor) { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Microphone" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "VS. System: Service; Datach: Swipe Barcode" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Disk System: Swap Disk; VS. System: Service; Datach: Swipe Barcode" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Zapper Aim X" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
