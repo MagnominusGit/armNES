@@ -237,7 +237,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "video", { { "4:3", NULL }, { "8:7 PAR", NULL }, { "1:1", NULL }, { NULL, NULL } }, "4:3" },
 	{ "armnes_crop_vertical", "Crop Top and Bottom", NULL,
 		"Pixels hidden at the top and bottom, as a TV's overscan hid them.",
-		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
+		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "8" },
 	{ "armnes_crop_horizontal", "Crop Sides", NULL,
 		"Pixels hidden at the left and right edges.",
 		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
@@ -362,7 +362,7 @@ static void readSoundOptions(void) {
 
 static void readVideoOptions(void) {
 	aspect = optionChoice(environ_cb, "armnes_aspect", aspectChoices, 3, ASPECT_TV);
-	cropVertical = optionChoice(environ_cb, "armnes_crop_vertical", cropChoices, 5, 0);
+	cropVertical = optionChoice(environ_cb, "armnes_crop_vertical", cropChoices, 5, 8);
 	cropHorizontal = optionChoice(environ_cb, "armnes_crop_horizontal", cropChoices, 5, 0);
 	filter = nes.cart.vs || nes.cart.playchoice ? COMPOSITE_OFF : optionChoice(environ_cb, "armnes_filter", filterChoices, 3, COMPOSITE_OFF);
 	scanlines = optionChoice(environ_cb, "armnes_scanlines", scanlineChoices, 4, 256);
