@@ -271,8 +271,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		{ "Keyboard", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_zapper_aim", "Zapper Aim", NULL,
 		"A light gun or mouse pointer, a mouse-moved crosshair (left button fires, right off the screen), "
-		"or the right stick pointing (absolute) or moving (pan) it (R fires, R3 off the screen). Touching "
-		"the screen always aims and fires.",
+		"or the right stick pointing (absolute) or moving (pan) it (R fires, L off the screen). R3 centers "
+		"the crosshair. Touching the screen always aims and fires.",
 		NULL, "input", { { "Light gun", NULL }, { "Mouse", NULL }, { "Right stick (absolute)", NULL },
 		{ "Right stick (pan)", NULL }, { NULL, NULL } }, "Light gun" },
 	{ "armnes_zapper_sensitivity", "Zapper Sensitivity", NULL,
@@ -313,7 +313,7 @@ static struct retro_core_option_v2_category categories[] = {
 	{ "video", "Video", "Colors, the TV filter, sprites and the picture's shape and edges." },
 	{ "audio", "Audio", "Each channel's volume and where it sits between the speakers. The console mixes in mono." },
 	{ "input", "Input", "Turbo, extra players, the expansion port and the Zapper." },
-	{ "vs", "VS. System", "The arcade board's PPU, controller wiring and DIP switches. Select puts in a coin, controller 1's L is the service button. A DualSystem's second board takes controllers 3 and 4 (controller 3's L for its service button)." },
+	{ "vs", "VS. System", "The arcade board's PPU, controller wiring and DIP switches. Select puts in a coin, controller 1's L3 is the service button. A DualSystem's second board takes controllers 3 and 4 (controller 3's L3 for its service button)." },
 	{ NULL, NULL, NULL },
 };
 
@@ -823,11 +823,15 @@ static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 			crossY += abs(y) > 0x1000 ? y / 32 * speed / 25600 : 0;
 		}
 		*trigger |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R) != 0;
-		*away |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3) != 0;
+		*away |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L) != 0;
 		break;
 	}
 	default:
 		return false;
+	}
+	if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)) {
+		crossX = (left + right) / 2;
+		crossY = (top + bottom) / 2;
 	}
 	crossX = crossX < left ? left : crossX > right ? right : crossX;
 	crossY = crossY < top ? top : crossY > bottom ? bottom : crossY;
@@ -875,7 +879,7 @@ static void readDevices(void) {
 		nes.pads[port] = in->device[port] == DEVICE_PAD ? readPad(port) : 0;
 		in->pads[port] = fourPlayers ? readPad(port + 2) : 0;
 	}
-	in->mic = in->device[1] == DEVICE_PAD && input_state_cb(1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
+	in->mic = in->device[1] == DEVICE_PAD && input_state_cb(1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3);
 	if (nes.cart.vs) {
 		// Select drops a coin in that player's slot, held a few frames as a coin takes to fall. The
 		// cabinet's start buttons report where a pad's Select does.
@@ -885,7 +889,7 @@ static void readDevices(void) {
 			in->vsCoin[port] = held && coinFrames[port] <= 4;
 			nes.pads[port] = (nes.pads[port] & ~0x0C) | (nes.pads[port] & 0x08) >> 1;
 		}
-		in->vsService = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
+		in->vsService = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3);
 		in->mic = false;
 		// A DualSystem's second board: controllers 3 and 4
 		for (unsigned port = 0; nes.dual && port < 2; port++) {
@@ -895,7 +899,7 @@ static void readDevices(void) {
 			sub.input.device[port] = DEVICE_PAD;
 			sub.input.vsCoin[port] = held && coinFrames[port + 2] <= 4;
 			sub.pads[port] = (pad & ~0x0C) | (pad & 0x08) >> 1;
-			sub.input.vsService = input_state_cb(2, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
+			sub.input.vsService = input_state_cb(2, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3);
 		}
 		if (vsSwap == AUTO ? named == 0x05 : vsSwap) {
 			uint8_t pad = nes.pads[0];
@@ -1038,13 +1042,13 @@ static void runNsf(void) {
 	}
 }
 
-// The Datach's reader: L swipes the next code from datach.txt in the system folder, one to a line,
+// The Datach's reader: L3 swipes the next code from datach.txt in the system folder, one to a line,
 // or any valid one, as games take a product's barcode
 static unsigned barcodeLine;
 static bool lastSwipe;
 
 static void swipeBarcode(void) {
-	bool held = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L);
+	bool held = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3);
 	bool pressed = held && !lastSwipe;
 	lastSwipe = held;
 	if (!pressed || nes.cart.mapper != 157) {
@@ -1475,19 +1479,20 @@ bool retro_load_game(const struct retro_game_info* game) {
 		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select (VS. System: Coin)" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
 		{ RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" }, { RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
 	};
-	static struct retro_input_descriptor descriptors[4 * 10 + 9];
+	static struct retro_input_descriptor descriptors[4 * 10 + 10];
 	unsigned count = 0;
 	for (unsigned port = 0; port < 4; port++) {
 		for (unsigned i = 0; i < 10; i++) {
 			descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_JOYPAD, 0, buttons[i].id, buttons[i].name };
 		}
 	}
-	descriptors[count++] = (struct retro_input_descriptor) { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Microphone" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "VS. System: Service; Datach: Swipe Barcode" };
+	descriptors[count++] = (struct retro_input_descriptor) { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Microphone" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "VS. System: Service; Datach: Swipe Barcode" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Zapper Aim X" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Zapper Trigger Off Screen" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Zapper Trigger Off Screen" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Zapper: Center Crosshair" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Zapper Fine Aim" };
 	descriptors[count] = (struct retro_input_descriptor) { 0, 0, 0, 0, NULL };

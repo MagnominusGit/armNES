@@ -26,10 +26,10 @@ set(APP_SYSTEM_fds "Famicom Disk System" famicomdisksystem "famicom disk system"
 # The keyboard's default keys, as SDL names them (NONE for none), in libretro's order: B, Y, Select,
 # Start, Up, Down, Left, Right, A, X, L, R, L2, R2, L3, R3. APP_BUTTON_NAMES names them in the menus,
 # - for one the core doesn't use, and APP_BUTTON_ORDER lists them by libretro's numbers.
-# Z and X are B and A, A and S their turbo buttons.
-set(APP_KEYS Z A BACKSPACE RETURN UP DOWN LEFT RIGHT X S Q W 1 2 NONE NONE)
-set(APP_BUTTON_NAMES B "Turbo B" Select Start "D-Pad Up" "D-Pad Down" "D-Pad Left" "D-Pad Right" A "Turbo A" L R L2 R2 - -)
-# A, B, their turbo buttons, Select, Start, the D-pad, then L, R, L2 and R2.
+# Z and X are B and A, A and S their turbo buttons, 1 to 4 L2 to R3.
+set(APP_KEYS Z A BACKSPACE RETURN UP DOWN LEFT RIGHT X S Q W 1 2 3 4)
+set(APP_BUTTON_NAMES B "Turbo B" Select Start "D-Pad Up" "D-Pad Down" "D-Pad Left" "D-Pad Right" A "Turbo A" L R L2 R2 L3 R3)
+# A, B, their turbo buttons, Select, Start, the D-pad, then L, R, L2, R2, L3 and R3.
 set(APP_BUTTON_ORDER 8 0 9 1 2 3 4 5 6 7 10 11 12 13 14 15)
 # Help texts that name the console's buttons and what the app draws over its picture.
 set(APP_HELP_SWAP "Off: A is the right button, as on an NES controller. On: A and B swap, and X and Y.")
