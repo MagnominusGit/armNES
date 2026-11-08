@@ -38,6 +38,7 @@ ones come from FCEUmm. See Credits for the full list.
 | X, Y | Turbo A, turbo B, at the Turbo Speed option's rate |
 | L | VS. System service button; on controller 2, the Famicom's microphone; on Datach games, a barcode swipe |
 | R | Zapper trigger, when it aims with the right stick |
+| R3 | Zapper trigger off the screen, when it aims with the right stick |
 | R2 | Fast-forward while held |
 | L2 | Zapper fine aim: the further it's pulled, the slower the crosshair moves |
 

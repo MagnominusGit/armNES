@@ -161,11 +161,12 @@ static void inputPoll(void) {
 // CORETEST_AIM="x,y": a light gun held there (-32767 to 32767), trigger twice a second
 // CORETEST_MOUSE="n[,m]": the mouse moves n a frame, right for 2 seconds then left, and m down; left
 // button twice a second
-// CORETEST_R2="from,to": R2 held on controller 1 from one frame to before the other
+// CORETEST_HOLD="button,from,to": a button on controller 1, by libretro's number, held from one
+// frame to before the other
 static int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) {
-	if (getenv("CORETEST_R2") && port == 0 && device == RETRO_DEVICE_JOYPAD && id == RETRO_DEVICE_ID_JOYPAD_R2) {
-		unsigned from = 0, to = 0;
-		sscanf(getenv("CORETEST_R2"), "%u,%u", &from, &to);
+	unsigned button = 0, from = 0, to = 0;
+	if (getenv("CORETEST_HOLD") && sscanf(getenv("CORETEST_HOLD"), "%u,%u,%u", &button, &from, &to) == 3 && port == 0 &&
+		device == RETRO_DEVICE_JOYPAD && id == button) {
 		return frame >= from && frame < to;
 	}
 	if (device == RETRO_DEVICE_LIGHTGUN && getenv("CORETEST_AIM")) {

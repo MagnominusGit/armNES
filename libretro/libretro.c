@@ -270,8 +270,9 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "input", { { "Auto", NULL }, { "None", NULL }, { "Paddle", NULL }, { "Power Pad", NULL },
 		{ "Keyboard", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_zapper_aim", "Zapper Aim", NULL,
-		"A light gun or mouse pointer, a mouse-moved crosshair (left button fires), or the right stick "
-		"pointing (absolute) or moving (pan) it, R firing. Touching the screen always aims and fires.",
+		"A light gun or mouse pointer, a mouse-moved crosshair (left button fires, right off the screen), "
+		"or the right stick pointing (absolute) or moving (pan) it (R fires, R3 off the screen). Touching "
+		"the screen always aims and fires.",
 		NULL, "input", { { "Light gun", NULL }, { "Mouse", NULL }, { "Right stick (absolute)", NULL },
 		{ "Right stick (pan)", NULL }, { NULL, NULL } }, "Light gun" },
 	{ "armnes_zapper_sensitivity", "Zapper Sensitivity", NULL,
@@ -822,6 +823,7 @@ static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 			crossY += abs(y) > 0x1000 ? y / 32 * speed / 25600 : 0;
 		}
 		*trigger |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R) != 0;
+		*away |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3) != 0;
 		break;
 	}
 	default:
@@ -1473,7 +1475,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select (VS. System: Coin)" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
 		{ RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" }, { RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
 	};
-	static struct retro_input_descriptor descriptors[4 * 10 + 8];
+	static struct retro_input_descriptor descriptors[4 * 10 + 9];
 	unsigned count = 0;
 	for (unsigned port = 0; port < 4; port++) {
 		for (unsigned i = 0; i < 10; i++) {
@@ -1485,6 +1487,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Zapper Aim X" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Zapper Trigger Off Screen" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Zapper Fine Aim" };
 	descriptors[count] = (struct retro_input_descriptor) { 0, 0, 0, 0, NULL };
