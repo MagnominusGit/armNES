@@ -25,8 +25,8 @@ ones come from FCEUmm. See Credits for the full list.
   change through the frontend's disc menu, and the core turns to the side the BIOS asks for.
 - VS. System and PlayChoice-10 arcade games, from MAME's `.zip` or `.7z` sets (a clone finds its
   parent beside it), with each board's PPU colors, protection chips, coins and DIP switches. A
-  DualSystem's two boards run together, their screens side by side. The armNES app opens these sets;
-  RetroArch unpacks archives itself and can't, so there MAME or FBNeo runs them.
+  DualSystem's two boards run together, their screens side by side. The armNES app opens these sets.
+  In RetroArch, use the `armnes_arcade` core for them (see below).
 - NSF music files, with a small player.
 - Games inside `.zip` and `.7z` archives. RetroArch unpacks them, so achievements recognize the game.
 
@@ -101,6 +101,10 @@ keeps its settings in `~/.config/armnes` and its saves, states, screenshots and 
     cmake --build build --target armnes_libretro
 
 This makes `armnes_libretro.so`; `libretro/armnes_libretro.info` goes in RetroArch's info directory.
+The `armnes_arcade_libretro` target builds the same core for RetroArch's arcade folders: `armnes`
+lets RetroArch unpack archives, so achievements recognize zipped games, while `armnes_arcade` takes
+`.zip` and `.7z` files unopened, so MAME's VS. System and PlayChoice-10 sets load. Each release
+carries both cores for x86-64 and 64-bit ARM Linux, with the AppImages and the APK.
 With `-DARMNES_APP=ON`, the `armnes-app` target builds the standalone app (SDL2 needed).
 `armulators/package/appimage/build.sh` and `package.sh` make the AppImages in a Debian 11 container,
 and `armulators/package/android/build.sh` makes the APK.

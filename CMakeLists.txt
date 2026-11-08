@@ -80,6 +80,17 @@ target_link_libraries(armnes_libretro armnes armulators-libretro retro-archive Z
 set_target_properties(armnes_libretro PROPERTIES PREFIX "")
 target_link_options(armnes_libretro PRIVATE -Wl,--version-script=${ARMULATORS_LINK_SCRIPT} -Wl,--no-undefined)
 
+# armnes_arcade, the same core for RetroArch's arcade folders: it takes .zip and .7z unopened, so MAME's
+# VS. System and PlayChoice-10 sets load (armnes leaves archives to RetroArch, for achievements)
+add_library(armnes_arcade_libretro SHARED libretro/libretro.c libretro/composite.c)
+target_compile_definitions(armnes_arcade_libretro PRIVATE ARMNES_ARCADE)
+if(ANDROID)
+	set_target_properties(armnes_arcade_libretro PROPERTIES OUTPUT_NAME armnes_arcade_libretro_android)
+endif()
+target_link_libraries(armnes_arcade_libretro armnes armulators-libretro retro-archive ZLIB::ZLIB m)
+set_target_properties(armnes_arcade_libretro PROPERTIES PREFIX "")
+target_link_options(armnes_arcade_libretro PRIVATE -Wl,--version-script=${ARMULATORS_LINK_SCRIPT} -Wl,--no-undefined)
+
 # armnes, the standalone app: Armulators' (armulators/app) with the core linked in, named by app.cmake
 option(ARMNES_APP "Build armnes, the standalone SDL2 app" OFF)
 if(ARMNES_APP)
