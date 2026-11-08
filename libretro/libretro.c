@@ -594,7 +594,7 @@ unsigned retro_api_version(void) {
 void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armNES";
-	info->library_version = "0.1";
+	info->library_version = "1.0";
 	info->valid_extensions = "nes|fds|unf|unif|nsf|zip|7z";
 	info->need_fullpath = false;
 	info->block_extract = true;
