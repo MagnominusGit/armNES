@@ -43,7 +43,7 @@ file(GLOB FCEU_BOARDS src/fceu/boards/*.c)
 set_source_files_properties(${FCEU_BOARDS} PROPERTIES COMPILE_OPTIONS "-w")
 add_library(armnes STATIC ${CORE_SOURCES} src/fceu/bridge.c ${FCEU_BOARDS})
 target_include_directories(armnes PUBLIC src src/boards)
-target_include_directories(armnes PRIVATE src/fceu src/fceu/boards armulators/libretro)
+target_include_directories(armnes PRIVATE src/fceu src/fceu/boards shared/libretro)
 target_link_libraries(armnes PUBLIC ZLIB::ZLIB m)
 target_compile_options(armnes PRIVATE -O3 -falign-functions=64)
 set_source_files_properties(src/sound/emu2413.c PROPERTIES COMPILE_OPTIONS "-w")
@@ -62,8 +62,11 @@ target_link_libraries(nesrun armnes m)
 add_executable(selfdiff tests/selfdiff.c)
 target_link_libraries(selfdiff armnes)
 
-# The libretro core, with Armulators' libretro pieces (libretro.h, core options)
-add_subdirectory(armulators)
+# The libretro core, with the Armulators pieces it uses (libretro.h, core options) copied into shared/
+# (tools/check-shared.sh compares them with the submodule)
+add_library(armnes-shared STATIC shared/libretro/options.c)
+target_include_directories(armnes-shared PUBLIC shared/libretro)
+set_target_properties(armnes-shared PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # RetroArch's archive reading (libretro/deps), for games in a .zip or .7z, as armGBA has it
 file(GLOB_RECURSE ARCHIVE_SOURCES libretro/deps/libretro-common/*.c libretro/deps/7zip/*.c)
 add_library(retro-archive STATIC ${ARCHIVE_SOURCES})
@@ -76,9 +79,9 @@ add_library(armnes_libretro SHARED libretro/libretro.c libretro/composite.c)
 if(ANDROID)
 	set_target_properties(armnes_libretro PROPERTIES OUTPUT_NAME armnes_libretro_android)
 endif()
-target_link_libraries(armnes_libretro armnes armulators-libretro retro-archive ZLIB::ZLIB m)
+target_link_libraries(armnes_libretro armnes armnes-shared retro-archive ZLIB::ZLIB m)
 set_target_properties(armnes_libretro PROPERTIES PREFIX "")
-target_link_options(armnes_libretro PRIVATE -Wl,--version-script=${ARMULATORS_LINK_SCRIPT} -Wl,--no-undefined)
+target_link_options(armnes_libretro PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/shared/libretro/link.T -Wl,--no-undefined)
 
 # armnes_arcade, the same core for RetroArch's arcade folders: it takes .zip and .7z unopened, so MAME's
 # VS. System and PlayChoice-10 sets load (armnes leaves archives to RetroArch, for achievements)
@@ -87,13 +90,15 @@ target_compile_definitions(armnes_arcade_libretro PRIVATE ARMNES_ARCADE)
 if(ANDROID)
 	set_target_properties(armnes_arcade_libretro PROPERTIES OUTPUT_NAME armnes_arcade_libretro_android)
 endif()
-target_link_libraries(armnes_arcade_libretro armnes armulators-libretro retro-archive ZLIB::ZLIB m)
+target_link_libraries(armnes_arcade_libretro armnes armnes-shared retro-archive ZLIB::ZLIB m)
 set_target_properties(armnes_arcade_libretro PROPERTIES PREFIX "")
-target_link_options(armnes_arcade_libretro PRIVATE -Wl,--version-script=${ARMULATORS_LINK_SCRIPT} -Wl,--no-undefined)
+target_link_options(armnes_arcade_libretro PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/shared/libretro/link.T -Wl,--no-undefined)
 
-# armnes, the standalone app: Armulators' (armulators/app) with the core linked in, named by app.cmake
+# armnes, the standalone app: Armulators' (armulators/app, the only part that needs the submodule) with
+# the core linked in, named by app.cmake
 option(ARMNES_APP "Build armnes, the standalone SDL2 app" OFF)
 if(ARMNES_APP)
+	add_subdirectory(armulators)
 	armulators_app(armnes-app DESCRIPTOR ${CMAKE_CURRENT_SOURCE_DIR}/app.cmake
 		SOURCES libretro/libretro.c libretro/composite.c app/hooks.c INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/libretro
 		LIBS armnes armulators-libretro)
@@ -101,5 +106,5 @@ endif()
 
 # Drives the libretro core like a frontend and checks save states replay exactly
 add_executable(coretest tests/coretest.c)
-target_include_directories(coretest PRIVATE armulators/libretro)
+target_include_directories(coretest PRIVATE shared/libretro)
 target_link_libraries(coretest ZLIB::ZLIB dl)

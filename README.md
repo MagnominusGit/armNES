@@ -160,4 +160,5 @@ armNES's own files are GPL-2.0-or-later. Each part keeps its own notice:
 | `src/fceu/` | GPL-2.0-or-later, from FCEUmm |
 | `src/sound/emu2413.*` | MIT (`LICENSES/MIT-emu2413.txt`) |
 | `libretro/deps/` | MIT and public domain, as each file states |
-| `armulators/` | its own notices: GPL-2.0-or-later, with the fonts under the SIL Open Font License 1.1 and its `deps/` MIT and public domain |
+| `shared/` | copies of the Armulators files the cores build from, so they build without the submodule (`tools/check-shared.sh` compares them): GPL-2.0-or-later, `libretro.h` MIT |
+| `armulators/` | its own notices, needed for the standalone app only: GPL-2.0-or-later, with the fonts under the SIL Open Font License 1.1 and its `deps/` MIT and public domain |
