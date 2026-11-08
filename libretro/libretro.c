@@ -538,9 +538,6 @@ void retro_set_environment(retro_environment_t cb) {
 	}
 	bool noGame = false;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &noGame);
-	// Archives are opened here, by their path: one may be a MAME set needing its parent's archive too
-	static const struct retro_system_content_info_override zips[] = { { "zip|7z", true, false }, { NULL, false, false } };
-	cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE, (void*) zips);
 	static const struct retro_controller_description ports[] = {
 		{ "Controller", RETRO_DEVICE_JOYPAD },
 		{ "Zapper", DEVICE_ID_ZAPPER },
@@ -595,9 +592,11 @@ void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
 	info->library_name = "armNES";
 	info->library_version = "1.0";
-	info->valid_extensions = "nes|fds|unf|unif|nsf|zip|7z";
+	// RetroArch unpacks archives itself, so achievements identify the game inside; a frontend that
+	// hands over a whole archive (an arcade set) still has it opened here
+	info->valid_extensions = "nes|fds|unf|unif|nsf";
 	info->need_fullpath = false;
-	info->block_extract = true;
+	info->block_extract = false;
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {

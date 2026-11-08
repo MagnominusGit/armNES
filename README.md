@@ -25,9 +25,10 @@ ones come from FCEUmm. See Credits for the full list.
   change through the frontend's disc menu, and the core turns to the side the BIOS asks for.
 - VS. System and PlayChoice-10 arcade games, from MAME's `.zip` or `.7z` sets (a clone finds its
   parent beside it), with each board's PPU colors, protection chips, coins and DIP switches. A
-  DualSystem's two boards run together, their screens side by side.
+  DualSystem's two boards run together, their screens side by side. The armNES app opens these sets;
+  RetroArch unpacks archives itself and can't, so there MAME or FBNeo runs them.
 - NSF music files, with a small player.
-- Games inside `.zip` and `.7z` archives.
+- Games inside `.zip` and `.7z` archives. RetroArch unpacks them, so achievements recognize the game.
 
 ## Controls
 
