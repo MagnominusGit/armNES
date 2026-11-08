@@ -18,6 +18,7 @@
 static uint32_t videoHash, audioHash;
 static enum retro_pixel_format pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
 static unsigned frameWidth, frameHeight;
+static unsigned frame;
 static size_t audioFrames;
 
 static struct retro_disk_control_callback disk;
@@ -41,6 +42,9 @@ static bool environment(unsigned cmd, void* data) {
 		return true;
 	case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE:
 		disk = *(const struct retro_disk_control_callback*) data;
+		return true;
+	case RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE:
+		printf("FRAME %u FAST-FORWARD %s\n", frame, ((const struct retro_fastforwarding_override*) data)->fastforward ? "on" : "off");
 		return true;
 	case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
 		pixelFormat = *(enum retro_pixel_format*) data;
@@ -81,7 +85,6 @@ static bool environment(unsigned cmd, void* data) {
 	}
 }
 
-static unsigned frame;
 
 // CORETEST_PPM=<file>: the picture at frame 599 (or CORETEST_FRAME), for comparing cores by eye
 static void dumpFrame(const void* data, unsigned width, unsigned height, size_t pitch) {
@@ -158,7 +161,13 @@ static void inputPoll(void) {
 // CORETEST_AIM="x,y": a light gun held there (-32767 to 32767), trigger twice a second
 // CORETEST_MOUSE="n[,m]": the mouse moves n a frame, right for 2 seconds then left, and m down; left
 // button twice a second
+// CORETEST_R2="from,to": R2 held on controller 1 from one frame to before the other
 static int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) {
+	if (getenv("CORETEST_R2") && port == 0 && device == RETRO_DEVICE_JOYPAD && id == RETRO_DEVICE_ID_JOYPAD_R2) {
+		unsigned from = 0, to = 0;
+		sscanf(getenv("CORETEST_R2"), "%u,%u", &from, &to);
+		return frame >= from && frame < to;
+	}
 	if (device == RETRO_DEVICE_LIGHTGUN && getenv("CORETEST_AIM")) {
 		int x = 0, y = 0;
 		sscanf(getenv("CORETEST_AIM"), "%d,%d", &x, &y);

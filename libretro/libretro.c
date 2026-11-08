@@ -271,7 +271,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		{ "Keyboard", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_zapper_aim", "Zapper Aim", NULL,
 		"A light gun or mouse pointer, a mouse-moved crosshair (left button fires), or the right stick "
-		"pointing (absolute) or moving (pan) it, R or R2 firing. Touching the screen always aims and fires.",
+		"pointing (absolute) or moving (pan) it, R firing. Touching the screen always aims and fires.",
 		NULL, "input", { { "Light gun", NULL }, { "Mouse", NULL }, { "Right stick (absolute)", NULL },
 		{ "Right stick (pan)", NULL }, { NULL, NULL } }, "Light gun" },
 	{ "armnes_zapper_sensitivity", "Zapper Sensitivity", NULL,
@@ -821,8 +821,7 @@ static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 			crossX += abs(x) > 0x1000 ? x / 32 * speed / 25600 : 0;
 			crossY += abs(y) > 0x1000 ? y / 32 * speed / 25600 : 0;
 		}
-		*trigger |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R) ||
-			input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2);
+		*trigger |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R) != 0;
 		break;
 	}
 	default:
@@ -1128,10 +1127,23 @@ static void runDual(void) {
 	}
 }
 
+// R2 held fast-forwards at the frontend's maximum run speed
+static void readFastForward(void) {
+	static bool held;
+	bool now = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2) != 0;
+	if (now == held) {
+		return;
+	}
+	held = now;
+	struct retro_fastforwarding_override override = { .ratio = -1.0f, .fastforward = now, .notification = true, .inhibit_toggle = now };
+	environ_cb(RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE, &override);
+}
+
 void retro_run(void) {
 	input_poll_cb();
 	turboFrame++;
 	readDevices();
+	readFastForward();
 	swipeBarcode();
 	if (playingNsf) {
 		runNsf();
@@ -1473,7 +1485,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Zapper Aim X" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Zapper Trigger" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Zapper Fine Aim" };
 	descriptors[count] = (struct retro_input_descriptor) { 0, 0, 0, 0, NULL };
 	environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);

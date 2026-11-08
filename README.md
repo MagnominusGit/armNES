@@ -37,7 +37,8 @@ ones come from FCEUmm. See Credits for the full list.
 | A, B, Select, Start, D-pad | The controller's own; Select also puts in a coin on VS. System games |
 | X, Y | Turbo A, turbo B, at the Turbo Speed option's rate |
 | L | VS. System service button; on controller 2, the Famicom's microphone; on Datach games, a barcode swipe |
-| R, R2 | Zapper trigger, when it aims with the right stick |
+| R | Zapper trigger, when it aims with the right stick |
+| R2 | Fast-forward while held |
 | L2 | Zapper fine aim: the further it's pulled, the slower the crosshair moves |
 
 Plug in a Zapper, Arkanoid paddle or Power Pad through the frontend's controller port types. The
