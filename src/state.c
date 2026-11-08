@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
 
+#include <stddef.h>
 #include <string.h>
 
 // Save states: the machine as it is in memory, with the bank pointers written as which buffer and
@@ -85,6 +86,24 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	memcpy(out, &header, sizeof(header));
 	out += sizeof(header);
 	memcpy(out, nes, sizeof(struct NES));
+	// This run's pointers, which loading replaces, are left out: the same machine makes the same state
+	// wherever it runs, as netplay's checks need
+#define LEAVE_OUT(field) memset(out + offsetof(struct NES, field), 0, sizeof(((struct NES*) 0)->field))
+	LEAVE_OUT(cart.prg);
+	LEAVE_OUT(cart.chr);
+	LEAVE_OUT(cart.vram);
+	LEAVE_OUT(cart.wram);
+	LEAVE_OUT(cart.misc);
+	LEAVE_OUT(cart.disk);
+	LEAVE_OUT(board);
+	LEAVE_OUT(prgPages);
+	LEAVE_OUT(chrPages);
+	LEAVE_OUT(fdsBios);
+	LEAVE_OUT(frameBuffer);
+	LEAVE_OUT(audioOut);
+	LEAVE_OUT(dual);
+	LEAVE_OUT(vsShared);
+#undef LEAVE_OUT
 	out += sizeof(struct NES);
 	uint32_t tags[32];
 	for (int i = 0; i < 16; i++) {
