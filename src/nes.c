@@ -229,11 +229,16 @@ void nesRunFrame(struct NES* nes) {
 	nes->audioCount = 0;
 	while (!nes->frameDone) {
 		cpuStep(nes);
-		// The frame ends on the instruction during which VBL starts
-		if (nes->ppuLag >= nes->ppuQuietTicks) {
-			nesPpuSync(nes);
+		// The frame ends on the instruction during which VBL starts; while quiet cycles are left the
+		// PPU can't have got that far
+		if (nes->quietBudget <= 0) {
+			cpuSettle(nes);
+			if (nes->ppuLag >= nes->ppuQuietTicks) {
+				nesPpuSync(nes);
+			}
 		}
 	}
+	cpuSettle(nes);
 	nesApuSync(nes);
 	apuFlushAudio(nes);
 }
@@ -310,11 +315,13 @@ void nesRunFrameDual(struct NES* nes, uint16_t* subPicture) {
 	nes->audioCount = sub->audioCount = 0;
 	while (!nes->frameDone) {
 		cpuStep(nes);
+		cpuSettle(nes);
 		if (nes->ppuLag >= nes->ppuQuietTicks) {
 			nesPpuSync(nes);
 		}
 		while (sub->cpu.cycles + 5 < nes->cpu.cycles) {
 			cpuStep(sub);
+			cpuSettle(sub);
 			if (sub->ppuLag >= sub->ppuQuietTicks) {
 				nesPpuSync(sub);
 			}

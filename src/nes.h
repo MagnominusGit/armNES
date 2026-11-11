@@ -504,6 +504,8 @@ void nesApuSync(struct NES*);
 void nesPpuSyncAhead(struct NES*, int clocks);
 void cpuReset(struct NES*, bool hard);
 void cpuStep(struct NES*);
+// Brings the clocks up to the quiet cycles cpuStep() has run without counting them
+void cpuSettle(struct NES*);
 uint8_t cpuPeek(struct NES*, uint16_t address);
 
 // bus.c

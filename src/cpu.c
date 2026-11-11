@@ -229,6 +229,20 @@ static inline __attribute__((always_inline)) void quietSettle(struct NES* nes) {
 	nes->quietGranted = nes->quietBudget;
 }
 
+// Brings the clocks up to the quiet cycles run before the budget stood at mark
+static inline void quietSettleTo(struct NES* nes, int mark) {
+	int n = nes->quietGranted - mark;
+	if (n > 0) {
+		int period = nes->cpuPeriod;
+		nes->slotTick = nes->masterClock + (uint64_t) (n - 1) * period;
+		nes->masterClock += (uint64_t) n * period;
+		nes->ppuLag += n * period;
+		nes->apuPending += n;
+		nes->cpu.cycles += n;
+		nes->quietGranted = mark;
+	}
+}
+
 static inline void quietEnd(struct NES* nes) {
 	quietSettle(nes);
 	nes->quietBudget = nes->quietGranted = 0;
@@ -834,12 +848,16 @@ uint8_t cpuPeek(struct NES* nes, uint16_t address) {
 // while the flags it reads can't change and nothing else can happen, the passes it would make leave
 // nothing behind but time, as the next read rewrites A, the flags and the PPU's open bus. Called at
 // the read, three cycles into a pass.
-static uint16_t statusPoll(struct NES* nes, uint16_t address) {
+static uint16_t statusPoll(struct NES* nes, uint16_t address, uint64_t startClock, int startBudget) {
 	struct Cpu* cpu = &nes->cpu;
 	struct Ppu* ppu = &nes->ppu;
 	if ((address & 0xE007) != 0x2002 || address >= 0x4000 || nes->exactPpu || nes->slowCycles ||
 		nes->overclockLines || (nes->cheatPages & 4)) {
 		return address;
+	}
+	// The clocks count the instructions before this one (unless this one has already settled them)
+	if (nes->masterClock == startClock) {
+		quietSettleTo(nes, startBudget);
 	}
 	uint8_t branch = cpuPeek(nes, cpu->pc);
 	uint16_t start = cpu->pc - 3;
@@ -899,6 +917,9 @@ void cpuStep(struct NES* nes) {
 		quietSettle(nes);
 		return;
 	}
+	// Quiet cycles go uncounted until the budget runs out (cpuSettle())
+	uint64_t const startClock = nes->masterClock;
+	int const startBudget = nes->quietBudget;
 	cpu->opcodeCycle = true;
 	uint8_t opcode = fetch(nes);
 	cpu->opcodeCycle = false;
@@ -959,11 +980,11 @@ void cpuStep(struct NES* nes) {
 	case 0xC4: READ(OP_CPY, addrZp(nes));
 	case 0xCC: READ(OP_CPY, addrAbs(nes));
 	case 0x24: READ(OP_BIT, addrZp(nes));
-	case 0x2C: READ(OP_BIT, statusPoll(nes, addrAbs(nes)));
+	case 0x2C: READ(OP_BIT, statusPoll(nes, addrAbs(nes), startClock, startBudget));
 	case 0xA9: READ(OP_LDA, cpu->pc++);
 	case 0xA5: READ(OP_LDA, addrZp(nes));
 	case 0xB5: READ(OP_LDA, addrZpIndexed(nes, cpu->x));
-	case 0xAD: READ(OP_LDA, statusPoll(nes, addrAbs(nes)));
+	case 0xAD: READ(OP_LDA, statusPoll(nes, addrAbs(nes), startClock, startBudget));
 	case 0xBD: READ(OP_LDA, addrAbsIndexed(nes, cpu->x, false));
 	case 0xB9: READ(OP_LDA, addrAbsIndexed(nes, cpu->y, false));
 	case 0xA1: READ(OP_LDA, addrIndirectX(nes));
@@ -1205,5 +1226,8 @@ void cpuStep(struct NES* nes) {
 		dummyFetch(nes);
 		interrupt(nes, false);
 	}
+}
+
+void cpuSettle(struct NES* nes) {
 	quietSettle(nes);
 }
