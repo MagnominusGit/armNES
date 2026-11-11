@@ -205,7 +205,7 @@ static inline void quietAhead(struct NES* nes) {
 }
 
 // Brings the clocks up to the quiet cycles run so far
-static inline void quietSettle(struct NES* nes) {
+static inline __attribute__((always_inline)) void quietSettle(struct NES* nes) {
 	int n = nes->quietGranted - nes->quietBudget;
 	if (n > 0) {
 		int period = nes->cpuPeriod;
@@ -363,24 +363,8 @@ static void dmaCycle(struct NES* nes) {
 	endCycle(nes);
 }
 
-static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
+static __attribute__((noinline)) uint8_t readFull(struct NES* nes, uint16_t address) {
 	struct Cpu* cpu = &nes->cpu;
-	if (__builtin_expect(nes->quietBudget > 0, 1)) {
-		uint8_t* page = nes->prgPages[address >> 12];
-		uint8_t value;
-		if (address < 0x2000) {
-			value = nes->ram[address & 0x7FF];
-		} else if (address >= 0x8000 && page && !((nes->readHooks | nes->cheatPages) & (1 << (address >> 12)))) {
-			value = page[address & 0xFFF];
-		} else {
-			goto full;
-		}
-		cpu->addressBus = address;
-		nes->quietBudget--;
-		cpu->openBus = cpu->internalBus = value;
-		return value;
-	}
-full:
 	quietEnd(nes);
 	cpu->addressBus = address;
 	while (__builtin_expect(dmaPending(nes), 0)) {
@@ -403,14 +387,27 @@ full:
 	return value;
 }
 
-static inline void writeCycle(struct NES* nes, uint16_t address, uint8_t value) {
-	if (__builtin_expect(nes->quietBudget > 0, 1) && address < 0x2000) {
-		nes->cpu.addressBus = address;
+static inline __attribute__((always_inline)) uint8_t readCycle(struct NES* nes, uint16_t address) {
+	struct Cpu* cpu = &nes->cpu;
+	if (__builtin_expect(nes->quietBudget > 0, 1)) {
+		uint8_t* page = nes->prgPages[address >> 12];
+		uint8_t value;
+		if (address < 0x2000) {
+			value = nes->ram[address & 0x7FF];
+		} else if (address >= 0x8000 && page && !((nes->readHooks | nes->cheatPages) & (1 << (address >> 12)))) {
+			value = page[address & 0xFFF];
+		} else {
+			return readFull(nes, address);
+		}
+		cpu->addressBus = address;
 		nes->quietBudget--;
-		nes->cpu.openBus = nes->cpu.internalBus = value;
-		nes->ram[address & 0x7FF] = value;
-		return;
+		cpu->openBus = cpu->internalBus = value;
+		return value;
 	}
+	return readFull(nes, address);
+}
+
+static __attribute__((noinline)) void writeFull(struct NES* nes, uint16_t address, uint8_t value) {
 	quietEnd(nes);
 	nes->cpu.addressBus = address;
 	startCycle(nes);
@@ -418,11 +415,22 @@ static inline void writeCycle(struct NES* nes, uint16_t address, uint8_t value) 
 	endCycle(nes);
 }
 
-static inline uint8_t fetch(struct NES* nes) {
+static inline __attribute__((always_inline)) void writeCycle(struct NES* nes, uint16_t address, uint8_t value) {
+	if (__builtin_expect(nes->quietBudget > 0, 1) && address < 0x2000) {
+		nes->cpu.addressBus = address;
+		nes->quietBudget--;
+		nes->cpu.openBus = nes->cpu.internalBus = value;
+		nes->ram[address & 0x7FF] = value;
+		return;
+	}
+	writeFull(nes, address, value);
+}
+
+static inline __attribute__((always_inline)) uint8_t fetch(struct NES* nes) {
 	return readCycle(nes, nes->cpu.pc++);
 }
 
-static inline uint16_t fetch16(struct NES* nes) {
+static inline __attribute__((always_inline)) uint16_t fetch16(struct NES* nes) {
 	uint8_t lo = fetch(nes);
 	return lo | (fetch(nes) << 8);
 }
