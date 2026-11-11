@@ -143,6 +143,13 @@ static struct OptionChoice sensorChoices[] = {
 	{ "Accelerometer", SENSOR_ACCELEROMETER },
 };
 
+static struct OptionChoice invertChoices[] = {
+	{ "Off", 0 },
+	{ "Horizontal", 1 },
+	{ "Vertical", 2 },
+	{ "Both", 3 },
+};
+
 static struct OptionChoice rotationChoices[] = {
 	{ "0", 0 },
 	{ "90", 1 },
@@ -295,6 +302,9 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"How fast the crosshair moves. Holding L2 aims finer the further it's pulled.",
 		NULL, "input", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
 		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
+	{ "armnes_stick_invert", "Zapper Stick Invert", NULL,
+		"Turns the right stick's aim around, side to side, up and down, or both.",
+		NULL, "input", { { "Off", NULL }, { "Horizontal", NULL }, { "Vertical", NULL }, { "Both", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_motion_sensor", "Zapper Motion", NULL,
 		"The device's motion moves the crosshair from where the right stick aims it: turning it with the "
 		"gyroscope, or tilting it with the accelerometer. R3 takes how the device is held as the middle.",
@@ -308,6 +318,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"higher it is.",
 		NULL, "input", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
 		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
+	{ "armnes_motion_invert", "Zapper Motion Invert", NULL,
+		"Turns the motion's aim around, side to side, up and down, or both, for a sensor that reads one "
+		"way backwards or to taste.",
+		NULL, "input", { { "Off", NULL }, { "Horizontal", NULL }, { "Vertical", NULL }, { "Both", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_motion_rotation", "Zapper Motion Sensor Rotation", NULL,
 		"Turns the motion sensor to match the screen if aiming goes the wrong way. Usually 0° in the "
 		"standalone app, often 90° in RetroArch.",
@@ -707,7 +721,9 @@ static bool showOptions(void) {
 		{ "armnes_pan_cart", !loaded || cartSound() },
 		{ "armnes_zapper_aim", zapper },
 		{ "armnes_zapper_sensitivity", zapper && !optionIs(environ_cb, "armnes_zapper_aim", "Light gun") },
+		{ "armnes_stick_invert", motion },
 		{ "armnes_motion_sensor", motion },
+		{ "armnes_motion_invert", motionOn },
 		{ "armnes_motion_range", motionOn },
 		{ "armnes_motion_sensitivity", motionOn },
 		{ "armnes_motion_rotation", motionOn },
@@ -757,7 +773,7 @@ static bool allowOpposing;
 static bool leftStickDpad;
 static unsigned turboFrame;
 static int fourPlayers, expansion, zapperAim, zapperSpeed = 100;
-static int motionSensor, motionSpeed = 100, motionRotation;
+static int motionSensor, motionSpeed = 100, motionRotation, stickInvert, motionInvert;
 static bool motionWhole;
 static int vsSwap;
 static unsigned coinFrames[4];
@@ -770,6 +786,8 @@ static void readInputOptions(void) {
 	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 4, AUTO);
 	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 5, AIM_LIGHT_GUN);
 	motionRotation = optionChoice(environ_cb, "armnes_motion_rotation", rotationChoices, 4, 0);
+	stickInvert = optionChoice(environ_cb, "armnes_stick_invert", invertChoices, 4, 0);
+	motionInvert = optionChoice(environ_cb, "armnes_motion_invert", invertChoices, 4, 0);
 	zapperSpeed = optionChoice(environ_cb, "armnes_zapper_sensitivity", sensitivityChoices, 7, 100);
 	motionSensor = optionChoice(environ_cb, "armnes_motion_sensor", sensorChoices, 3, SENSOR_OFF);
 	motionSpeed = optionChoice(environ_cb, "armnes_motion_sensitivity", sensitivityChoices, 7, 100);
@@ -960,6 +978,10 @@ static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 		int y = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
 		int mx, my;
 		deviceMotion(&mx, &my);
+		x = stickInvert & 1 ? -x : x;
+		y = stickInvert & 2 ? -y : y;
+		mx = motionInvert & 1 ? -mx : mx;
+		my = motionInvert & 2 ? -my : my;
 		if (zapperAim == AIM_STICK) {
 			x = x + mx < -0x7FFF ? -0x7FFF : x + mx > 0x7FFF ? 0x7FFF : x + mx;
 			y = y + my < -0x7FFF ? -0x7FFF : y + my > 0x7FFF ? 0x7FFF : y + my;

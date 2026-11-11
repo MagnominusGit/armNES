@@ -65,7 +65,7 @@ Sound only for carts with their own sound chip, and the Zapper options only with
 | System | Region (Auto, NTSC, PAL, Dendy), Overclock, Disk System Fast Loading, Cart Jumper |
 | Video | Palette, NTSC/PAL Filter (Composite, S-Video), Scanlines, Sprite Limit, Aspect Ratio, Crop Top and Bottom, Crop Sides |
 | Audio | Volume and stereo position for each channel, and for the cart's sound chip |
-| Input | Turbo Speed, Allow Opposing Directions, Left Stick as D-Pad, 4 Players, Famicom Expansion Port, Zapper Input, Zapper Sensitivity, Zapper Motion, Zapper Motion Range, Zapper Motion Sensitivity, Zapper Motion Sensor Rotation |
+| Input | Turbo Speed, Allow Opposing Directions, Left Stick as D-Pad, 4 Players, Famicom Expansion Port, Zapper Input, Zapper Sensitivity, Zapper Stick Invert, Zapper Motion, Zapper Motion Range, Zapper Motion Sensitivity, Zapper Motion Invert, Zapper Motion Sensor Rotation |
 | VS. System | PPU, Swap Controllers, DIP switches, DualSystem Screens |
 
 The NTSC/PAL filter decodes the console's video signal as a TV of the time did: Composite with its
