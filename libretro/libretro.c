@@ -925,6 +925,18 @@ static void deviceMotion(int* x, int* y) {
 	*y = (int) motionY;
 }
 
+// A pan's move this frame in 256ths of a pixel: the push past the dead zone, squared, so small pushes
+// aim finely and a full one crosses the screen in about a third of a second at 100%
+static int panStep(int push, int speed) {
+	int const dead = 0x1000, size = abs(push);
+	if (size <= dead) {
+		return 0;
+	}
+	float const amount = (float) (size - dead) / (0x7FFF - dead);
+	int const step = (int) (amount * amount * 12 * 256 * speed / 25600);
+	return push < 0 ? -step : step;
+}
+
 // Aim from the mouse, the stick or the device's motion: false for the light gun
 static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 	int left = cropHorizontal << 8, right = (NES_WIDTH - 1 - cropHorizontal) << 8;
@@ -962,10 +974,10 @@ static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 			stickX = sx;
 			stickY = sy;
 		} else {
-			// Up to 4 pixels a frame at 100%, past a small dead zone, and the motion's change since the
-			// last frame
-			crossX += abs(x) > 0x1000 ? x / 32 * speed / 25600 : 0;
-			crossY += abs(y) > 0x1000 ? y / 32 * speed / 25600 : 0;
+			// Up to 12 pixels a frame at 100%, past a small dead zone, slower the less the stick is pushed,
+			// and the motion's change since the last frame
+			crossX += panStep(x, speed);
+			crossY += panStep(y, speed);
 			crossX += (int) ((int64_t) (mx - motionLastX) * (right - left) / 0xFFFF * fine / 256);
 			crossY += (int) ((int64_t) (my - motionLastY) * (bottom - top) / 0xFFFF * fine / 256);
 		}
