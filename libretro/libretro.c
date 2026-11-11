@@ -78,6 +78,7 @@ enum { ASPECT_TV, ASPECT_PAR, ASPECT_SQUARE };
 #define DEVICE_ID_ZAPPER RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_LIGHTGUN, 0)
 #define DEVICE_ID_PADDLE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 0)
 #define DEVICE_ID_POWER_PAD RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0)
+#define DEVICE_ID_PAD RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1)
 
 // Overclocking: frames' worth of extra CPU time, negative for after the picture instead of vblank
 static struct OptionChoice overclockChoices[] = {
@@ -592,8 +593,10 @@ void retro_set_environment(retro_environment_t cb) {
 	static const struct retro_system_content_info_override zips[] = { { "zip|7z", true, false }, { NULL, false, false } };
 	cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE, (void*) zips);
 #endif
+	// Auto, the frontend's default, plugs in what the game's header names
 	static const struct retro_controller_description ports[] = {
-		{ "Controller", RETRO_DEVICE_JOYPAD },
+		{ "Auto", RETRO_DEVICE_JOYPAD },
+		{ "Controller", DEVICE_ID_PAD },
 		{ "Zapper", DEVICE_ID_ZAPPER },
 		{ "Paddle", DEVICE_ID_PADDLE },
 		{ "Power Pad", DEVICE_ID_POWER_PAD },
@@ -603,7 +606,7 @@ void retro_set_environment(retro_environment_t cb) {
 		{ "Controller", RETRO_DEVICE_JOYPAD },
 	};
 	static const struct retro_controller_info info[] = {
-		{ ports, 5 }, { ports, 5 }, { pads, 1 }, { pads, 1 }, { NULL, 0 },
+		{ ports, 6 }, { ports, 6 }, { pads, 1 }, { pads, 1 }, { NULL, 0 },
 	};
 	cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*) info);
 	optionsGive(cb, &options);
@@ -670,8 +673,8 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 static uint8_t portDevice[2];
 static bool portChosen[2];
 
-// What's plugged into a port: the frontend's choice, or until it makes one (the standalone app never
-// does), what an NES 2.0 header names: a Zapper (a VS. System's in the first), two, a Power Pad or an
+// What's plugged into a port: the frontend's choice, or with Auto (RetroArch's default) or until it
+// makes one (the standalone app never does), what an NES 2.0 header names: a Zapper (a VS. System's in the first), two, a Power Pad or an
 // Arkanoid paddle.
 static uint8_t portType(unsigned port) {
 	if (portChosen[port] || !loaded || !nes.cart.nes2) {
@@ -753,7 +756,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {
 		case RETRO_DEVICE_NONE: portDevice[port] = DEVICE_NONE; break;
 		default: portDevice[port] = DEVICE_PAD; break;
 		}
-		portChosen[port] = true;
+		portChosen[port] = device != RETRO_DEVICE_JOYPAD;
 		showOptions();
 	}
 }
