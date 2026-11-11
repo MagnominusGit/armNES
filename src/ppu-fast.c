@@ -1108,6 +1108,15 @@ uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 		return value;
 	case 7: {
 		nesPpuSync(nes);
+		// A read still under way when another comes (a DMA repeating the CPU's) finishes first
+		if (ppu->vramReadStep) {
+			if (ppu->vramReadStep < 3) {
+				ppu->vramReadAddress = ppu->v & 0x3FFF;
+			}
+			ppu->readBuffer = chrRead(nes, ppu->vramReadAddress);
+			vramIncrement(nes);
+			ppu->vramReadStep = 0;
+		}
 		uint16_t v = ppu->v & 0x3FFF;
 		if (!rendering(ppu) && v >= 0x3F00) {
 			value = (paletteRead(ppu, v) & (ppu->gray ? 0x30 : 0x3F)) | (openBus(ppu) & 0xC0);
