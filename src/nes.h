@@ -479,7 +479,7 @@ static inline bool nesOverclockHold(struct NES* nes, int line) {
 }
 
 // input.c
-uint32_t inputReport(const struct NES*, int port);
+uint32_t inputReport(struct NES*, int port);
 void inputLatch(struct NES*);
 uint8_t inputBits(struct NES*, int port);
 uint8_t vsProtectionRead(struct NES*, uint16_t address);

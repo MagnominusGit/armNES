@@ -220,15 +220,18 @@ static int16_t inputState(unsigned port, unsigned device, unsigned index, unsign
 		return id == RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X ? x : id == RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y ? y :
 			id == RETRO_DEVICE_ID_LIGHTGUN_TRIGGER ? frame % 30 < 3 : 0;
 	}
-	// CORETEST_TOUCH="x,y[,from,frames]": a touch there for 2 frames, twice a second, or once from a
-	// frame for that many
+	// CORETEST_TOUCH="x,y[,from,frames][;...]": a touch there for 2 frames, twice a second, or once
+	// from a frame for that many
 	if (device == RETRO_DEVICE_POINTER && getenv("CORETEST_TOUCH")) {
-		int x = 0, y = 0;
-		unsigned from = 0, frames = 0;
-		bool const once = sscanf(getenv("CORETEST_TOUCH"), "%d,%d,%u,%u", &x, &y, &from, &frames) == 4;
-		bool const down = once ? frame >= from && frame < from + frames : frame % 30 < 2;
-		return id == RETRO_DEVICE_ID_POINTER_X ? (down ? x : 0) : id == RETRO_DEVICE_ID_POINTER_Y ? (down ? y : 0) :
-			id == RETRO_DEVICE_ID_POINTER_PRESSED ? down : 0;
+		for (const char* t = getenv("CORETEST_TOUCH"); t; t = strchr(t, ';') ? strchr(t, ';') + 1 : NULL) {
+			int x = 0, y = 0;
+			unsigned from = 0, frames = 0;
+			bool const once = sscanf(t, "%d,%d,%u,%u", &x, &y, &from, &frames) == 4;
+			if (once ? frame >= from && frame < from + frames : frame % 30 < 2) {
+				return id == RETRO_DEVICE_ID_POINTER_X ? x : id == RETRO_DEVICE_ID_POINTER_Y ? y : id == RETRO_DEVICE_ID_POINTER_PRESSED;
+			}
+		}
+		return 0;
 	}
 	if (device == RETRO_DEVICE_MOUSE && getenv("CORETEST_MOUSE")) {
 		int step = 0, down = 0;

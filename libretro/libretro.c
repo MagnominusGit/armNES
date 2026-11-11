@@ -657,12 +657,14 @@ static uint8_t portDevice[2];
 static bool portChosen[2];
 
 // What's plugged into a port: the frontend's choice, or until it makes one (the standalone app never
-// does), what an NES 2.0 header names: a Zapper, two, a Power Pad or an Arkanoid paddle.
+// does), what an NES 2.0 header names: a Zapper (a VS. System's in the first), two, a Power Pad or an
+// Arkanoid paddle.
 static uint8_t portType(unsigned port) {
 	if (portChosen[port] || !loaded || !nes.cart.nes2) {
 		return portDevice[port];
 	}
 	switch (nes.cart.header[15] & 0x3F) {
+	case 0x07: return port ? DEVICE_PAD : DEVICE_ZAPPER;
 	case 0x08: return port ? DEVICE_ZAPPER : DEVICE_PAD;
 	case 0x09: return DEVICE_ZAPPER;
 	case 0x0B:
@@ -1045,7 +1047,8 @@ static void readDevices(void) {
 		// Select drops a coin in that player's slot, held a few frames as a coin takes to fall. The
 		// cabinet's start buttons report where a pad's Select does.
 		for (unsigned port = 0; port < 2; port++) {
-			bool held = nes.pads[port] & 0x04;
+			// With a Zapper in the port, its controller still drops the coins
+			bool held = (in->device[port] == DEVICE_PAD ? nes.pads[port] : readPad(port)) & 0x04;
 			coinFrames[port] = held ? coinFrames[port] + 1 : 0;
 			in->vsCoin[port] = held && coinFrames[port] <= 4;
 			nes.pads[port] = (nes.pads[port] & ~0x0C) | (nes.pads[port] & 0x08) >> 1;

@@ -22,10 +22,17 @@ static uint8_t padBits(uint8_t pad) {
 	return out;
 }
 
+static bool zapperLight(struct NES* nes);
+
 // A port's serial report as the APU's shift register holds it, first bit at the top: a pad's 8 bits
-// then 1s, or with the Four Score players 1 and 3 (2 and 4), its signature, then 1s
-uint32_t inputReport(const struct NES* nes, int port) {
+// then 1s, or with the Four Score players 1 and 3 (2 and 4), its signature, then 1s. The VS. System's
+// Zapper reports 0, 0, 0, 0, 1, 0, light, trigger, then 0s, its light as it is at the strobe
+// (behaviour per Mesen).
+uint32_t inputReport(struct NES* nes, int port) {
 	const struct InputConfig* in = &nes->input;
+	if (in->device[port] == DEVICE_ZAPPER && nes->cart.vs) {
+		return 1u << 27 | (zapperLight(nes) ? 1u << 25 : 0) | (in->zapperTrigger ? 1u << 24 : 0);
+	}
 	if (in->device[port] != DEVICE_PAD) {
 		return 0;
 	}
@@ -143,7 +150,10 @@ uint8_t inputBits(struct NES* nes, int port) {
 	uint8_t bits = 0;
 	switch (in->device[port]) {
 	case DEVICE_ZAPPER:
-		bits |= (zapperLight(nes) ? 0 : 0x08) | (in->zapperTrigger ? 0x10 : 0);
+		// The VS. System's sends its report through bit 0 instead
+		if (!nes->cart.vs) {
+			bits |= (zapperLight(nes) ? 0 : 0x08) | (in->zapperTrigger ? 0x10 : 0);
+		}
 		break;
 	case DEVICE_PADDLE:
 		// Inverted, most significant bit first; the button straight through

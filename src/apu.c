@@ -816,7 +816,8 @@ uint8_t apuConflictRead(struct NES* nes, uint8_t value, uint16_t address, bool d
 	case 0x16:
 	case 0x17: {
 		int port = address & 1;
-		uint8_t bit = nes->input.device[port] == DEVICE_PAD ? apu->padShift[port] >> 31 : 0;
+		uint8_t const device = nes->input.device[port];
+		uint8_t bit = device == DEVICE_PAD || (device == DEVICE_ZAPPER && nes->cart.vs) ? apu->padShift[port] >> 31 : 0;
 		uint8_t devices = inputBits(nes, port);
 		apu->padShiftDelay[port] = 2;
 		apu->strobed = false;
