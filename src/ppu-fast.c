@@ -1265,6 +1265,44 @@ static void dotEvaluateRun(struct NES* nes, int dot, int pairs, bool pre) {
 	struct Ppu* ppu = &nes->ppu;
 	int const height = ppu->tall ? 16 : 8, line = ppu->scanline & 0xFF;
 	while (pairs > 0) {
+		// Once OAM's end has been passed each pair only moves the address on
+		if (ppu->oamAddrOverflowed && dot > 65) {
+			if (!pre) {
+				ppu->oamAddr = (ppu->oamAddr + 4 * pairs) & 0xFC;
+			}
+			ppu->oamBuffer = ppu->oam2[ppu->oam2Addr];
+			return;
+		}
+		// After the eighth, the overflow search's diagonal walk past sprites that aren't on the line
+		if (!pre && dot > 66 && !ppu->evalTick && ppu->oam2Overflowed && !ppu->nineObjects) {
+			uint8_t address = ppu->oamAddr;
+			uint16_t offset = 0;
+			int passed = 0;
+			bool wrapped = false;
+			while (passed < pairs) {
+				uint16_t const nextOffset = (uint16_t) (line - ppu->oam[address]);
+				if (nextOffset < height) {
+					break;
+				}
+				offset = nextOffset;
+				passed++;
+				uint8_t const before = address;
+				address += (address & 3) == 3 ? 1 : 5;
+				if (address < before && address < 4) {
+					wrapped = true;
+					break;
+				}
+			}
+			if (passed) {
+				ppu->verticalOffset = offset;
+				ppu->oamAddr = address;
+				ppu->oamBuffer = ppu->oam2[ppu->oam2Addr];
+				ppu->oamAddrOverflowed |= wrapped;
+				dot += 2 * passed;
+				pairs -= passed;
+				continue;
+			}
+		}
 		if (!pre && dot > 66 && !ppu->evalTick && !ppu->oam2Overflowed && !ppu->oamAddrOverflowed) {
 			uint8_t address = ppu->oamAddr, y = 0;
 			uint16_t offset = 0;
@@ -1304,10 +1342,10 @@ static void dotEvaluateRun(struct NES* nes, int dot, int pairs, bool pre) {
 	}
 }
 
-// Balanced: the sprite slots through a tile's eight dots at once. A slot shows its pattern from the
+// Balanced: the sprite slots through some dots of a tile at once. A slot shows its pattern from the
 // pixel its X counter runs out on, and the shifts stop once every pattern is empty. Returns the pixels
 // as sprite bytes (where shown), with sprite 0's opaque ones in *zero.
-static inline uint64_t balancedSprites(struct Ppu* ppu, bool shown, uint64_t* zero) {
+static inline __attribute__((always_inline)) uint64_t balancedSprites(struct Ppu* ppu, int dots, bool shown, uint64_t* zero) {
 	uint64_t out = 0;
 	int steps = 0;
 	*zero = 0;
@@ -1331,7 +1369,7 @@ static inline uint64_t balancedSprites(struct Ppu* ppu, bool shown, uint64_t* ze
 			*zero = opaque;
 		}
 	}
-	int const shifts = steps < 8 ? steps : 8;
+	int const shifts = steps < dots ? steps : dots;
 	for (int i = 0; i < 8; i++) {
 		int const counter = ppu->spriteCounter[i], pattern = shifts - counter;
 		if (pattern <= 0) {
@@ -1372,7 +1410,7 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 	if (quick) {
 		uint64_t sprites = 0, zero = 0;
 		if (lo | hi) {
-			sprites = balancedSprites(ppu, visible && ppu->showSprites && (base >= 8 || ppu->showSpritesLeft), &zero);
+			sprites = balancedSprites(ppu, 8, visible && ppu->showSprites && (base >= 8 || ppu->showSpritesLeft), &zero);
 		}
 		if (visible) {
 			if (!nes->skipPixels) {
@@ -1449,6 +1487,100 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 	if (base < 64) {
 		dotClearTile(nes, base, pre);
 	}
+}
+
+// Balanced: the next dots of a tile up to its end at most (dots 1-256), at once when nothing needs them
+// one by one (as for a whole tile). Returns false, doing nothing, when something does.
+static bool balancedPart(struct NES* nes, int n, bool visible, bool pre) {
+	struct Ppu* ppu = &nes->ppu;
+	int const first = ppu->dot & 7, base = ppu->dot - first;
+	bool const watch = nes->watchPpuBus;
+	if (ppu->pendingHit || nes->ppuReadHook || (watch && !(nes->board->ppuBus == mmc3PpuBus && nes->busShown &&
+		!nes->busA12Shown && !ppu->bgTable && !(ppu->addressBus & 0x1000)))) {
+		return false;
+	}
+	uint64_t pixels = 0, sprites = 0, zero = 0, lo, hi;
+	if (visible && ppu->showBg && (base >= 8 || ppu->showBgLeft)) {
+		int const sh = 8 - ppu->fineX;
+		uint64_t color = spread[(uint8_t) (ppu->bgL >> sh)] | spread[(uint8_t) (ppu->bgH >> sh)] << 1;
+		uint64_t palette = (spread[(uint8_t) (ppu->atL >> sh)] | spread[(uint8_t) (ppu->atH >> sh)] << 1) << 2;
+		uint64_t opaque = ((color | color >> 1) & 0x0101010101010101ull) * 0xFF;
+		pixels = color | (palette & opaque);
+	}
+	memcpy(&lo, ppu->spriteL, 8);
+	memcpy(&hi, ppu->spriteH, 8);
+	if (lo | hi) {
+		sprites = balancedSprites(ppu, n, visible && ppu->showSprites && (base >= 8 || ppu->showSpritesLeft), &zero);
+	}
+	if (visible) {
+		if (!nes->skipPixels) {
+			uint8_t bytes[8];
+			uint16_t out[8];
+			uint16_t const emphasis = (ppu->emphRed ? 0x40 : 0) | (ppu->emphGreen ? 0x80 : 0) | (ppu->emphBlue ? 0x100 : 0);
+			memcpy(bytes, &sprites, 8);
+			drawTile(out, pixels, sprites ? bytes : NULL, ppu->palette, ppu->gray ? 0x30 : 0x3F, emphasis);
+			memcpy(&nes->frameBuffer[ppu->scanline * NES_WIDTH + ppu->dot], out, n * sizeof(out[0]));
+		}
+		uint64_t hit = ppu->hasZero && !ppu->hit ? zero & ((pixels | pixels >> 1) & 0x0101010101010101ull) * 0xFF : 0;
+		hit &= n == 8 ? ~0ull : (1ull << (n * 8)) - 1;
+		if (ppu->dot + n == 256) {
+			hit &= ~(0xFFull << ((n - 1) * 8));
+		}
+		if (hit) {
+			int const x = __builtin_ctzll(hit) >> 3;
+			if (x + 4 <= n) {
+				ppu->hit = true;
+			} else {
+				ppu->pendingHit = true;
+				ppu->hitDelay = x + 4 - n;
+			}
+		}
+	}
+	for (int k = first + 1; k <= first + n; k++) {
+		fetchTile(nes, k);
+	}
+	ppu->bgL <<= n;
+	ppu->bgH <<= n;
+	ppu->atL <<= n;
+	ppu->atH <<= n;
+	if (first + n == 8) {
+		reload(ppu);
+		incrementX(ppu);
+		if (base == 248) {
+			incrementY(ppu);
+		}
+	}
+	ppu->dotTick += n * nes->ppuPeriod;
+	ppu->dots += n;
+	for (int k = 0; k < n; k++) {
+		int const dot = ++ppu->dot;
+		dotSprites(nes, dot, pre);
+		dotOam2Reset(ppu, dot);
+	}
+	return true;
+}
+
+// Balanced: dots 337-340, the line's last two name table fetches, when no hit is on its way and any
+// board watching the bus is an MMC3
+static void balancedLineEnd(struct NES* nes, bool pre) {
+	struct Ppu* ppu = &nes->ppu;
+	bool const watch = nes->watchPpuBus;
+	for (int dot = 337; dot <= 340; dot++) {
+		if (watch) {
+			ppu->dotTick += nes->ppuPeriod;
+			showBus(nes);
+			if (dot == 337 || dot == 339) {
+				busAddress(nes, 0x2000 | (ppu->v & 0xFFF));
+			}
+		}
+		dotSprites(nes, dot, pre);
+	}
+	if (!watch) {
+		ppu->dotTick += 4 * nes->ppuPeriod;
+	}
+	ppu->dot = 340;
+	ppu->dots += 4;
+	dotOam2Reset(ppu, 340);
 }
 
 // Balanced: a sprite slot's eight dots of fetches, dots base+1 to base+8 of 257-320. With no hit on
@@ -1571,6 +1703,12 @@ static __attribute__((noinline)) void balancedSpan(struct NES* nes, int n, bool 
 	// Whole tiles, slots and prefetches where they fit. Nothing else in them looks at the sprite
 	// evaluation, so it runs in one go before the fetches or the span's end.
 	int evaluateFrom = 0;
+	if ((ppu->dot & 7) && ppu->dot < 256 && n) {
+		int const part = 8 - (ppu->dot & 7) < n ? 8 - (ppu->dot & 7) : n;
+		if (balancedPart(nes, part, visible, pre)) {
+			n -= part;
+		}
+	}
 	while (n >= 8 && !(ppu->dot & 7) && ppu->dot < 336) {
 		if (ppu->dot < 256) {
 			if (ppu->dot >= 64 && !evaluateFrom) {
@@ -1601,6 +1739,14 @@ static __attribute__((noinline)) void balancedSpan(struct NES* nes, int n, bool 
 	}
 	if (evaluateFrom) {
 		balancedEvaluate(nes, evaluateFrom, pre);
+	}
+	if (n && n < 8 && !(ppu->dot & 7) && ppu->dot < 256 && balancedPart(nes, n, visible, pre)) {
+		n = 0;
+	}
+	if (n == 4 && ppu->dot == 336 && !ppu->pendingHit && !nes->ppuReadHook &&
+		(!nes->watchPpuBus || nes->board->ppuBus == mmc3PpuBus)) {
+		balancedLineEnd(nes, pre);
+		n = 0;
 	}
 	for (int i = 0; i < n; i++) {
 		ppu->dotTick += period;
