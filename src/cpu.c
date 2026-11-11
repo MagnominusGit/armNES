@@ -836,7 +836,7 @@ uint8_t cpuPeek(struct NES* nes, uint16_t address) {
 static uint16_t statusPoll(struct NES* nes, uint16_t address) {
 	struct Cpu* cpu = &nes->cpu;
 	struct Ppu* ppu = &nes->ppu;
-	if ((address & 0xE007) != 0x2002 || address >= 0x4000 || nes->exactPpu || nes->slowCycles ||
+	if ((address & 0xE007) != 0x2002 || address >= 0x4000 || nes->exactPpu || nes->dotPpu || nes->slowCycles ||
 		nes->overclockLines || (nes->cheatPages & 4)) {
 		return address;
 	}

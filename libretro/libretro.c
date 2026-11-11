@@ -227,9 +227,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_region", "Region", NULL, "The console the game runs on. Auto reads it from the game's header.", NULL, "system",
 		{ { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { "Dendy", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_ppu", "PPU Accuracy", NULL,
-		"Exact runs the picture chip dot by dot as the hardware does, passing every test of its quirks, "
-		"but many times slower: for desktops. Takes effect when a game is loaded.", NULL, "system",
-		{ { "Fast", NULL }, { "Exact", NULL }, { NULL, NULL } }, "Fast" },
+		"Accurate runs the picture chip dot by dot with its sprites found and fetched as the hardware "
+		"does, for most of its quirks at a few times Fast's cost. Exact models it half a dot at a time, "
+		"passing every test, but many times slower: for desktops. Takes effect when a game is loaded.",
+		NULL, "system", { { "Fast", NULL }, { "Accurate", NULL }, { "Exact", NULL }, { NULL, NULL } }, "Fast" },
 	{ "armnes_overclock", "Overclock", NULL,
 		"Extra CPU time each frame, which removes most slowdown without changing game speed. A few games "
 		"misbehave; try the other placement for those.",
@@ -1747,8 +1748,10 @@ bool retro_load_game(const struct retro_game_info* game) {
 	nes.jumper = optionChoice(environ_cb, "armnes_jumper", jumperChoices, 25, -1);
 	jumperNoticed = false;
 	nes.exactPpu = optionIs(environ_cb, "armnes_ppu", "Exact");
+	nes.dotPpu = optionIs(environ_cb, "armnes_ppu", "Accurate");
 	nesInit(&sub);
 	sub.exactPpu = nes.exactPpu;
+	sub.dotPpu = nes.dotPpu;
 	sub.audioOut = subAudio;
 	sub.audioCapacity = sizeof(subAudio) / sizeof(subAudio[0]);
 	memset(subPicture, 0, sizeof(subPicture));

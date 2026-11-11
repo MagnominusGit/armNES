@@ -357,6 +357,8 @@ struct NES {
 	bool exactTiming;
 	// The half-dot PPU (ppu.c) instead of the fast one (ppu-fast.c)
 	bool exactPpu;
+	// The fast PPU dot by dot, its sprites found and fetched as the hardware does (PPU Accuracy: Accurate)
+	bool dotPpu;
 
 	// $4020-$FFFF in 4 KB pages
 	uint8_t* prgPages[16];

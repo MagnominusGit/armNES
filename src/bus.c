@@ -12,7 +12,7 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 	if (address < 0x2000) {
 		value = nes->ram[address & 0x7FF];
 	} else if (address < 0x4000) {
-		if ((address & 7) != 2 || nes->exactPpu || !fastStatusAhead(nes, &value)) {
+		if ((address & 7) != 2 || nes->exactPpu || nes->dotPpu || !fastStatusAhead(nes, &value)) {
 			nesPpuSync(nes);
 			value = ppuReadRegister(nes, address);
 		}
@@ -69,7 +69,7 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		if (__builtin_expect(nes->cart.vs, 0) && nes->cart.vsPpu >= 8 && nes->cart.vsPpu <= 12 && (address & 6) == 0) {
 			address ^= 1;
 		}
-		if ((address & 7) != 4 || nes->exactPpu || !fastOamWriteAhead(nes, value)) {
+		if ((address & 7) != 4 || nes->exactPpu || nes->dotPpu || !fastOamWriteAhead(nes, value)) {
 			nesPpuSync(nes);
 			ppuWriteRegister(nes, address, value, before);
 		}

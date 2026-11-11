@@ -150,7 +150,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	int16_t* audioOut = nes->audioOut;
 	size_t audioCapacity = nes->audioCapacity;
 	int sampleRate = nes->sampleRate;
-	bool exactPpu = nes->exactPpu, exactTiming = nes->exactTiming;
+	bool exactPpu = nes->exactPpu, exactTiming = nes->exactTiming, dotPpu = nes->dotPpu;
 	uint8_t pads[2] = { nes->pads[0], nes->pads[1] };
 	const uint8_t* fdsBios = nes->fdsBios;
 	int jumper = nes->jumper;
@@ -180,6 +180,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->audioCapacity = audioCapacity;
 	nes->sampleRate = sampleRate;
 	nes->exactPpu = exactPpu;
+	nes->dotPpu = dotPpu;
 	nes->exactTiming = exactTiming;
 	nes->pads[0] = pads[0];
 	nes->pads[1] = pads[1];

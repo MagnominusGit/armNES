@@ -411,6 +411,313 @@ static inline void renderDot(struct NES* nes, int dot, bool visible, bool pre) {
 	}
 }
 
+// The Accurate mode: sprites as the hardware handles them, a dot at a time (after ppu.c, without
+// its half-dot latches and OAM corruption). Secondary OAM is cleared on dots 1-64, filled from OAM on
+// 65-256 (odd dots read, even dots check and copy, with the overflow search's diagonal walk), then
+// fetched slot by slot on 257-320 into eight shifters with X counters.
+
+static void dotIncrementOam2(struct Ppu* ppu) {
+	if (!ppu->oam2Overflowed && ++ppu->oam2Addr == 0x20) {
+		ppu->oam2Overflowed = true;
+		ppu->oam2Addr = 0;
+	}
+}
+
+static void dotEvaluate(struct NES* nes, bool readOnly) {
+	struct Ppu* ppu = &nes->ppu;
+	int height = ppu->tall ? 16 : 8;
+	uint8_t before = ppu->oamAddr;
+	if (!ppu->oam2Overflowed && !readOnly) {
+		ppu->oam2[ppu->oam2Addr] = ppu->oamBuffer;
+	}
+	uint8_t oam2Read = ppu->oam2[ppu->oam2Addr];
+	if (ppu->evalTick == 0) {
+		ppu->verticalOffset = (uint16_t) ((ppu->scanline & 0xFF) - ppu->oamBuffer);
+		if (!ppu->nineObjects && !readOnly && ppu->verticalOffset < height) {
+			if (!ppu->oam2Overflowed) {
+				ppu->oamAddr++;
+				dotIncrementOam2(ppu);
+				if (ppu->dot == 66) {
+					ppu->nextHasZero = true;
+				}
+			} else {
+				ppu->nineObjects = true;
+				ppu->overflow = true;
+				ppu->oamAddr++;
+			}
+			ppu->evalTick++;
+		} else {
+			if (ppu->dot == 66) {
+				ppu->nextHasZero = false;
+			}
+			if (!readOnly) {
+				if (ppu->oam2Overflowed && !ppu->nineObjects) {
+					// The overflow search's diagonal walk
+					ppu->oamAddr += (ppu->oamAddr & 3) == 3 ? 1 : 5;
+				} else {
+					ppu->oamAddr = (ppu->oamAddr + 4) & 0xFC;
+				}
+			}
+		}
+	} else {
+		if (ppu->evalTick == 3) {
+			int offset = ppu->scanline - ppu->oamBuffer;
+			if (offset >= 0 && offset < height) {
+				if (!readOnly) {
+					ppu->oamAddr += ppu->oam2Overflowed ? 4 : 1;
+				}
+			} else {
+				ppu->oamAddr = (ppu->oamAddr + 1) & 0xFC;
+			}
+		} else if (!readOnly) {
+			ppu->oamAddr++;
+		}
+		ppu->evalTick = (ppu->evalTick + 1) & 3;
+		if (!ppu->oam2Overflowed && !readOnly) {
+			dotIncrementOam2(ppu);
+		}
+	}
+	if (ppu->oamAddr < before && ppu->oamAddr < 4) {
+		ppu->oamAddrOverflowed = true;
+	}
+	ppu->oamBuffer = oam2Read;
+}
+
+// A sprite pattern's address for the slot being fetched
+static uint16_t dotPatternAddress(const struct Ppu* ppu) {
+	bool flipY = ppu->spriteAttrNow & 0x80;
+	int row = flipY ? 7 - (ppu->verticalOffset & 7) : (ppu->verticalOffset & 7);
+	if (!ppu->tall) {
+		return (ppu->spriteTable ? 0x1000 : 0) | (ppu->spritePattern << 4) | row;
+	}
+	return ((ppu->spritePattern & 1) ? 0x1000 : 0) | ((ppu->spritePattern & 0xFE) << 4) |
+		(((ppu->verticalOffset & 8) ^ (flipY ? 8 : 0)) << 1) | row;
+}
+
+static void dotSpriteFetch(struct NES* nes, int dot) {
+	struct Ppu* ppu = &nes->ppu;
+	int slot = ((dot - 1) & 0x38) >> 3;
+	int height = ppu->tall ? 16 : 8;
+	// Each dot uses the byte the dot before read, and reads the next
+	uint8_t const read = ppu->oam2[ppu->oam2Addr];
+	switch ((dot - 1) & 7) {
+	case 0:
+		busAddress(nes, 0x2000 | (ppu->v & 0xFFF));
+		dotIncrementOam2(ppu);
+		break;
+	case 1:
+		ppu->verticalOffset = (uint16_t) ((ppu->scanline & 0xFF) - ppu->oamBuffer);
+		dotIncrementOam2(ppu);
+		break;
+	case 2:
+		ppu->spritePattern = ppu->oamBuffer;
+		busAddress(nes, 0x2000 | (ppu->v & 0xFFF));
+		dotIncrementOam2(ppu);
+		break;
+	case 3:
+		ppu->spriteAttr[slot] = ppu->oamBuffer;
+		ppu->spriteAttrNow = ppu->oamBuffer;
+		break;
+	case 4:
+		ppu->spriteCounter[slot] = ppu->oamBuffer;
+		ppu->spriteX[slot] = ppu->oamBuffer;
+		busAddress(nes, dotPatternAddress(ppu));
+		break;
+	case 5: {
+		ppu->spriteFetch = true;
+		uint8_t lo = chrRead(nes, dotPatternAddress(ppu));
+		ppu->spriteFetch = false;
+		ppu->spriteL[slot] = ppu->verticalOffset < height ? (ppu->spriteAttr[slot] & 0x40 ? reverseBits(lo) : lo) : 0;
+		break;
+	}
+	case 6:
+		busAddress(nes, dotPatternAddress(ppu) | 8);
+		break;
+	case 7: {
+		ppu->spriteFetch = true;
+		uint8_t hi = chrRead(nes, dotPatternAddress(ppu) | 8);
+		ppu->spriteFetch = false;
+		ppu->spriteH[slot] = ppu->verticalOffset < height ? (ppu->spriteAttr[slot] & 0x40 ? reverseBits(hi) : hi) : 0;
+		dotIncrementOam2(ppu);
+		break;
+	}
+	}
+	ppu->oamBuffer = read;
+}
+
+// Secondary OAM's address goes back to 0, and its overflowed flag clears, the dot after 63, 255 or 339
+// if rendering was on then
+static void dotOam2Reset(struct Ppu* ppu, int dot) {
+	if (ppu->oam2Reset && (dot == 64 || dot == 256 || dot == 340)) {
+		ppu->oam2Reset = 0;
+		ppu->oam2Addr = 0;
+		ppu->oam2Overflowed = false;
+	}
+}
+
+// One dot of sprite work on a line that renders
+static void dotSprites(struct NES* nes, int dot, bool pre) {
+	struct Ppu* ppu = &nes->ppu;
+	if (dot == 63 || dot == 255 || dot == 339) {
+		ppu->oam2Reset = 1;
+	}
+	if (dot == 0) {
+		dotIncrementOam2(ppu);
+	} else if (dot <= 64) {
+		if (dot & 1) {
+			ppu->oamBuffer = pre ? ppu->oam2[ppu->oam2Addr] : 0xFF;
+			if (dot == 1) {
+				ppu->oam2Addr = 0;
+				ppu->evalTick = 0;
+				ppu->oamAddrOverflowed = false;
+			}
+		} else {
+			if (!pre) {
+				ppu->oam2[ppu->oam2Addr] = ppu->oamBuffer;
+			}
+			dotIncrementOam2(ppu);
+		}
+	} else if (dot <= 256) {
+		if (dot == 65) {
+			ppu->nineObjects = false;
+			ppu->oamAddrOverflowed = false;
+		}
+		if (dot & 1) {
+			ppu->oamBuffer = ppu->oam[ppu->oamAddr];
+		} else if (!ppu->oamAddrOverflowed) {
+			dotEvaluate(nes, pre);
+		} else {
+			if (!pre) {
+				ppu->oamAddr = (ppu->oamAddr + 4) & 0xFC;
+			}
+			ppu->oamBuffer = ppu->oam2[ppu->oam2Addr];
+		}
+	} else if (dot <= 320) {
+		ppu->hasZero = ppu->nextHasZero;
+		ppu->oamAddr = 0;
+		dotSpriteFetch(nes, dot);
+	} else {
+		ppu->oamBuffer = ppu->oam2[ppu->oam2Addr];
+	}
+}
+
+// The sprite shifters after a pixel: a slot counts its X down, then shifts out its pattern
+static void dotShiftSprites(struct Ppu* ppu) {
+	for (int i = 0; i < 8; i++) {
+		if (ppu->spriteCounter[i] && !(ppu->scanline == 0 && ppu->skippedDot)) {
+			ppu->spriteCounter[i]--;
+		} else {
+			ppu->spriteL[i] <<= 1;
+			ppu->spriteH[i] <<= 1;
+		}
+	}
+}
+
+static void dotIdleSprites(struct Ppu* ppu, int dot) {
+	if (dot >= 1 && dot <= 256) {
+		for (int i = 0; i < 8; i++) {
+			if (ppu->spriteCounter[i] && !(ppu->scanline == 0 && ppu->skippedDot)) {
+				ppu->spriteCounter[i]--;
+			}
+		}
+	} else if (dot == 339) {
+		memset(ppu->spriteCounter, 0, sizeof(ppu->spriteCounter));
+	}
+}
+
+// The pixel at x from the background shifters and the sprite slots
+static void dotPixel(struct NES* nes, int x) {
+	struct Ppu* ppu = &nes->ppu;
+	int bg = 0;
+	if (ppu->showBg && (x >= 8 || ppu->showBgLeft)) {
+		int bit = 15 - ppu->fineX;
+		bg = ((ppu->bgL >> bit) & 1) | (((ppu->bgH >> bit) & 1) << 1);
+		if (bg) {
+			bg |= (((ppu->atL >> bit) & 1) | (((ppu->atH >> bit) & 1) << 1)) << 2;
+		}
+	}
+	int index = bg;
+	if (ppu->showSprites && (x >= 8 || ppu->showSpritesLeft)) {
+		for (int i = 0; i < 8; i++) {
+			if (ppu->spriteCounter[i]) {
+				continue;
+			}
+			int color = (ppu->spriteL[i] >> 7) | ((ppu->spriteH[i] >> 7) << 1);
+			if (!color) {
+				continue;
+			}
+			if (i == 0 && ppu->hasZero && bg && ppu->showBg && x != 255 && !ppu->hit && !ppu->pendingHit) {
+				ppu->pendingHit = true;
+				ppu->hitDelay = 3;
+			}
+			if (!bg || !(ppu->spriteAttr[i] & 0x20)) {
+				index = 0x10 | ((ppu->spriteAttr[i] & 3) << 2) | color;
+			}
+			break;
+		}
+	}
+	uint8_t color = paletteRead(ppu, index);
+	if (ppu->gray) {
+		color &= 0x30;
+	}
+	uint16_t emphasis = (ppu->emphRed ? 0x40 : 0) | (ppu->emphGreen ? 0x80 : 0) | (ppu->emphBlue ? 0x100 : 0);
+	uint16_t* line = &nes->frameBuffer[ppu->scanline * NES_WIDTH];
+	if (ppu->scanline == 0 && ppu->skippedDot) {
+		if (x) {
+			line[x - 1] = color | emphasis;
+		}
+		if (x == 255) {
+			line[255] = ppu->palette[0] | emphasis;
+		}
+		return;
+	}
+	line[x] = color | emphasis;
+}
+
+// One dot of a line that renders, in the Accurate mode
+static void renderDotAccurate(struct NES* nes, int dot, bool visible, bool pre) {
+	struct Ppu* ppu = &nes->ppu;
+	if (dot >= 1 && dot <= 256) {
+		if (visible) {
+			dotPixel(nes, dot - 1);
+		}
+		dotShiftSprites(ppu);
+		fetchTile(nes, dot);
+		shift(ppu);
+		if (!(dot & 7)) {
+			reload(ppu);
+			incrementX(ppu);
+		}
+		if (dot == 256) {
+			incrementY(ppu);
+		}
+		dotSprites(nes, dot, pre);
+	} else if (dot <= 320) {
+		if (dot == 257) {
+			shift(ppu);
+			ppu->v = (ppu->v & ~0x41F) | (ppu->t & 0x41F);
+		}
+		if (pre && dot >= 280 && dot <= 304) {
+			ppu->v = (ppu->v & ~0x7BE0) | (ppu->t & 0x7BE0);
+		}
+		dotSprites(nes, dot, pre);
+	} else if (dot <= 336) {
+		fetchTile(nes, dot);
+		shift(ppu);
+		if (!(dot & 7)) {
+			reload(ppu);
+			incrementX(ppu);
+		}
+		dotSprites(nes, dot, pre);
+	} else {
+		if (nes->watchPpuBus && (dot == 337 || dot == 339)) {
+			busAddress(nes, 0x2000 | (ppu->v & 0xFFF));
+		}
+		dotSprites(nes, dot, pre);
+	}
+	dotOam2Reset(ppu, dot);
+}
+
 // The PPU outputs each pixel three dots after choosing its color, with the emphasis and grayscale
 // of that moment: when they change, the pixels drawn in the last three dots take the new ones
 static void retint(struct NES* nes) {
@@ -547,14 +854,25 @@ static inline void step(struct NES* nes) {
 			busAddress(nes, (ppu->bgTable ? 0x1000 : 0) | (ppu->ntLatch << 4) | (ppu->v >> 12));
 		}
 		if (rendering(ppu)) {
-			renderDot(nes, dot, visible, line == pre);
+			if (nes->dotPpu) {
+				renderDotAccurate(nes, dot, visible, line == pre);
+			} else {
+				renderDot(nes, dot, visible, line == pre);
+			}
 			if (line == pre && dot == 339 && ppu->oddFrame && nes->region == REGION_NTSC) {
 				// Odd frames skip the last dot of the pre-render line while rendering
 				ppu->dot = 340;
 				ppu->skippedDot = true;
 			}
-		} else if (visible && dot >= 1 && dot <= 256) {
-			drawPixel(nes, dot - 1);
+		} else {
+			if (visible && dot >= 1 && dot <= 256) {
+				drawPixel(nes, dot - 1);
+			}
+			// Accurate: with rendering off the sprite counters go on counting, and are cleared at dot 339
+			if (nes->dotPpu) {
+				dotIdleSprites(ppu, dot);
+				dotOam2Reset(ppu, dot);
+			}
 		}
 		if (line == pre && dot == 1) {
 			ppu->vblank = false;
@@ -918,6 +1236,8 @@ void fastRun(struct NES* nes, int dots) {
 					dots -= n;
 					continue;
 				}
+			} else if (nes->dotPpu) {
+				// Accurate: every other dot one at a time
 			} else if (line == 240 && dot < 340 && (!nes->watchPpuBus || (nes->overclockRepeat && nes->overclockPostRender))) {
 				// The line after the picture (or an overclocked frame's held one): idle to its last dot
 				int n = 340 - dot;
@@ -1151,7 +1471,8 @@ uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 		nesPpuSyncAhead(nes, 1);
 		value = ppu->oam[ppu->oamAddr];
 		if (renderingLine(nes) && ppu->scanline < 240) {
-			value = ppu->dot >= 1 && ppu->dot <= 64 ? 0xFF : value;
+			// Accurate: what sprite evaluation or fetching has on the OAM bus
+			value = nes->dotPpu ? ppu->oamBuffer : ppu->dot >= 1 && ppu->dot <= 64 ? 0xFF : value;
 		}
 		setBus(ppu, value, 0xFF);
 		return value;
