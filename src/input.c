@@ -114,8 +114,23 @@ void inputLatch(struct NES* nes) {
 	}
 }
 
-// The Zapper's photodiode: light while the beam is within about 20 lines past a bright pixel at the
-// aim (white and light colors; it sees nothing off the screen)
+// How many lines the Zapper's photodiode stays on after the beam passes a color: about 26 for white,
+// 24 for light gray and the light colors, 19 for dark gray and the mid colors, none for the dark
+// colors and black (measured with the Zap Ruder test ROM, per the nesdev wiki)
+static int lightLines(uint8_t color) {
+	int const hue = color & 0x0F, level = color >> 4;
+	if (hue >= 0x0E || (hue == 0x0D && level < 2)) {
+		return 0;
+	}
+	if (hue == 0 || hue == 0x0D) {
+		// The grays: $00 and $2D dark, $10 and $3D light, $20 and $30 white
+		return level >= 2 && hue == 0 ? 26 : (level == 1 || level == 3) ? 24 : 19;
+	}
+	return level >= 2 ? 24 : level == 1 ? 19 : 0;
+}
+
+// The Zapper's photodiode: light while the beam is within that many lines past a pixel near the aim
+// (it sees nothing off the screen)
 static bool zapperLight(struct NES* nes) {
 	const struct InputConfig* in = &nes->input;
 	if (in->zapperX < 0 || in->zapperY < 0) {
@@ -124,7 +139,7 @@ static bool zapperLight(struct NES* nes) {
 	nesPpuSync(nes);
 	int line = nes->ppu.scanline, dot = nes->ppu.dot;
 	int y = in->zapperY, x = in->zapperX;
-	if (line < y || line - y >= 20 || (line == y && dot <= x)) {
+	if (line < y - 2 || line - y >= 28) {
 		return false;
 	}
 	for (int dy = -2; dy <= 2; dy++) {
@@ -134,8 +149,7 @@ static bool zapperLight(struct NES* nes) {
 			if (px < 0 || px > 255 || py < 0 || py > 239 || py > line || (py == line && px + 5 > dot)) {
 				continue;
 			}
-			uint8_t color = nes->frameBuffer[py * NES_WIDTH + px] & 0x3F;
-			if (color >= 0x20 && (color & 0x0F) <= 0x0C) {
+			if (line - py < lightLines(nes->frameBuffer[py * NES_WIDTH + px] & 0x3F)) {
 				return true;
 			}
 		}
