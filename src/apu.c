@@ -687,7 +687,16 @@ static int bulkCycles(struct NES* nes) {
 		}
 	}
 	if (!noiseSilent(&apu->noise)) {
-		t = getCycles(apu, apu->noise.timer);
+		// The level follows bit 0 alone: only the reload that flips it matters
+		const struct Noise* n = &apu->noise;
+		uint16_t shift = n->shift;
+		int m = 0;
+		do {
+			uint16_t feedback = (shift ^ (shift >> (n->mode ? 6 : 1))) & 1;
+			shift = (shift >> 1) | (feedback << 14);
+			m++;
+		} while (m < 32 && !((shift ^ n->shift) & 1));
+		t = getCycles(apu, n->timer + (m - 1) * (n->timerPeriod + 1));
 		k = t < k ? t : k;
 	}
 	if (!dmcIdle(d)) {
