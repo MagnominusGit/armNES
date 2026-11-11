@@ -50,7 +50,7 @@ one is chosen (the standalone app doesn't), a game whose NES 2.0 header names on
 Zapper aims with a light gun or mouse pointer, a mouse-moved crosshair, or the right stick, and a
 touch screen aims and fires wherever it's touched. Zapper Motion (off by default) adds the
 device's motion on top of the right stick: turning it with the gyroscope or tilting it with the
-accelerometer, for fine aim or across the whole screen. Players 3 and 4 use the NES Four Score or the
+accelerometer, across the whole screen or for fine aim. Players 3 and 4 use the NES Four Score or the
 Famicom's adapter; the Famicom's expansion port also takes the paddle, the Power Pad and the
 Famicom keyboard.
 

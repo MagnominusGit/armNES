@@ -300,9 +300,9 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"gyroscope, or tilting it with the accelerometer. R3 takes how the device is held as the middle.",
 		NULL, "input", { { "Off", NULL }, { "Gyroscope", NULL }, { "Accelerometer", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_motion_range", "Zapper Motion Range", NULL,
-		"How far the motion moves the crosshair: a quarter of the screen either way, for fine aim on top "
-		"of the stick, or the whole screen, to aim by motion alone.",
-		NULL, "input", { { "Fine", NULL }, { "Whole screen", NULL }, { NULL, NULL } }, "Fine" },
+		"How far the motion moves the crosshair: the whole screen, to aim by motion alone, or a quarter of "
+		"it either way, for fine aim on top of the stick.",
+		NULL, "input", { { "Whole screen", NULL }, { "Fine", NULL }, { NULL, NULL } }, "Whole screen" },
 	{ "armnes_motion_sensitivity", "Zapper Motion Sensitivity", NULL,
 		"How far the device turns or tilts to move the crosshair all the way: about 20° at 100%, less the "
 		"higher it is.",
