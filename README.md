@@ -62,7 +62,7 @@ Sound only for carts with their own sound chip, and the Zapper options only with
 
 | Group | Options |
 | --- | --- |
-| System | Region (Auto, NTSC, PAL, Dendy), Overclock, Disk System Fast Loading, Cart Jumper |
+| System | Region (Auto, NTSC, PAL, Dendy), PPU Accuracy (Fast, Exact), Overclock, Disk System Fast Loading, Cart Jumper |
 | Video | Palette, NTSC/PAL Filter (Composite, S-Video), Scanlines, Sprite Limit, Aspect Ratio, Crop Top and Bottom, Crop Sides |
 | Audio | Volume and stereo position for each channel, and for the cart's sound chip |
 | Input | Turbo Speed, Allow Opposing Directions, Left Stick as D-Pad, 4 Players, Famicom Expansion Port, Zapper Input, Zapper Sensitivity, Zapper Stick Invert, Zapper Motion, Zapper Motion Range, Zapper Motion Sensitivity, Zapper Motion Invert, Zapper Motion Sensor Rotation |
@@ -79,9 +79,9 @@ or 512 with the emphasis combinations).
 What games show and play comes first; test ROMs that probe corners no game reaches come second.
 
 - The PPU draws each pixel at the cycle it would on the console, so mid-frame effects, split screens
-  and sprite 0 hits land where they should. A cycle-exact PPU, used for testing, passes all 147 of
-  AccuracyCoin's tests. The faster PPU games run on passes 128, and its pictures are checked against
-  the cycle-exact one frame by frame.
+  and sprite 0 hits land where they should. The cycle-exact PPU (PPU Accuracy: Exact, many times
+  slower, for desktops) passes all 147 of AccuracyCoin's tests. The fast PPU games run on by default
+  passes 131, and its pictures are checked against the cycle-exact one frame by frame.
 - The APU passes blargg's `apu_test` suite, including its DMC tests, and mixes its channels as the
   console's nonlinear mixer does. The Disk System's, VRC6's, VRC7's, MMC5's, Namco 163's and Sunsoft
   5B's sound chips are emulated.
@@ -119,7 +119,7 @@ and `armulators/package/android/build.sh` makes the APK.
 
 ## Known gaps
 
-- The faster PPU misses 19 of AccuracyCoin's 147 tests, on behavior no game is known to depend on.
+- The fast PPU misses 16 of AccuracyCoin's 147 tests, on behavior no game is known to depend on.
 - Three of blargg's APU reset tests fail: what a soft reset leaves in the frame counter and length
   counters.
 - Overclock gives games extra CPU time each frame; a few games misbehave with it.
