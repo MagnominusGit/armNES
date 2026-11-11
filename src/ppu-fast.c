@@ -2,6 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
+#include "boards/mmc3.h"
 
 #include <string.h>
 
@@ -34,6 +35,21 @@ static inline uint8_t chrRead(struct NES* nes, uint16_t address) {
 // What the PPU puts on its address bus; boards that watch it see it on the next dot
 static inline void busAddress(struct NES* nes, uint16_t address) {
 	nes->ppu.addressBus = address;
+}
+
+// A dot shows the board the bus as the last one left it; an MMC3, which only acts on A12 changing, is
+// shown only the changes
+static inline void showBus(struct NES* nes) {
+	uint16_t const address = nes->ppu.addressBus;
+	if (nes->board->ppuBus == mmc3PpuBus) {
+		bool const a12 = address & 0x1000;
+		if (nes->busShown && a12 == nes->busA12Shown) {
+			return;
+		}
+		nes->busShown = true;
+		nes->busA12Shown = a12;
+	}
+	nes->board->ppuBus(nes, address);
 }
 
 static inline uint8_t paletteRead(const struct Ppu* ppu, int index) {
@@ -495,7 +511,7 @@ static inline void step(struct NES* nes) {
 	ppu->dotTick += nes->ppuPeriod;
 	// Boards see the bus as the last dot left it
 	if (nes->watchPpuBus) {
-		nes->board->ppuBus(nes, ppu->addressBus);
+		showBus(nes);
 	}
 	if (ppu->delay2001 | ppu->delay2001Emphasis | ppu->delay2005 | ppu->delay2006 | ppu->vramReadStep | ppu->vramWriteStep) {
 		registerEffects(nes);
@@ -818,7 +834,7 @@ static void renderHblankWatched(struct NES* nes, int n) {
 	struct Ppu* ppu = &nes->ppu;
 	for (int dot = ppu->dot + 1, end = ppu->dot + n; dot <= end; dot++) {
 		ppu->dotTick += nes->ppuPeriod;
-		nes->board->ppuBus(nes, ppu->addressBus);
+		showBus(nes);
 		ppu->dot = dot;
 		if (dot <= 320) {
 			if (dot == 257) {
@@ -842,6 +858,37 @@ static void renderHblankWatched(struct NES* nes, int n) {
 		}
 	}
 	ppu->dots += n;
+}
+
+// Dots 257-340 of a visible line for an MMC3, which only sees A12 change: the sprite fetches slot by
+// slot, the board shown each change at the dot it comes, then the rest dot by dot
+static void renderHblankMmc3(struct NES* nes) {
+	struct Ppu* ppu = &nes->ppu;
+	uint64_t const start = ppu->dotTick;
+	int const period = nes->ppuPeriod, line = ppu->scanline & 0xFF;
+	// Dot 257 shows what dot 256 left
+	ppu->dotTick = start + period;
+	showBus(nes);
+	shift(ppu);
+	ppu->v = (ppu->v & ~0x41F) | (ppu->t & 0x41F);
+	ppu->oamAddr = 0;
+	for (int slot = 0; slot < 8; slot++) {
+		int const dot = 257 + 8 * slot;
+		// The name table fetches, then the pattern's, each seen from the dot after
+		ppu->addressBus = 0x2000 | (ppu->v & 0xFFF);
+		ppu->dotTick = start + (uint64_t) (dot + 1 - 256) * period;
+		showBus(nes);
+		uint16_t const pattern = spriteAddress(ppu, slot, line);
+		ppu->addressBus = pattern;
+		ppu->dotTick = start + (uint64_t) (dot + 5 - 256) * period;
+		showBus(nes);
+		ppu->addressBus = pattern | 8;
+	}
+	ppu->dot = 320;
+	ppu->dotTick = start + 64 * period;
+	fetchSprites(nes);
+	ppu->dots += 64;
+	renderHblankWatched(nes, 20);
 }
 
 void fastRun(struct NES* nes, int dots) {
@@ -934,7 +981,9 @@ void fastRun(struct NES* nes, int dots) {
 					continue;
 				}
 				if (dot == 256 && dots >= 84) {
-					if (nes->watchPpuBus) {
+					if (nes->board->ppuBus == mmc3PpuBus) {
+						renderHblankMmc3(nes);
+					} else if (nes->watchPpuBus) {
 						renderHblankWatched(nes, 84);
 					} else {
 						renderHblank(nes);

@@ -347,6 +347,8 @@ struct NES {
 	bool ppuEveryCycle;
 	// The frame won't be shown: the fast PPU leaves out what only the picture needs
 	bool skipPixels;
+	// For boards that only act on A12 changing: the A12 they were last shown, if busShown
+	bool busShown, busA12Shown;
 	int quietGranted;
 	// The master clock of this CPU cycle's access, for boards that count M2 from the PPU's side, and
 	// the next master clock the PPU hasn't run

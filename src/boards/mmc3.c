@@ -147,7 +147,9 @@ int mmc3IrqQuietDots(struct NES* nes) {
 		return 1 << 20;
 	}
 	int safe = (m->reload || m->counter == 0) ? m->latch : m->counter - 1;
-	return safe * 8;
+	// With 8x8 sprites A12 stays low long enough to count at most once a line; 8x16 sprites can
+	// switch tables from slot to slot
+	return nes->ppu.tall || safe < 2 ? safe * 8 : (safe - 1) * 341;
 }
 
 void mmc3Reset(struct NES* nes, bool hard) {
