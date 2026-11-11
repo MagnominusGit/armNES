@@ -829,28 +829,42 @@ uint8_t cpuPeek(struct NES* nes, uint16_t address) {
 	return 0;
 }
 
-// A loop waiting on $2002 (BIT or LDA, then a branch on bit 7 or 6 back to it, 7 cycles a pass):
+// A loop waiting on $2002 (BIT or LDA, then a branch on bit 7 or 6 back to it, 7 cycles a pass; or LDA,
+// AND and BEQ or BNE, 9):
 // while the flags it reads can't change and nothing else can happen, the passes it would make leave
 // nothing behind but time, as the next read rewrites A, the flags and the PPU's open bus. Called at
 // the read, three cycles into a pass.
 static uint16_t statusPoll(struct NES* nes, uint16_t address) {
 	struct Cpu* cpu = &nes->cpu;
 	struct Ppu* ppu = &nes->ppu;
-	if ((address & 0xE007) != 0x2002 || address >= 0x4000 || nes->exactPpu || nes->dotPpu || nes->slowCycles ||
+	if ((address & 0xE007) != 0x2002 || address >= 0x4000 || nes->exactPpu || nes->slowCycles ||
 		nes->overclockLines || (nes->cheatPages & 4)) {
 		return address;
 	}
 	uint8_t branch = cpuPeek(nes, cpu->pc);
 	uint16_t start = cpu->pc - 3;
-	if (cpuPeek(nes, cpu->pc + 1) != 0xFB || ((start + 5) & 0xFF00) != (start & 0xFF00)) {
+	// Or LDA, AND #$40 or #$80, then BEQ or BNE back: 9 cycles a pass
+	uint8_t mask = 0;
+	int pass = 7;
+	if (branch == 0x29 && cpuPeek(nes, start) == 0xAD) {
+		mask = cpuPeek(nes, cpu->pc + 1);
+		branch = cpuPeek(nes, cpu->pc + 2);
+		if ((mask != 0x40 && mask != 0x80) || cpuPeek(nes, cpu->pc + 3) != 0xF9 ||
+			((start + 7) & 0xFF00) != (start & 0xFF00)) {
+			return address;
+		}
+		pass = 9;
+	} else if (cpuPeek(nes, cpu->pc + 1) != 0xFB || ((start + 5) & 0xFF00) != (start & 0xFF00)) {
 		return address;
 	}
 	nesPpuSync(nes);
 	bool bit7 = ppu->vblank, bit6 = ppu->hit;
-	bool again = branch == 0x10 ? !bit7 : branch == 0x50 && cpuPeek(nes, start) == 0x2C ? !bit6 :
+	bool const masked = mask == 0x80 ? bit7 : bit6;
+	bool again = mask ? (branch == 0xF0 ? !masked : branch == 0xD0 && masked) :
+		branch == 0x10 ? !bit7 : branch == 0x50 && cpuPeek(nes, start) == 0x2C ? !bit6 :
 		branch == 0x70 && cpuPeek(nes, start) == 0x2C ? bit6 : false;
-	// With OAMADDR off 0 another sprite takes sprite 0's place
-	if (!again || bit7 || ppu->resetting || ppu->oamAddr) {
+	// With OAMADDR off 0 another sprite takes sprite 0's place (Balanced follows its evaluation)
+	if (!again || bit7 || ppu->resetting || (ppu->oamAddr && !nes->dotPpu)) {
 		return address;
 	}
 	quietEnd(nes);
@@ -861,9 +875,9 @@ static uint16_t statusPoll(struct NES* nes, uint16_t address) {
 		int byHit = dots * nes->ppuPeriod / nes->cpuPeriod;
 		cycles = cycles < byHit ? cycles : byHit;
 	}
-	int passes = (cycles - 16) / 7;
+	int passes = (cycles - 16) / pass;
 	if (passes > 0) {
-		int skipped = passes * 7, period = nes->cpuPeriod;
+		int skipped = passes * pass, period = nes->cpuPeriod;
 		nes->slotTick = nes->masterClock + (uint64_t) (skipped - 1) * period;
 		nes->masterClock += (uint64_t) skipped * period;
 		nes->ppuLag += skipped * period;

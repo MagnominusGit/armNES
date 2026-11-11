@@ -1515,6 +1515,38 @@ bool fastStatusAhead(struct NES* nes, uint8_t* out) {
 	return true;
 }
 
+// Balanced: a line's sprite 0 flag is the first evaluation's, on dot 66 of the line before. It's
+// OAM[0]'s when that evaluation starts from OAM address 0, which the fetches on dots 257-320 leave
+// behind; the pre-render line's evaluation starts wherever the CPU left it.
+static int dotsToLine(const struct NES* nes, int line, int target) {
+	int const lines = line >= 240 ? preLine(nes) + 1 - line + target : target - line;
+	return lines * 341 - nes->ppu.dot - 1;
+}
+
+static int balancedHitHorizon(const struct NES* nes, int line, int first, int last) {
+	const struct Ppu* ppu = &nes->ppu;
+	if (line >= 0 && ppu->hasZero && ppu->dot < 256) {
+		return 0;
+	}
+	int const next = line >= 240 ? 0 : line + 1;
+	int best = -1, from = next + 1;
+	if (next < 240) {
+		if (line < 240 && ppu->dot >= 66) {
+			best = ppu->nextHasZero ? dotsToLine(nes, line, next) : -1;
+		} else if (line >= 0 && !ppu->oamAddr) {
+			from = next;
+		} else {
+			best = dotsToLine(nes, line, next);
+		}
+	}
+	int const hitLine = first > from ? first : from;
+	if (hitLine <= last && hitLine < 240) {
+		int const dots = dotsToLine(nes, line, hitLine);
+		best = best < 0 || dots < best ? dots : best;
+	}
+	return best;
+}
+
 // Dots from where the PPU is before sprite 0 can hit, or -1 if it can't before the next pre-render line:
 // not before its first line, and on its lines not before its first pixel on this one or the next line.
 // None while a register write is still landing.
@@ -1526,10 +1558,16 @@ int ppuHitHorizon(const struct NES* nes) {
 	}
 	// The pre-render line comes before line 0, and can be a dot short
 	int line = ppu->scanline == preLine(nes) ? -1 : ppu->scanline;
-	if (ppu->hit || !ppu->showBg || !ppu->showSprites || ppu->oam[0] >= 239 || line >= 240) {
+	if (ppu->hit || !ppu->showBg || !ppu->showSprites) {
 		return -1;
 	}
 	int first = ppu->oam[0] + 1, last = ppu->oam[0] + (ppu->tall ? 16 : 8);
+	if (nes->dotPpu) {
+		return balancedHitHorizon(nes, line, first, last);
+	}
+	if (ppu->oam[0] >= 239 || line >= 240) {
+		return -1;
+	}
 	if (line < first) {
 		return (first - line) * 341 - ppu->dot - 1;
 	}
