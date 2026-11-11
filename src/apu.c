@@ -50,8 +50,11 @@ static const uint16_t stepsNtsc5[5] = { 7457, 14913, 22371, 37281, 37282 };
 static const uint16_t stepsPal[6] = { 8313, 16627, 24939, 33252, 33253, 33254 };
 static const uint16_t stepsPal5[5] = { 8313, 16627, 24939, 41565, 41566 };
 
-// Shifts of the DMC's LFSR from each state until it reaches 1 (and expires on the next)
+// Shifts of the DMC's LFSR from each state until it reaches 1 (and expires on the next), and the
+// other way round for 1's cycle, which every rate's seed is on (checked)
 static uint16_t lfsrToOne[512];
+static uint16_t lfsrAt[512];
+static bool lfsrOnCycle;
 
 static uint16_t lfsrShift(uint16_t lfsr) {
 	bool b0 = lfsr & 1, b4 = lfsr & 16;
@@ -71,6 +74,17 @@ static void buildLfsr(void) {
 			n++;
 		}
 		lfsrToOne[state] = n;
+	}
+	// Back again, for the states on 1's cycle: the state that many shifts from 1
+	uint16_t l = 1;
+	do {
+		lfsrAt[lfsrToOne[l]] = l;
+		l = lfsrShift(l);
+	} while (l != 1 && lfsrToOne[l] < 512);
+	lfsrOnCycle = true;
+	for (int i = 0; i < 16; i++) {
+		lfsrOnCycle &= lfsrAt[lfsrToOne[dmcLfsrNtsc[i] & 0x1FF]] == dmcLfsrNtsc[i] &&
+			lfsrAt[lfsrToOne[dmcLfsrPal[i] & 0x1FF]] == dmcLfsrPal[i];
 	}
 }
 
@@ -647,6 +661,12 @@ static int frameQuiet(const struct NES* nes) {
 	return 0;
 }
 
+// The DMC's output unit with nothing to play: its timer can wrap without anything changing but the
+// shifter and the bit count
+static inline bool dmcIdle(const struct Dmc* d) {
+	return lfsrOnCycle && d->silent && !d->bytesRemaining && !d->setImplicitAbort;
+}
+
 static int bulkCycles(struct NES* nes) {
 	struct Apu* apu = &nes->apu;
 	const struct Dmc* d = &apu->dmc;
@@ -670,8 +690,10 @@ static int bulkCycles(struct NES* nes) {
 		t = getCycles(apu, apu->noise.timer);
 		k = t < k ? t : k;
 	}
-	t = getCycles(apu, lfsrToOne[d->lfsr & 0x1FF]);
-	k = t < k ? t : k;
+	if (!dmcIdle(d)) {
+		t = getCycles(apu, lfsrToOne[d->lfsr & 0x1FF]);
+		k = t < k ? t : k;
+	}
 	if (!triangleFrozen(apu)) {
 		t = apu->triangle.timer;
 		k = t < k ? t : k;
@@ -703,8 +725,21 @@ static void bulkAdvance(struct NES* nes, int k) {
 		uint16_t feedback = (n->shift ^ (n->shift >> (n->mode ? 6 : 1))) & 1;
 		n->shift = (n->shift >> 1) | (feedback << 14);
 	}
-	for (int i = 0; i < gets; i++) {
-		apu->dmc.lfsr = lfsrShift(apu->dmc.lfsr);
+	struct Dmc* d = &apu->dmc;
+	uint16_t at = lfsrToOne[d->lfsr & 0x1FF];
+	if (lfsrOnCycle && lfsrAt[at] == d->lfsr) {
+		int wraps = timerAdvance(&at, lfsrToOne[dmcSeed(nes, d->rateIndex) & 0x1FF], gets);
+		d->lfsr = lfsrAt[at];
+		// An idle output unit's steps (bulkCycles lets the timer wrap only then): the empty shifter
+		// shifts and the bit count goes round, the level and the silence flag stay
+		if (wraps) {
+			d->shifter = wraps >= 8 ? 0 : d->shifter >> wraps;
+			d->bitsRemaining = (uint8_t) ((((d->bitsRemaining - 1 - wraps) % 8) + 8) % 8 + 1);
+		}
+	} else {
+		for (int i = 0; i < gets; i++) {
+			d->lfsr = lfsrShift(d->lfsr);
+		}
 	}
 	timerAdvance(&apu->triangle.timer, apu->triangle.timerPeriod, k);
 	apu->frameCounter += k;
