@@ -33,18 +33,30 @@ static void logLine(enum retro_log_level level, const char* format, ...) {
 }
 
 // CORETEST_SENSOR="x,y,z[,from]": the accelerometer reads this (m/s^2) from a frame on, flat before it
+// CORETEST_GYRO="x,y,z,from,to": the gyroscope reads this (rad/s) from one frame to before the other
 static bool sensorState(unsigned port, enum retro_sensor_action action, unsigned rate) {
 	(void) rate;
-	return !port && getenv("CORETEST_SENSOR") && action == RETRO_SENSOR_ACCELEROMETER_ENABLE;
+	return !port && ((getenv("CORETEST_SENSOR") && action == RETRO_SENSOR_ACCELEROMETER_ENABLE) ||
+		(getenv("CORETEST_GYRO") && action == RETRO_SENSOR_GYROSCOPE_ENABLE));
 }
 
 static float sensorInput(unsigned port, unsigned id) {
-	float v[3] = { 0, 0, 9.80665f };
-	unsigned from = 0;
-	if (port || id > RETRO_SENSOR_ACCELEROMETER_Z) {
+	float v[3] = { 0, 0, 9.80665f }, x, y, z;
+	unsigned from = 0, to = 0;
+	if (port) {
 		return 0;
 	}
-	float x, y, z;
+	if (id >= RETRO_SENSOR_GYROSCOPE_X && id <= RETRO_SENSOR_GYROSCOPE_Z) {
+		v[2] = 0;
+		if (getenv("CORETEST_GYRO") && sscanf(getenv("CORETEST_GYRO"), "%f,%f,%f,%u,%u", &x, &y, &z, &from, &to) == 5 &&
+			frame >= from && frame < to) {
+			v[0] = x, v[1] = y, v[2] = z;
+		}
+		return v[id - RETRO_SENSOR_GYROSCOPE_X];
+	}
+	if (id > RETRO_SENSOR_ACCELEROMETER_Z || !getenv("CORETEST_SENSOR")) {
+		return 0;
+	}
 	int n = sscanf(getenv("CORETEST_SENSOR"), "%f,%f,%f,%u", &x, &y, &z, &from);
 	if (n >= 3 && frame >= from) {
 		v[0] = x, v[1] = y, v[2] = z;
@@ -57,7 +69,7 @@ static bool environment(unsigned cmd, void* data) {
 	case RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE:
 		((struct retro_sensor_interface*) data)->set_sensor_state = sensorState;
 		((struct retro_sensor_interface*) data)->get_sensor_input = sensorInput;
-		return getenv("CORETEST_SENSOR") != NULL;
+		return getenv("CORETEST_SENSOR") || getenv("CORETEST_GYRO");
 	case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
 		if (!getenv("CORETEST_LOG")) {
 			return false;
