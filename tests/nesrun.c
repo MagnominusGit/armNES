@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
 	nes.audioOut = audio;
 	nes.audioCapacity = 8192;
 	nes.exactPpu = getenv("NESRUN_EXACT") != NULL;
-	nes.dotPpu = getenv("NESRUN_ACCURATE") != NULL;
+	nes.dotPpu = getenv("NESRUN_BALANCED") != NULL;
 	// NESRUN_OVERCLOCK=lines (NESRUN_POSTRENDER for after the picture), NESRUN_SPRITES for no sprite limit
 	nes.overclockLines = getenv("NESRUN_OVERCLOCK") ? atoi(getenv("NESRUN_OVERCLOCK")) : 0;
 	nes.overclockPostRender = getenv("NESRUN_POSTRENDER") != NULL;

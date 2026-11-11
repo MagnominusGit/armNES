@@ -62,7 +62,7 @@ Sound only for carts with their own sound chip, and the Zapper options only with
 
 | Group | Options |
 | --- | --- |
-| System | Region (Auto, NTSC, PAL, Dendy), PPU Accuracy (Fast, Accurate, Exact), Overclock, Disk System Fast Loading, Cart Jumper |
+| System | Region (Auto, NTSC, PAL, Dendy), PPU Accuracy (Fast, Balanced, Exact), Overclock, Disk System Fast Loading, Cart Jumper |
 | Video | Palette, NTSC/PAL Filter (Composite, S-Video), Scanlines, Sprite Limit, Aspect Ratio, Crop Top and Bottom, Crop Sides |
 | Audio | Volume and stereo position for each channel, and for the cart's sound chip |
 | Input | Turbo Speed, Allow Opposing Directions, Left Stick as D-Pad, 4 Players, Famicom Expansion Port, Zapper Input, Zapper Sensitivity, Zapper Stick Invert, Zapper Motion, Zapper Motion Range, Zapper Motion Sensitivity, Zapper Motion Invert, Zapper Motion Sensor Rotation |
@@ -80,7 +80,7 @@ What games show and play comes first; test ROMs that probe corners no game reach
 
 - The PPU draws each pixel at the cycle it would on the console, so mid-frame effects, split screens
   and sprite 0 hits land where they should. The cycle-exact PPU (PPU Accuracy: Exact, many times
-  slower, for desktops) passes all 147 of AccuracyCoin's tests. Accurate, which finds and fetches
+  slower, for desktops) passes all 147 of AccuracyCoin's tests. Balanced, which finds and fetches
   sprites dot by dot as the hardware does, passes 139; Fast, the default, passes 131. Their pictures
   are checked against the cycle-exact one frame by frame.
 - The APU passes blargg's `apu_test` suite, including its DMC tests, and mixes its channels as the

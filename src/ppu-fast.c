@@ -411,7 +411,7 @@ static inline void renderDot(struct NES* nes, int dot, bool visible, bool pre) {
 	}
 }
 
-// The Accurate mode: sprites as the hardware handles them, a dot at a time (after ppu.c, without
+// The Balanced mode: sprites as the hardware handles them, a dot at a time (after ppu.c, without
 // its half-dot latches and OAM corruption). Secondary OAM is cleared on dots 1-64, filled from OAM on
 // 65-256 (odd dots read, even dots check and copy, with the overflow search's diagonal walk), then
 // fetched slot by slot on 257-320 into eight shifters with X counters.
@@ -684,8 +684,8 @@ static void dotPixel(struct NES* nes, int x) {
 	line[x] = color | emphasis;
 }
 
-// One dot of a line that renders, in the Accurate mode
-static void renderDotAccurate(struct NES* nes, int dot, bool visible, bool pre) {
+// One dot of a line that renders, in the Balanced mode
+static void renderDotBalanced(struct NES* nes, int dot, bool visible, bool pre) {
 	struct Ppu* ppu = &nes->ppu;
 	if (dot >= 1 && dot <= 256) {
 		if (visible) {
@@ -865,7 +865,7 @@ static inline void step(struct NES* nes) {
 		}
 		if (rendering(ppu)) {
 			if (nes->dotPpu) {
-				renderDotAccurate(nes, dot, visible, line == pre);
+				renderDotBalanced(nes, dot, visible, line == pre);
 			} else {
 				renderDot(nes, dot, visible, line == pre);
 			}
@@ -878,7 +878,7 @@ static inline void step(struct NES* nes) {
 			if (visible && dot >= 1 && dot <= 256) {
 				drawPixel(nes, dot - 1);
 			}
-			// Accurate: with rendering off the sprite counters go on counting, and are cleared at dot 339
+			// Balanced: with rendering off the sprite counters go on counting, and are cleared at dot 339
 			if (nes->dotPpu) {
 				dotIdleSprites(ppu, dot);
 				dotOam2Reset(ppu, dot);
@@ -1247,7 +1247,7 @@ void fastRun(struct NES* nes, int dots) {
 					continue;
 				}
 			} else if (nes->dotPpu) {
-				// Accurate: every other dot one at a time
+				// Balanced: every other dot one at a time
 			} else if (line == 240 && dot < 340 && (!nes->watchPpuBus || (nes->overclockRepeat && nes->overclockPostRender))) {
 				// The line after the picture (or an overclocked frame's held one): idle to its last dot
 				int n = 340 - dot;
@@ -1481,7 +1481,7 @@ uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 		nesPpuSyncAhead(nes, 1);
 		value = ppu->oam[ppu->oamAddr];
 		if (renderingLine(nes) && ppu->scanline < 240) {
-			// Accurate: what sprite evaluation or fetching has on the OAM bus
+			// Balanced: what sprite evaluation or fetching has on the OAM bus
 			value = nes->dotPpu ? ppu->oamBuffer : ppu->dot >= 1 && ppu->dot <= 64 ? 0xFF : value;
 		}
 		setBus(ppu, value, 0xFF);
