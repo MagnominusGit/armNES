@@ -194,6 +194,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->noSpriteLimit = noSpriteLimit;
 	nes->mixer = mixer;
 	nes->apu.stereo = mixer.custom;
+	nes->quietGranted = nes->quietBudget;
 	uint32_t tags[32];
 	memcpy(tags, in, sizeof(tags));
 	in += sizeof(tags);

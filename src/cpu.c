@@ -201,18 +201,26 @@ static inline void quietAhead(struct NES* nes) {
 	int byApu = nes->apuQuiet - nes->apuPending;
 	int n = byPpu < byBoard ? byPpu : byBoard;
 	n = n < byApu ? n : byApu;
-	nes->quietBudget = n > 0 ? n : 0;
+	nes->quietBudget = nes->quietGranted = n > 0 ? n : 0;
 }
 
-// One of those cycles
-static inline void quietStep(struct NES* nes) {
-	int period = nes->cpuPeriod;
-	nes->quietBudget--;
-	nes->slotTick = nes->masterClock;
-	nes->cpu.cycles++;
-	nes->masterClock += period;
-	nes->ppuLag += period;
-	nes->apuPending++;
+// Brings the clocks up to the quiet cycles run so far
+static inline void quietSettle(struct NES* nes) {
+	int n = nes->quietGranted - nes->quietBudget;
+	if (n > 0) {
+		int period = nes->cpuPeriod;
+		nes->slotTick = nes->masterClock + (uint64_t) (n - 1) * period;
+		nes->masterClock += (uint64_t) n * period;
+		nes->ppuLag += n * period;
+		nes->apuPending += n;
+		nes->cpu.cycles += n;
+	}
+	nes->quietGranted = nes->quietBudget;
+}
+
+static inline void quietEnd(struct NES* nes) {
+	quietSettle(nes);
+	nes->quietBudget = nes->quietGranted = 0;
 }
 
 static inline void endCycle(struct NES* nes) {
@@ -368,12 +376,12 @@ static inline uint8_t readCycle(struct NES* nes, uint16_t address) {
 			goto full;
 		}
 		cpu->addressBus = address;
-		quietStep(nes);
+		nes->quietBudget--;
 		cpu->openBus = cpu->internalBus = value;
 		return value;
 	}
 full:
-	nes->quietBudget = 0;
+	quietEnd(nes);
 	cpu->addressBus = address;
 	while (__builtin_expect(dmaPending(nes), 0)) {
 		dmaCycle(nes);
@@ -398,12 +406,12 @@ full:
 static inline void writeCycle(struct NES* nes, uint16_t address, uint8_t value) {
 	if (__builtin_expect(nes->quietBudget > 0, 1) && address < 0x2000) {
 		nes->cpu.addressBus = address;
-		quietStep(nes);
+		nes->quietBudget--;
 		nes->cpu.openBus = nes->cpu.internalBus = value;
 		nes->ram[address & 0x7FF] = value;
 		return;
 	}
-	nes->quietBudget = 0;
+	quietEnd(nes);
 	nes->cpu.addressBus = address;
 	startCycle(nes);
 	busWrite(nes, address, value);
@@ -826,7 +834,7 @@ static uint16_t statusPoll(struct NES* nes, uint16_t address) {
 	if (!again || bit7 || ppu->resetting || ppu->oamAddr) {
 		return address;
 	}
-	nes->quietBudget = 0;
+	quietEnd(nes);
 	quietAhead(nes);
 	int cycles = nes->quietBudget;
 	int dots = ppuHitHorizon(nes);
@@ -843,7 +851,7 @@ static uint16_t statusPoll(struct NES* nes, uint16_t address) {
 		nes->apuPending += skipped;
 		cpu->cycles += skipped;
 	}
-	nes->quietBudget = 0;
+	nes->quietBudget = nes->quietGranted = 0;
 	return address;
 }
 
@@ -855,6 +863,7 @@ void cpuStep(struct NES* nes) {
 	struct Cpu* cpu = &nes->cpu;
 	if (cpu->jammed) {
 		readCycle(nes, 0xFFFF);
+		quietSettle(nes);
 		return;
 	}
 	cpu->opcodeCycle = true;
@@ -1079,7 +1088,7 @@ void cpuStep(struct NES* nes) {
 	case 0x88: dummyFetch(nes); cpu->y--; setZN(cpu, cpu->y); break;
 	case 0x18: dummyFetch(nes); cpu->p &= ~FLAG_C; break;
 	case 0x38: dummyFetch(nes); cpu->p |= FLAG_C; break;
-	case 0x58: dummyFetch(nes); cpu->p &= ~FLAG_I; nes->quietBudget = 0; break;
+	case 0x58: dummyFetch(nes); cpu->p &= ~FLAG_I; quietEnd(nes); break;
 	case 0x78: dummyFetch(nes); cpu->p |= FLAG_I; break;
 	case 0xB8: dummyFetch(nes); cpu->p &= ~FLAG_V; break;
 	case 0xD8: dummyFetch(nes); cpu->p &= ~FLAG_D; break;
@@ -1098,7 +1107,7 @@ void cpuStep(struct NES* nes) {
 		dummyFetch(nes);
 		readCycle(nes, 0x100 | cpu->s);
 		cpu->p = (pop(nes) & ~FLAG_B) | FLAG_U;
-		nes->quietBudget = 0;
+		quietEnd(nes);
 		break;
 
 	// Jumps and returns
@@ -1130,7 +1139,7 @@ void cpuStep(struct NES* nes) {
 		dummyFetch(nes);
 		readCycle(nes, 0x100 | cpu->s);
 		cpu->p = (pop(nes) & ~FLAG_B) | FLAG_U;
-		nes->quietBudget = 0;
+		quietEnd(nes);
 		uint8_t lo = pop(nes);
 		cpu->pc = lo | (pop(nes) << 8);
 		break;
@@ -1163,4 +1172,5 @@ void cpuStep(struct NES* nes) {
 		dummyFetch(nes);
 		interrupt(nes, false);
 	}
+	quietSettle(nes);
 }

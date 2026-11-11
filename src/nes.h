@@ -338,13 +338,14 @@ struct NES {
 	int cpuPeriod, ppuPeriod;
 	int ppuLag, ppuQuietTicks, mapperQuietTicks;
 	// CPU cycles ahead known to be quiet with no interrupt about to change: ROM and RAM accesses
-	// just advance the clocks
+	// just count down, and the clocks catch up when the run ends (quietGranted is where it started)
 	int quietBudget;
 	// Something needs every CPU cycle stepped in full: exact timing or a board hook
 	bool slowCycles;
 	// APU cycles the CPU has passed but the APU hasn't run, and how many can pass before it must
 	int apuPending, apuQuiet;
 	bool ppuEveryCycle;
+	int quietGranted;
 	// The master clock of this CPU cycle's access, for boards that count M2 from the PPU's side, and
 	// the next master clock the PPU hasn't run
 	uint64_t slotTick, ppuTick;

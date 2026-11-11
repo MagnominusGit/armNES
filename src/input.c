@@ -237,7 +237,7 @@ void inputWrite(struct NES* nes, uint8_t value) {
 	// RAM to the second (behaviour per Mesen)
 	if (nes->dual && ((st->lastWrite ^ value) & 2)) {
 		nesSetIrq(nes->dual, IRQ_DUAL, !(value & 2));
-		nes->dual->quietBudget = 0;
+		nes->dual->quietBudget = nes->dual->quietGranted = 0;
 		if (!nes->vsSub) {
 			nes->vsRamAccess = value & 2;
 			nes->dual->vsRamAccess = !(value & 2);
