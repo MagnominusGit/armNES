@@ -447,11 +447,11 @@ static inline uint8_t pop(struct NES* nes) {
 	return readCycle(nes, 0x100 | ++nes->cpu.s);
 }
 
-static inline void setZN(struct Cpu* cpu, uint8_t value) {
+static inline __attribute__((always_inline)) void setZN(struct Cpu* cpu, uint8_t value) {
 	cpu->p = (cpu->p & ~(FLAG_Z | FLAG_N)) | (value ? 0 : FLAG_Z) | (value & FLAG_N);
 }
 
-static inline void setFlag(struct Cpu* cpu, uint8_t flag, bool on) {
+static inline __attribute__((always_inline)) void setFlag(struct Cpu* cpu, uint8_t flag, bool on) {
 	cpu->p = on ? cpu->p | flag : cpu->p & ~flag;
 }
 
@@ -502,7 +502,7 @@ static inline uint16_t addrIndirectY(struct NES* nes, bool forWrite) {
 }
 
 // Operations
-static inline void adc(struct Cpu* cpu, uint8_t value) {
+static inline __attribute__((always_inline)) void adc(struct Cpu* cpu, uint8_t value) {
 	unsigned sum = cpu->a + value + (cpu->p & FLAG_C);
 	setFlag(cpu, FLAG_C, sum > 0xFF);
 	setFlag(cpu, FLAG_V, ~(cpu->a ^ value) & (cpu->a ^ sum) & 0x80);
@@ -510,30 +510,30 @@ static inline void adc(struct Cpu* cpu, uint8_t value) {
 	setZN(cpu, cpu->a);
 }
 
-static inline void sbc(struct Cpu* cpu, uint8_t value) {
+static inline __attribute__((always_inline)) void sbc(struct Cpu* cpu, uint8_t value) {
 	adc(cpu, value ^ 0xFF);
 }
 
-static inline void cmp(struct Cpu* cpu, uint8_t reg, uint8_t value) {
+static inline __attribute__((always_inline)) void cmp(struct Cpu* cpu, uint8_t reg, uint8_t value) {
 	setFlag(cpu, FLAG_C, reg >= value);
 	setZN(cpu, reg - value);
 }
 
-static inline uint8_t asl(struct Cpu* cpu, uint8_t value) {
+static inline __attribute__((always_inline)) uint8_t asl(struct Cpu* cpu, uint8_t value) {
 	setFlag(cpu, FLAG_C, value & 0x80);
 	value <<= 1;
 	setZN(cpu, value);
 	return value;
 }
 
-static inline uint8_t lsr(struct Cpu* cpu, uint8_t value) {
+static inline __attribute__((always_inline)) uint8_t lsr(struct Cpu* cpu, uint8_t value) {
 	setFlag(cpu, FLAG_C, value & 1);
 	value >>= 1;
 	setZN(cpu, value);
 	return value;
 }
 
-static inline uint8_t rol(struct Cpu* cpu, uint8_t value) {
+static inline __attribute__((always_inline)) uint8_t rol(struct Cpu* cpu, uint8_t value) {
 	uint8_t carry = cpu->p & FLAG_C;
 	setFlag(cpu, FLAG_C, value & 0x80);
 	value = (value << 1) | carry;
@@ -541,7 +541,7 @@ static inline uint8_t rol(struct Cpu* cpu, uint8_t value) {
 	return value;
 }
 
-static inline uint8_t ror(struct Cpu* cpu, uint8_t value) {
+static inline __attribute__((always_inline)) uint8_t ror(struct Cpu* cpu, uint8_t value) {
 	uint8_t carry = (cpu->p & FLAG_C) << 7;
 	setFlag(cpu, FLAG_C, value & 1);
 	value = (value >> 1) | carry;
@@ -549,7 +549,7 @@ static inline uint8_t ror(struct Cpu* cpu, uint8_t value) {
 	return value;
 }
 
-static inline void bit(struct Cpu* cpu, uint8_t value) {
+static inline __attribute__((always_inline)) void bit(struct Cpu* cpu, uint8_t value) {
 	setFlag(cpu, FLAG_Z, !(cpu->a & value));
 	cpu->p = (cpu->p & ~(FLAG_N | FLAG_V)) | (value & (FLAG_N | FLAG_V));
 }
@@ -561,7 +561,7 @@ enum Op {
 	OP_STA, OP_STX, OP_STY, OP_SAX,
 };
 
-static inline void readOp(struct NES* nes, enum Op op, uint8_t value) {
+static inline __attribute__((always_inline)) void readOp(struct NES* nes, enum Op op, uint8_t value) {
 	struct Cpu* cpu = &nes->cpu;
 	switch (op) {
 	case OP_ORA:
@@ -648,7 +648,7 @@ static inline void readOp(struct NES* nes, enum Op op, uint8_t value) {
 	}
 }
 
-static inline uint8_t modifyOp(struct NES* nes, enum Op op, uint8_t value) {
+static inline __attribute__((always_inline)) uint8_t modifyOp(struct NES* nes, enum Op op, uint8_t value) {
 	struct Cpu* cpu = &nes->cpu;
 	switch (op) {
 	case OP_ASL:
@@ -699,7 +699,7 @@ static inline uint8_t modifyOp(struct NES* nes, enum Op op, uint8_t value) {
 	}
 }
 
-static inline uint8_t storeValue(struct Cpu* cpu, enum Op op) {
+static inline __attribute__((always_inline)) uint8_t storeValue(struct Cpu* cpu, enum Op op) {
 	switch (op) {
 	case OP_STA:
 		return cpu->a;
@@ -712,17 +712,17 @@ static inline uint8_t storeValue(struct Cpu* cpu, enum Op op) {
 	}
 }
 
-static inline void doRead(struct NES* nes, enum Op op, uint16_t address) {
+static inline __attribute__((always_inline)) void doRead(struct NES* nes, enum Op op, uint16_t address) {
 	readOp(nes, op, readCycle(nes, address));
 }
 
-static inline void doModify(struct NES* nes, enum Op op, uint16_t address) {
+static inline __attribute__((always_inline)) void doModify(struct NES* nes, enum Op op, uint16_t address) {
 	uint8_t value = readCycle(nes, address);
 	writeCycle(nes, address, value);
 	writeCycle(nes, address, modifyOp(nes, op, value));
 }
 
-static inline void doStore(struct NES* nes, enum Op op, uint16_t address) {
+static inline __attribute__((always_inline)) void doStore(struct NES* nes, enum Op op, uint16_t address) {
 	writeCycle(nes, address, storeValue(&nes->cpu, op));
 }
 
@@ -743,7 +743,7 @@ static void storeHigh(struct NES* nes, uint16_t base, uint8_t index, uint8_t val
 
 // Branches poll interrupts before cycle 2 and, when they cross a page, again before cycle 4; a
 // successful first poll can't be undone by the second.
-static void branch(struct NES* nes, bool taken) {
+static inline __attribute__((always_inline)) void branch(struct NES* nes, bool taken) {
 	struct Cpu* cpu = &nes->cpu;
 	bool firstPoll = cpu->runIrq;
 	int8_t offset = fetch(nes);
