@@ -1001,22 +1001,16 @@ static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 	return true;
 }
 
+// The crosshair, each of its pixels the inverse of the picture's under it (as melonDS draws its cursor)
 static void drawCrosshair(int scale) {
 	int cx = crossX >> 8, cy = crossY >> 8;
-	for (int pass = 0; pass < 2; pass++) {
-		for (int d = -4; d <= 4; d++) {
-			for (int w = -1; w <= 1; w++) {
-				if (pass && (w || d == 0 || abs(d) == 4)) {
-					continue;
-				}
-				int points[2][2] = { { cx + d, cy + w }, { cx + w, cy + d } };
-				for (int i = 0; i < 2; i++) {
-					int x = points[i][0], y = points[i][1];
-					if (x >= 0 && x < NES_WIDTH && y >= 0 && y < NES_HEIGHT) {
-						for (int s = 0; s < scale; s++) {
-							video[(y * NES_WIDTH + x) * scale + s] = pass ? 0xFFFF : 0x0000;
-						}
-					}
+	for (int d = -4; d <= 4; d++) {
+		int points[2][2] = { { cx + d, cy }, { cx, cy + d } };
+		for (int i = d ? 0 : 1; i < 2; i++) {
+			int x = points[i][0], y = points[i][1];
+			if (x >= 0 && x < NES_WIDTH && y >= 0 && y < NES_HEIGHT) {
+				for (int s = 0; s < scale; s++) {
+					video[(y * NES_WIDTH + x) * scale + s] ^= 0xFFFF;
 				}
 			}
 		}
