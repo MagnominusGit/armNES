@@ -32,8 +32,32 @@ static void logLine(enum retro_log_level level, const char* format, ...) {
 	va_end(args);
 }
 
+// CORETEST_SENSOR="x,y,z[,from]": the accelerometer reads this (m/s^2) from a frame on, flat before it
+static bool sensorState(unsigned port, enum retro_sensor_action action, unsigned rate) {
+	(void) rate;
+	return !port && getenv("CORETEST_SENSOR") && action == RETRO_SENSOR_ACCELEROMETER_ENABLE;
+}
+
+static float sensorInput(unsigned port, unsigned id) {
+	float v[3] = { 0, 0, 9.80665f };
+	unsigned from = 0;
+	if (port || id > RETRO_SENSOR_ACCELEROMETER_Z) {
+		return 0;
+	}
+	float x, y, z;
+	int n = sscanf(getenv("CORETEST_SENSOR"), "%f,%f,%f,%u", &x, &y, &z, &from);
+	if (n >= 3 && frame >= from) {
+		v[0] = x, v[1] = y, v[2] = z;
+	}
+	return v[id];
+}
+
 static bool environment(unsigned cmd, void* data) {
 	switch (cmd) {
+	case RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE:
+		((struct retro_sensor_interface*) data)->set_sensor_state = sensorState;
+		((struct retro_sensor_interface*) data)->get_sensor_input = sensorInput;
+		return getenv("CORETEST_SENSOR") != NULL;
 	case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
 		if (!getenv("CORETEST_LOG")) {
 			return false;

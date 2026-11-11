@@ -127,13 +127,21 @@ static struct OptionChoice expansionChoices[] = {
 	{ "Keyboard", EXPANSION_KEYBOARD },
 };
 
-enum { AIM_LIGHT_GUN, AIM_MOUSE, AIM_STICK, AIM_STICK_PAN };
+enum { AIM_LIGHT_GUN, AIM_MOUSE, AIM_STICK, AIM_STICK_PAN, AIM_TILT };
 
 static struct OptionChoice aimChoices[] = {
 	{ "Light gun", AIM_LIGHT_GUN },
 	{ "Mouse", AIM_MOUSE },
 	{ "Right stick (absolute)", AIM_STICK },
 	{ "Right stick (pan)", AIM_STICK_PAN },
+	{ "Device tilt", AIM_TILT },
+};
+
+static struct OptionChoice rotationChoices[] = {
+	{ "0", 0 },
+	{ "90", 1 },
+	{ "180", 2 },
+	{ "270", 3 },
 };
 
 static struct OptionChoice sensitivityChoices[] = {
@@ -273,14 +281,19 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		{ "Keyboard", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_zapper_aim", "Zapper Aim", NULL,
 		"A light gun or mouse pointer, a mouse-moved crosshair (left button fires, right off the screen), "
-		"or the right stick pointing (absolute) or moving (pan) it (R fires, L off the screen). R3 centers "
-		"the crosshair. Touching the screen always aims and fires.",
+		"the right stick pointing (absolute) or moving (pan) it, or tilting the device (R fires, L off the "
+		"screen). R3 centers the crosshair, and with tilt, takes how the device is held as the middle. "
+		"Touching the screen always aims and fires.",
 		NULL, "input", { { "Light gun", NULL }, { "Mouse", NULL }, { "Right stick (absolute)", NULL },
-		{ "Right stick (pan)", NULL }, { NULL, NULL } }, "Light gun" },
+		{ "Right stick (pan)", NULL }, { "Device tilt", NULL }, { NULL, NULL } }, "Light gun" },
 	{ "armnes_zapper_sensitivity", "Zapper Sensitivity", NULL,
 		"How fast the crosshair moves. Holding L2 aims finer the further it's pulled.",
 		NULL, "input", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
 		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
+	{ "armnes_motion_rotation", "Device Tilt Sensor Rotation", NULL,
+		"Turns the motion sensor to match the screen if tilting goes the wrong way. Usually 0° in the "
+		"standalone app, often 90° in RetroArch.",
+		NULL, "input", { { "0", "0°" }, { "90", "90°" }, { "180", "180°" }, { "270", "270°" }, { NULL, NULL } }, "0" },
 	{ "armnes_vs_ppu", "PPU", NULL, "The board's PPU, which sets its colors. Auto follows an NES 2.0 header, or the RP2C03.",
 		NULL, "vs", { { "Auto", NULL }, { "RP2C03", NULL }, { "RP2C04-0001", NULL }, { "RP2C04-0002", NULL }, { "RP2C04-0003", NULL },
 		{ "RP2C04-0004", NULL }, { "RC2C05-01", NULL }, { "RC2C05-02", NULL }, { "RC2C05-03", NULL }, { "RC2C05-04", NULL },
@@ -654,6 +667,7 @@ static bool showOptions(void) {
 		{ "armnes_pan_cart", !loaded || cartSound() },
 		{ "armnes_zapper_aim", zapper },
 		{ "armnes_zapper_sensitivity", zapper && !optionIs(environ_cb, "armnes_zapper_aim", "Light gun") },
+		{ "armnes_motion_rotation", zapper && optionIs(environ_cb, "armnes_zapper_aim", "Device tilt") },
 		{ "armnes_vs_ppu", vs },
 		{ "armnes_vs_swap", vs },
 		{ "armnes_vs_screens", dual },
@@ -698,7 +712,7 @@ static int turboPeriod = 4;
 static bool allowOpposing;
 static bool leftStickDpad;
 static unsigned turboFrame;
-static int fourPlayers, expansion, zapperAim, zapperSpeed = 100;
+static int fourPlayers, expansion, zapperAim, zapperSpeed = 100, motionRotation;
 static int vsSwap;
 static unsigned coinFrames[4];
 static bool fdsFast;
@@ -708,7 +722,8 @@ static void readInputOptions(void) {
 	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
 	leftStickDpad = optionChoice(environ_cb, "armnes_left_stick_dpad", onOffChoices, 2, 1);
 	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 4, AUTO);
-	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 4, AIM_LIGHT_GUN);
+	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 5, AIM_LIGHT_GUN);
+	motionRotation = optionChoice(environ_cb, "armnes_motion_rotation", rotationChoices, 4, 0);
 	zapperSpeed = optionChoice(environ_cb, "armnes_zapper_sensitivity", sensitivityChoices, 7, 100);
 	fdsFast = optionChoice(environ_cb, "armnes_fds_fast", onOffChoices, 2, 0);
 	vsSwap = optionChoice(environ_cb, "armnes_vs_swap", autoOnOffChoices, 3, AUTO);
@@ -795,7 +810,53 @@ static int fineAim(void) {
 	return 256 - pull * 192 / 0x7FFF;
 }
 
-// Aim from the mouse or the stick: false for the light gun
+static struct retro_sensor_interface sensors;
+static bool accelerometerOn, tiltCentered;
+static float tiltRight, tiltDown, tiltMiddleRight, tiltMiddleDown;
+
+// Turns the frontend's accelerometer on while a Zapper aims by tilt
+static void useAccelerometer(bool on) {
+	if (on && !sensors.set_sensor_state && !environ_cb(RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE, &sensors)) {
+		memset(&sensors, 0, sizeof(sensors));
+	}
+	if (sensors.set_sensor_state && on != accelerometerOn) {
+		accelerometerOn = sensors.set_sensor_state(0, on ? RETRO_SENSOR_ACCELEROMETER_ENABLE : RETRO_SENSOR_ACCELEROMETER_DISABLE, 60) && on;
+		tiltCentered = false;
+	}
+}
+
+// The device's tilt as a right stick, from where it was held when R3 was last pressed (or tilt
+// aiming started): gravity along the screen's right and down, smoothed over a few frames, with a
+// third of a g reaching the edge at 100%. False with no readings, for the right stick to stand in.
+static bool deviceTilt(int* x, int* y) {
+	if (!accelerometerOn) {
+		return false;
+	}
+	float const sensorX = sensors.get_sensor_input(0, RETRO_SENSOR_ACCELEROMETER_X);
+	float const sensorY = sensors.get_sensor_input(0, RETRO_SENSOR_ACCELEROMETER_Y);
+	float const out = sensors.get_sensor_input(0, RETRO_SENSOR_ACCELEROMETER_Z);
+	if (sensorX == 0 && sensorY == 0 && out == 0) {
+		return false;
+	}
+	// The sensor's axes turned to the screen's, for a frontend that passes them on as the device has them
+	static const float turns[4][4] = { { 1, 0, 0, 1 }, { 0, -1, 1, 0 }, { -1, 0, 0, -1 }, { 0, 1, -1, 0 } };
+	const float* const turn = turns[motionRotation];
+	// The sensor reads the push that holds the device up, so a side tipped down reads away from it
+	float const right = -(turn[0] * sensorX + turn[1] * sensorY), down = turn[2] * sensorX + turn[3] * sensorY;
+	if (!tiltCentered || input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)) {
+		tiltRight = tiltMiddleRight = right;
+		tiltDown = tiltMiddleDown = down;
+		tiltCentered = true;
+	}
+	tiltRight += (right - tiltRight) / 3;
+	tiltDown += (down - tiltDown) / 3;
+	float const scale = 0x7FFF * 3 / 9.80665f * zapperSpeed / 100;
+	*x = (int) fmaxf(-0x7FFF, fminf(0x7FFF, (tiltRight - tiltMiddleRight) * scale));
+	*y = (int) fmaxf(-0x7FFF, fminf(0x7FFF, (tiltDown - tiltMiddleDown) * scale));
+	return true;
+}
+
+// Aim from the mouse, the stick or the device's tilt: false for the light gun
 static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 	int left = cropHorizontal << 8, right = (NES_WIDTH - 1 - cropHorizontal) << 8;
 	int top = cropVertical << 8, bottom = (NES_HEIGHT - 1 - cropVertical) << 8;
@@ -811,10 +872,14 @@ static bool aimCrosshair(unsigned port, bool* trigger, bool* away) {
 		}
 		break;
 	case AIM_STICK:
-	case AIM_STICK_PAN: {
-		int x = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
-		int y = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
-		if (zapperAim == AIM_STICK) {
+	case AIM_STICK_PAN:
+	case AIM_TILT: {
+		int x, y;
+		if (zapperAim != AIM_TILT || !deviceTilt(&x, &y)) {
+			x = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
+			y = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
+		}
+		if (zapperAim != AIM_STICK_PAN) {
 			// With fine aim, the stick's moves count for less from where the crosshair is
 			int sx = left + (x + 0x8000) * ((right - left) >> 8) / 0xFFFF * 256;
 			int sy = top + (y + 0x8000) * ((bottom - top) >> 8) / 0xFFFF * 256;
@@ -918,6 +983,7 @@ static void readDevices(void) {
 		}
 	}
 	in->powerPad = 0;
+	useAccelerometer(zapperAim == AIM_TILT && (in->device[0] == DEVICE_ZAPPER || in->device[1] == DEVICE_ZAPPER));
 	for (unsigned port = 0; port < 2; port++) {
 		switch (in->device[port]) {
 		case DEVICE_ZAPPER: {
@@ -1604,6 +1670,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 }
 
 void retro_unload_game(void) {
+	useAccelerometer(false);
 	if (loaded) {
 		if (nes.dual) {
 			nesFree(&sub);

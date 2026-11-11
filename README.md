@@ -37,17 +37,17 @@ ones come from FCEUmm. See Credits for the full list.
 | --- | --- |
 | A, B, Select, Start, D-pad | The controller's own; Select also puts in a coin on VS. System games |
 | X, Y | Turbo A, turbo B, at the Turbo Speed option's rate |
-| R | Zapper trigger, when it aims with the right stick |
-| L | Zapper trigger off the screen, when it aims with the right stick |
+| R | Zapper trigger, when it aims with the right stick or by tilt |
+| L | Zapper trigger off the screen, when it aims with the right stick or by tilt |
 | R2 | Fast-forward while held |
 | L2 | Zapper fine aim: the further it's pulled, the slower the crosshair moves |
-| R3 | Zapper: centers the crosshair |
+| R3 | Zapper: centers the crosshair; with tilt aiming, how the device is held becomes the middle |
 | L3 | On Disk System games, takes the disk out, then puts the next side in; VS. System service button; on controller 2, the Famicom's microphone; on Datach games, a barcode swipe |
 | Left stick | The D-pad too, unless Left Stick as D-Pad is off |
 
 Plug in a Zapper, Arkanoid paddle or Power Pad through the frontend's controller port types. The
-Zapper aims with a light gun or mouse pointer, a mouse-moved crosshair, or the right stick, and a
-touch screen aims and fires wherever it's touched. Players 3 and 4 use the NES Four Score or the
+Zapper aims with a light gun or mouse pointer, a mouse-moved crosshair, the right stick, or by
+tilting the device (its accelerometer), and a touch screen aims and fires wherever it's touched. Players 3 and 4 use the NES Four Score or the
 Famicom's adapter; the Famicom's expansion port also takes the paddle, the Power Pad and the
 Famicom keyboard.
 
@@ -62,7 +62,7 @@ Sound only for carts with their own sound chip, and the Zapper options only with
 | System | Region (Auto, NTSC, PAL, Dendy), Overclock, Disk System Fast Loading, Cart Jumper |
 | Video | Palette, NTSC/PAL Filter (Composite, S-Video), Scanlines, Sprite Limit, Aspect Ratio, Crop Top and Bottom, Crop Sides |
 | Audio | Volume and stereo position for each channel, and for the cart's sound chip |
-| Input | Turbo Speed, Allow Opposing Directions, Left Stick as D-Pad, 4 Players, Famicom Expansion Port, Zapper Aim, Zapper Sensitivity |
+| Input | Turbo Speed, Allow Opposing Directions, Left Stick as D-Pad, 4 Players, Famicom Expansion Port, Zapper Aim, Zapper Sensitivity, Device Tilt Sensor Rotation |
 | VS. System | PPU, Swap Controllers, DIP switches, DualSystem Screens |
 
 The NTSC/PAL filter decodes the console's video signal as a TV of the time did: Composite with its
