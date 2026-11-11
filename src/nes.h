@@ -345,6 +345,8 @@ struct NES {
 	// APU cycles the CPU has passed but the APU hasn't run, and how many can pass before it must
 	int apuPending, apuQuiet;
 	bool ppuEveryCycle;
+	// The frame won't be shown: the fast PPU leaves out what only the picture needs
+	bool skipPixels;
 	int quietGranted;
 	// The master clock of this CPU cycle's access, for boards that count M2 from the PPU's side, and
 	// the next master clock the PPU hasn't run

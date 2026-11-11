@@ -1354,11 +1354,25 @@ void retro_run(void) {
 		runDual();
 		return;
 	}
+	// A frame the frontend won't show (fast-forward, run-ahead) leaves out what only the picture needs,
+	// unless a Zapper is looking at it
+	int av = RETRO_AV_ENABLE_VIDEO;
+	bool const unseen = environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av) && !(av & RETRO_AV_ENABLE_VIDEO);
+	nes.skipPixels = unseen && nes.input.device[0] != DEVICE_ZAPPER && nes.input.device[1] != DEVICE_ZAPPER;
 	nesRunFrame(&nes);
 	for (int extra = 0; fdsFast && extra < 15 && fdsBusy(&nes); extra++) {
 		nesRunFrame(&nes);
 	}
+	nes.skipPixels = false;
 	checkOptions();
+	bool dupe = false;
+	if (unseen && environ_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &dupe) && dupe) {
+		if (nes.audioCount) {
+			audio_batch_cb(nes.audioOut, nes.audioCount / 2);
+		}
+		video_cb(NULL, NES_WIDTH - 2 * cropHorizontal, NES_HEIGHT - 2 * cropVertical, NES_WIDTH * sizeof(uint16_t));
+		return;
+	}
 	int scale = 1;
 	if (filter) {
 		scale = COMPOSITE_SCALE;

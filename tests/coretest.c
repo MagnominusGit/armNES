@@ -66,6 +66,16 @@ static float sensorInput(unsigned port, unsigned id) {
 
 static bool environment(unsigned cmd, void* data) {
 	switch (cmd) {
+	// CORETEST_UNSEEN: every frame but the one dumped runs with video off, as fast-forward's skipped ones
+	case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
+		if (!getenv("CORETEST_UNSEEN")) {
+			return false;
+		}
+		*(int*) data = RETRO_AV_ENABLE_AUDIO | (frame == (unsigned) (getenv("CORETEST_FRAME") ? atoi(getenv("CORETEST_FRAME")) : 599) ? RETRO_AV_ENABLE_VIDEO : 0);
+		return true;
+	case RETRO_ENVIRONMENT_GET_CAN_DUPE:
+		*(bool*) data = true;
+		return true;
 	case RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE:
 		((struct retro_sensor_interface*) data)->set_sensor_state = sensorState;
 		((struct retro_sensor_interface*) data)->get_sensor_input = sensorInput;
@@ -162,6 +172,10 @@ static void video(const void* data, unsigned width, unsigned height, size_t pitc
 	}
 	frameWidth = width;
 	frameHeight = height;
+	// A repeat of the last picture
+	if (!data) {
+		return;
+	}
 	for (unsigned y = 0; y < height; y++) {
 		videoHash = crc32(videoHash, (const uint8_t*) data + y * pitch, width * (pixelFormat == RETRO_PIXEL_FORMAT_XRGB8888 ? 4 : 2));
 	}

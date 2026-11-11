@@ -155,6 +155,8 @@ int main(int argc, char** argv) {
 			p = strchr(p, ',');
 			p = p ? p + 1 : NULL;
 		}
+		// NESRUN_SKIP: every frame but the last run as one that won't be shown
+		nes.skipPixels = getenv("NESRUN_SKIP") && frame < frames - 1;
 		nesRunFrame(&nes);
 		if (wav) {
 			wavBytes += fwrite(nes.audioOut, 2, nes.audioCount, wav) * 2;

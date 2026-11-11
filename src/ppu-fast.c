@@ -702,7 +702,9 @@ static void renderSpan(struct NES* nes, int n) {
 
 // Up to count whole tiles of a visible line with nothing else going on (the CPU can't touch the PPU
 // meanwhile, so what a tile depends on holds for the run). Stops early when a sprite 0 hit comes
-// due, which the dots after it count down. Returns the tiles drawn.
+// due, which the dots after it count down. Returns the tiles drawn. In a frame that won't be shown
+// only what the game can see is done: the sprite 0 test and, for boards that don't see the fetches,
+// the last two tiles' fetches, which the PPU goes on from.
 static int renderTiles(struct NES* nes, int count) {
 	struct Ppu* ppu = &nes->ppu;
 	int x = ppu->dot;
@@ -713,10 +715,14 @@ static int renderTiles(struct NES* nes, int count) {
 	int s = 8 - ppu->fineX;
 	bool spritesOn = ppu->showSprites && ppu->lineHasSprites;
 	uint16_t bgL = ppu->bgL, bgH = ppu->bgH, atL = ppu->atL, atH = ppu->atH, v = ppu->v;
+	bool const skip = nes->skipPixels;
+	bool const zeroTest = spritesOn && ppu->lineHasZero && !ppu->hit && !ppu->pendingHit && ppu->showBg;
+	bool const fetchAll = !skip || zeroTest || nes->ppuReadHook;
+	int const end = x + 8 * count < 256 ? x + 8 * count : 256;
 	int done = 0;
 	while (done < count) {
 		uint64_t pixels = 0;
-		if (ppu->showBg && (x >= 8 || ppu->showBgLeft)) {
+		if ((!skip || zeroTest) && ppu->showBg && (x >= 8 || ppu->showBgLeft)) {
 			uint64_t color = spread[(uint8_t) (bgL >> s)] | spread[(uint8_t) (bgH >> s)] << 1;
 			uint64_t palette = (spread[(uint8_t) (atL >> s)] | spread[(uint8_t) (atH >> s)] << 1) << 2;
 			uint64_t opaque = ((color | color >> 1) & 0x0101010101010101ull) * 0xFF;
@@ -741,20 +747,23 @@ static int renderTiles(struct NES* nes, int count) {
 				}
 			}
 		}
-		drawTile(out + x, pixels, sprites, ppu->palette, grayMask, emphasis);
+		if (!skip) {
+			drawTile(out + x, pixels, sprites, ppu->palette, grayMask, emphasis);
+		}
 		bgL <<= 8;
 		bgH <<= 8;
 		atL <<= 8;
 		atH <<= 8;
 		// A board's read hook may look at where the PPU is
 		ppu->dot = x, ppu->v = v;
-		uint8_t nt = chrRead(nes, 0x2000 | (v & 0xFFF));
-		uint8_t at = chrRead(nes, 0x23C0 | (v & 0xC00) | ((v >> 4) & 0x38) | ((v >> 2) & 7));
+		bool const fetch = fetchAll || x >= end - 16;
+		uint8_t nt = fetch ? chrRead(nes, 0x2000 | (v & 0xFFF)) : 0;
+		uint8_t at = fetch ? chrRead(nes, 0x23C0 | (v & 0xC00) | ((v >> 4) & 0x38) | ((v >> 2) & 7)) : 0;
 		uint8_t atLatch = (at >> (((v >> 4) & 4) | (v & 2))) & 3;
 		ppu->ntLatch = nt;
 		ppu->atLatch = atLatch;
-		uint8_t lo = chrRead(nes, table | (nt << 4) | (v >> 12));
-		uint8_t hi = chrRead(nes, table | (nt << 4) | (v >> 12) | 8);
+		uint8_t lo = fetch ? chrRead(nes, table | (nt << 4) | (v >> 12)) : 0;
+		uint8_t hi = fetch ? chrRead(nes, table | (nt << 4) | (v >> 12) | 8) : 0;
 		ppu->loLatch = lo;
 		ppu->hiLatch = hi;
 		bgL |= lo;
