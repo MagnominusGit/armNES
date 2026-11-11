@@ -903,12 +903,12 @@ static void deviceMotion(int* x, int* y) {
 	bool const center = !motionCentered || input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3);
 	motionCentered = true;
 	if (gyro) {
-		// Turning about the screen's up axis swings the back of the device left, about its right axis up
+		// Turning the device right moves the crosshair right, tipping its top back moves it up
 		float const scale = range / (20 * 3.14159265f / 180) * motionSpeed / 100 / 60;
 		if (center) {
 			motionX = motionY = 0;
 		}
-		motionX = fmaxf(-range, fminf(range, motionX - (fabsf(alongY) > 0.003f ? alongY : 0) * scale));
+		motionX = fmaxf(-range, fminf(range, motionX + (fabsf(alongY) > 0.003f ? alongY : 0) * scale));
 		motionY = fmaxf(-range, fminf(range, motionY - (fabsf(alongX) > 0.003f ? alongX : 0) * scale));
 	} else {
 		// The sensor reads the push that holds the device up, so a side tipped down reads away from it
