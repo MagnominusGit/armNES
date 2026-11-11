@@ -601,16 +601,26 @@ static void dotSprites(struct NES* nes, int dot, bool pre) {
 	}
 }
 
-// The sprite shifters after a pixel: a slot counts its X down, then shifts out its pattern
+// The eight slots a byte each in a word: 1 in each byte that isn't 0
+static inline uint64_t slotsNonzero(uint64_t x) {
+	return (((x & 0x7F7F7F7F7F7F7F7Full) + 0x7F7F7F7F7F7F7F7Full) | x) >> 7 & 0x0101010101010101ull;
+}
+
+// The sprite shifters after a pixel: a slot counts its X down, then shifts out its pattern; all
+// eight at once
 static void dotShiftSprites(struct Ppu* ppu) {
-	for (int i = 0; i < 8; i++) {
-		if (ppu->spriteCounter[i] && !(ppu->scanline == 0 && ppu->skippedDot)) {
-			ppu->spriteCounter[i]--;
-		} else {
-			ppu->spriteL[i] <<= 1;
-			ppu->spriteH[i] <<= 1;
-		}
-	}
+	uint64_t counters, lo, hi;
+	memcpy(&counters, ppu->spriteCounter, 8);
+	memcpy(&lo, ppu->spriteL, 8);
+	memcpy(&hi, ppu->spriteH, 8);
+	uint64_t const counting = ppu->scanline == 0 && ppu->skippedDot ? 0 : slotsNonzero(counters);
+	uint64_t const keep = counting * 0xFF;
+	counters -= counting;
+	lo = (lo & keep) | ((lo << 1) & 0xFEFEFEFEFEFEFEFEull & ~keep);
+	hi = (hi & keep) | ((hi << 1) & 0xFEFEFEFEFEFEFEFEull & ~keep);
+	memcpy(ppu->spriteCounter, &counters, 8);
+	memcpy(ppu->spriteL, &lo, 8);
+	memcpy(ppu->spriteH, &hi, 8);
 }
 
 static void dotIdleSprites(struct Ppu* ppu, int dot) {
@@ -638,14 +648,15 @@ static void dotPixel(struct NES* nes, int x) {
 	}
 	int index = bg;
 	if (ppu->showSprites && (x >= 8 || ppu->showSpritesLeft)) {
-		for (int i = 0; i < 8; i++) {
-			if (ppu->spriteCounter[i]) {
-				continue;
-			}
-			int color = (ppu->spriteL[i] >> 7) | ((ppu->spriteH[i] >> 7) << 1);
-			if (!color) {
-				continue;
-			}
+		// The first slot past its X with a color, all eight at once
+		uint64_t counters, lo, hi;
+		memcpy(&counters, ppu->spriteCounter, 8);
+		memcpy(&lo, ppu->spriteL, 8);
+		memcpy(&hi, ppu->spriteH, 8);
+		uint64_t const colors = ((lo >> 7 & 0x0101010101010101ull) | (hi >> 6 & 0x0202020202020202ull)) &
+			(slotsNonzero(counters) ^ 0x0101010101010101ull) * 3;
+		if (colors) {
+			int const i = __builtin_ctzll(colors) >> 3, color = colors >> (i * 8) & 3;
 			if (i == 0 && ppu->hasZero && bg && ppu->showBg && x != 255 && !ppu->hit && !ppu->pendingHit) {
 				ppu->pendingHit = true;
 				ppu->hitDelay = 3;
@@ -653,7 +664,6 @@ static void dotPixel(struct NES* nes, int x) {
 			if (!bg || !(ppu->spriteAttr[i] & 0x20)) {
 				index = 0x10 | ((ppu->spriteAttr[i] & 3) << 2) | color;
 			}
-			break;
 		}
 	}
 	uint8_t color = paletteRead(ppu, index);
