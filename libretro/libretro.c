@@ -294,11 +294,11 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "input", { { "Auto", NULL }, { "None", NULL }, { "Paddle", NULL }, { "Power Pad", NULL },
 		{ "Keyboard", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_zapper_aim", "Zapper Input", NULL,
-		"A light gun or mouse pointer, a mouse-moved crosshair (left button fires, right off the screen), "
-		"or the right stick pointing (absolute) or moving (pan) it (R fires, L off the screen). R3 centers "
-		"the crosshair. Touching the screen always aims and fires.",
-		NULL, "input", { { "Light gun", NULL }, { "Mouse", NULL }, { "Right stick (absolute)", NULL },
-		{ "Right stick (pan)", NULL }, { NULL, NULL } }, "Light gun" },
+		"The right stick moving (pan) or pointing (absolute) a crosshair (R fires, L off the screen), a "
+		"light gun or mouse pointer, or a mouse-moved crosshair (left button fires, right off the screen). "
+		"R3 centers the crosshair. Touching the screen always aims and fires.",
+		NULL, "input", { { "Right stick (pan)", NULL }, { "Right stick (absolute)", NULL }, { "Light gun", NULL },
+		{ "Mouse", NULL }, { NULL, NULL } }, "Right stick (pan)" },
 	{ "armnes_zapper_sensitivity", "Zapper Sensitivity", NULL,
 		"How fast the crosshair moves. Holding L2 aims finer the further it's pulled.",
 		NULL, "input", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
@@ -787,7 +787,7 @@ static void readInputOptions(void) {
 	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
 	leftStickDpad = optionChoice(environ_cb, "armnes_left_stick_dpad", onOffChoices, 2, 1);
 	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 4, AUTO);
-	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 5, AIM_LIGHT_GUN);
+	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 4, AIM_STICK_PAN);
 	motionRotation = optionChoice(environ_cb, "armnes_motion_rotation", rotationChoices, 4, 0);
 	stickInvert = optionChoice(environ_cb, "armnes_stick_invert", invertChoices, 4, 0);
 	motionInvert = optionChoice(environ_cb, "armnes_motion_invert", invertChoices, 4, 0);
