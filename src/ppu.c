@@ -289,17 +289,29 @@ static void shiftBackground(struct Ppu* ppu) {
 	ppu->atH = (ppu->atH << 1) | ((ppu->attrLatch & 2) >> 1);
 }
 
+// The eight slots a byte each in a word: 1 in each byte that isn't 0
+static inline uint64_t nonzeroBytes(uint64_t x) {
+	return (((x & 0x7F7F7F7F7F7F7F7Full) + 0x7F7F7F7F7F7F7F7Full) | x) >> 7 & 0x0101010101010101ull;
+}
+
 static void shiftSprites(struct Ppu* ppu) {
 	if (ppu->dot > 256) {
 		return;
 	}
-	for (int i = 0; i < 8; i++) {
-		if (ppu->spriteCounter[i] > 0 && !ppu->skippedDot) {
-			ppu->spriteCounter[i]--;
-		} else if (rendering(ppu)) {
-			ppu->spriteL[i] <<= 1;
-			ppu->spriteH[i] <<= 1;
-		}
+	// Slots still counting down count, the others shift
+	uint64_t counters, lo, hi;
+	memcpy(&counters, ppu->spriteCounter, 8);
+	uint64_t const counting = ppu->skippedDot ? 0 : nonzeroBytes(counters);
+	counters -= counting;
+	memcpy(ppu->spriteCounter, &counters, 8);
+	if (rendering(ppu)) {
+		uint64_t const keep = counting * 0xFF;
+		memcpy(&lo, ppu->spriteL, 8);
+		memcpy(&hi, ppu->spriteH, 8);
+		lo = (lo & keep) | ((lo << 1) & 0xFEFEFEFEFEFEFEFEull & ~keep);
+		hi = (hi & keep) | ((hi << 1) & 0xFEFEFEFEFEFEFEFEull & ~keep);
+		memcpy(ppu->spriteL, &lo, 8);
+		memcpy(ppu->spriteH, &hi, 8);
 	}
 }
 
@@ -614,17 +626,18 @@ static void calculatePixel(struct NES* nes) {
 	if (ppu->showSprites && (ppu->dot > 8 || ppu->showSpritesLeft)) {
 		uint8_t spriteColor = 0, spritePalette = 0;
 		bool front = false;
-		int i = 0;
-		for (; i < 8; i++) {
-			if (ppu->spriteCounter[i] != 0 && !ppu->skippedDot) {
-				continue;
-			}
-			spriteColor = ((ppu->spriteL[i] >> 7) & 1) | (((ppu->spriteH[i] >> 7) & 1) << 1);
+		// The first slot showing with a color, all eight at once
+		uint64_t counters, lo, hi;
+		memcpy(&counters, ppu->spriteCounter, 8);
+		memcpy(&lo, ppu->spriteL, 8);
+		memcpy(&hi, ppu->spriteH, 8);
+		uint64_t const showing = ppu->skippedDot ? 0x0101010101010101ull : nonzeroBytes(counters) ^ 0x0101010101010101ull;
+		uint64_t const colors = ((lo >> 7 & 0x0101010101010101ull) | (hi >> 6 & 0x0202020202020202ull)) & showing * 3;
+		int i = colors ? __builtin_ctzll(colors) >> 3 : 8;
+		if (i < 8) {
+			spriteColor = colors >> (i * 8) & 3;
 			spritePalette = (ppu->spriteAttr[i] & 3) | 4;
 			front = !(ppu->spriteAttr[i] & 0x20);
-			if (spriteColor) {
-				break;
-			}
 		}
 		if (ppu->canHit && i == 0 && ppu->hasZero && ppu->showBg && ppu->showSprites && color && spriteColor &&
 			(ppu->showSpritesLeft || ppu->dot > 8) && ppu->dot < 256) {

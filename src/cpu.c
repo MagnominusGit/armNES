@@ -31,8 +31,19 @@ static void ppuCatchUp(struct NES* nes) {
 	}
 	uint64_t tickNow = nes->ppuTick;
 	nes->ppuTick += lag;
-	int clock = nes->ppuClock, cpuClock = nes->ppuCpuClock;
-	for (; lag; lag--) {
+	int clock = nes->ppuClock, cpuClock = nes->ppuCpuClock, period = nes->ppuPeriod, cpuPeriod = nes->cpuPeriod;
+	while (lag) {
+		// The clocks before the next dot or half dot do nothing
+		int idle = clock < 2 ? 2 - clock : clock < period && clock != 2 ? period - clock : 0;
+		if (idle) {
+			idle = idle < lag ? idle : lag;
+			clock += idle;
+			tickNow += idle;
+			cpuClock = (cpuClock + idle) % cpuPeriod;
+			lag -= idle;
+			continue;
+		}
+		lag--;
 		nes->ppuCpuClock = cpuClock;
 		if (clock == nes->ppuPeriod) {
 			clock = nes->ppuClock = 0;
