@@ -15,6 +15,9 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 		if ((address & 7) != 2 || nes->exactPpu || nes->dotPpu || !fastStatusAhead(nes, &value)) {
 			nesPpuSync(nes);
 			value = ppuReadRegister(nes, address);
+			if ((address & 7) == 7 && nes->board->irqQuietDots) {
+				nes->mapperQuietTicks = 0;
+			}
 		}
 		// The RC2C05s give an ID in $2002's low bits
 		if (__builtin_expect(nes->cart.vs, 0) && (address & 7) == 2 && nes->cart.vsPpu >= 8 && nes->cart.vsPpu <= 12) {
@@ -72,6 +75,10 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		if ((address & 7) != 4 || nes->exactPpu || nes->dotPpu || !fastOamWriteAhead(nes, value)) {
 			nesPpuSync(nes);
 			ppuWriteRegister(nes, address, value, before);
+			// The board's IRQ bound depends on what the PPU is about to put on its bus
+			if (nes->board->irqQuietDots) {
+				nes->mapperQuietTicks = 0;
+			}
 		}
 	} else if (address < 0x4020) {
 		nesApuSync(nes);
