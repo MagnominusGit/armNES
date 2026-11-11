@@ -423,7 +423,7 @@ static inline void dotIncrementOam2(struct Ppu* ppu) {
 	}
 }
 
-static inline void dotEvaluate(struct NES* nes, bool readOnly) {
+static inline void dotEvaluate(struct NES* nes, int dot, bool readOnly) {
 	struct Ppu* ppu = &nes->ppu;
 	int height = ppu->tall ? 16 : 8;
 	uint8_t before = ppu->oamAddr;
@@ -437,7 +437,7 @@ static inline void dotEvaluate(struct NES* nes, bool readOnly) {
 			if (!ppu->oam2Overflowed) {
 				ppu->oamAddr++;
 				dotIncrementOam2(ppu);
-				if (ppu->dot == 66) {
+				if (dot == 66) {
 					ppu->nextHasZero = true;
 				}
 			} else {
@@ -447,7 +447,7 @@ static inline void dotEvaluate(struct NES* nes, bool readOnly) {
 			}
 			ppu->evalTick++;
 		} else {
-			if (ppu->dot == 66) {
+			if (dot == 66) {
 				ppu->nextHasZero = false;
 			}
 			if (!readOnly) {
@@ -494,13 +494,12 @@ static uint16_t dotPatternAddress(const struct Ppu* ppu) {
 		(((ppu->verticalOffset & 8) ^ (flipY ? 8 : 0)) << 1) | row;
 }
 
-static inline void dotSpriteFetch(struct NES* nes, int dot) {
+static inline __attribute__((always_inline)) void dotSpriteFetchAt(struct NES* nes, int slot, int phase) {
 	struct Ppu* ppu = &nes->ppu;
-	int slot = ((dot - 1) & 0x38) >> 3;
 	int height = ppu->tall ? 16 : 8;
 	// Each dot uses the byte the dot before read, and reads the next
 	uint8_t const read = ppu->oam2[ppu->oam2Addr];
-	switch ((dot - 1) & 7) {
+	switch (phase) {
 	case 0:
 		busAddress(nes, 0x2000 | (ppu->v & 0xFFF));
 		dotIncrementOam2(ppu);
@@ -545,6 +544,10 @@ static inline void dotSpriteFetch(struct NES* nes, int dot) {
 	ppu->oamBuffer = read;
 }
 
+static inline void dotSpriteFetch(struct NES* nes, int dot) {
+	dotSpriteFetchAt(nes, ((dot - 1) & 0x38) >> 3, (dot - 1) & 7);
+}
+
 // Secondary OAM's address goes back to 0, and its overflowed flag clears, the dot after 63, 255 or 339
 // if rendering was on then
 static inline void dotOam2Reset(struct Ppu* ppu, int dot) {
@@ -552,6 +555,25 @@ static inline void dotOam2Reset(struct Ppu* ppu, int dot) {
 		ppu->oam2Reset = 0;
 		ppu->oam2Addr = 0;
 		ppu->oam2Overflowed = false;
+	}
+}
+
+// A dot of 65-256: odd dots read OAM, even dots evaluate what was read
+static inline __attribute__((always_inline)) void dotEvaluationDot(struct NES* nes, int dot, bool odd, bool pre) {
+	struct Ppu* ppu = &nes->ppu;
+	if (dot == 65) {
+		ppu->nineObjects = false;
+		ppu->oamAddrOverflowed = false;
+	}
+	if (odd) {
+		ppu->oamBuffer = ppu->oam[ppu->oamAddr];
+	} else if (!ppu->oamAddrOverflowed) {
+		dotEvaluate(nes, dot, pre);
+	} else {
+		if (!pre) {
+			ppu->oamAddr = (ppu->oamAddr + 4) & 0xFC;
+		}
+		ppu->oamBuffer = ppu->oam2[ppu->oam2Addr];
 	}
 }
 
@@ -578,20 +600,7 @@ static inline void dotSprites(struct NES* nes, int dot, bool pre) {
 			dotIncrementOam2(ppu);
 		}
 	} else if (dot <= 256) {
-		if (dot == 65) {
-			ppu->nineObjects = false;
-			ppu->oamAddrOverflowed = false;
-		}
-		if (dot & 1) {
-			ppu->oamBuffer = ppu->oam[ppu->oamAddr];
-		} else if (!ppu->oamAddrOverflowed) {
-			dotEvaluate(nes, pre);
-		} else {
-			if (!pre) {
-				ppu->oamAddr = (ppu->oamAddr + 4) & 0xFC;
-			}
-			ppu->oamBuffer = ppu->oam2[ppu->oam2Addr];
-		}
+		dotEvaluationDot(nes, dot, dot & 1, pre);
 	} else if (dot <= 320) {
 		ppu->hasZero = ppu->nextHasZero;
 		ppu->oamAddr = 0;
@@ -688,11 +697,16 @@ static inline void dotPixel(struct NES* nes, int x) {
 	line[x] = color | emphasis;
 }
 
+// A frame nobody sees still needs its pixels while sprite 0 can hit
+static inline bool dotPixelNeeded(const struct NES* nes) {
+	return !nes->skipPixels || (nes->ppu.hasZero && !nes->ppu.hit);
+}
+
 // One dot of a line that renders, in the Balanced mode
 static inline void renderDotBalanced(struct NES* nes, int dot, bool visible, bool pre) {
 	struct Ppu* ppu = &nes->ppu;
 	if (dot >= 1 && dot <= 256) {
-		if (visible) {
+		if (visible && dotPixelNeeded(nes)) {
 			dotPixel(nes, dot - 1);
 		}
 		dotShiftSprites(ppu);
@@ -1223,8 +1237,54 @@ static void renderHblankMmc3(struct NES* nes) {
 	renderHblankWatched(nes, 20);
 }
 
-// Balanced: dots of a line that renders with nothing else due (no register effect pending), to before
-// the line's end or the pre-render line's skippable dot; a board watching the bus sees it each dot
+// Dots base+1 to base+8 of 1-64: secondary OAM filled with $FF (the pre-render line only reads it)
+static inline __attribute__((always_inline)) void dotClearTile(struct NES* nes, int base, bool pre) {
+	struct Ppu* ppu = &nes->ppu;
+	for (int k = 0; k < 4; k++) {
+		ppu->oamBuffer = pre ? ppu->oam2[ppu->oam2Addr] : 0xFF;
+		if (!base && !k) {
+			ppu->oam2Addr = 0;
+			ppu->evalTick = 0;
+			ppu->oamAddrOverflowed = false;
+		}
+		if (!pre) {
+			ppu->oam2[ppu->oam2Addr] = 0xFF;
+		}
+		dotIncrementOam2(ppu);
+	}
+	if (base == 56) {
+		ppu->oam2Reset = 1;
+		dotOam2Reset(ppu, 64);
+	}
+}
+
+// Dots base+1 to base+8 of 65-256, a read and an evaluation at a time (the tile starts on a multiple
+// of 8, so the read is on the odd dot). Before the eighth sprite is found one that isn't on the line
+// only moves the OAM address on.
+static inline __attribute__((always_inline)) void dotEvaluateTile(struct NES* nes, int base, bool pre) {
+	struct Ppu* ppu = &nes->ppu;
+	int const height = ppu->tall ? 16 : 8;
+	for (int k = 1; k <= 8; k += 2) {
+		int const dot = base + k;
+		if (!pre && dot > 66 && !ppu->evalTick && !ppu->oam2Overflowed && !ppu->oamAddrOverflowed) {
+			uint8_t const before = ppu->oamAddr, y = ppu->oam[before];
+			uint16_t const offset = (uint16_t) ((ppu->scanline & 0xFF) - y);
+			if (offset >= height) {
+				ppu->oam2[ppu->oam2Addr] = y;
+				ppu->verticalOffset = offset;
+				ppu->oamAddr = (before + 4) & 0xFC;
+				if (ppu->oamAddr < before && ppu->oamAddr < 4) {
+					ppu->oamAddrOverflowed = true;
+				}
+				ppu->oamBuffer = y;
+				continue;
+			}
+		}
+		dotEvaluationDot(nes, dot, true, pre);
+		dotEvaluationDot(nes, dot + 1, false, pre);
+	}
+}
+
 // Balanced: a tile's eight dots of a line that renders (base a multiple of 8, base + 8 no further
 // than 256), the fetch for each known where it's compiled
 static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, int base, bool visible, bool pre) {
@@ -1236,7 +1296,12 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 	memcpy(&lo, ppu->spriteL, 8);
 	memcpy(&hi, ppu->spriteH, 8);
 	bool const whole = visible && !(lo | hi);
-	if (whole) {
+	// Nothing to look at the tile's dots one by one: no sprite pattern left, no hit on its way, no
+	// board reading the fetches, and an MMC3 watching A12 that stays low through them
+	bool const quick = !(lo | hi) && !ppu->pendingHit && !nes->ppuReadHook && (!watch ||
+		(nes->board->ppuBus == mmc3PpuBus && nes->busShown && !nes->busA12Shown && !ppu->bgTable &&
+		!(ppu->addressBus & 0x1000)));
+	if (whole && !nes->skipPixels) {
 		uint64_t pixels = 0;
 		if (ppu->showBg && (base >= 8 || ppu->showBgLeft)) {
 			int const sh = 8 - ppu->fineX;
@@ -1248,6 +1313,67 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 		uint16_t const emphasis = (ppu->emphRed ? 0x40 : 0) | (ppu->emphGreen ? 0x80 : 0) | (ppu->emphBlue ? 0x100 : 0);
 		drawTile(&nes->frameBuffer[ppu->scanline * NES_WIDTH + base], pixels, NULL, ppu->palette, ppu->gray ? 0x30 : 0x3F, emphasis);
 	}
+	if (quick) {
+#pragma GCC unroll 8
+		for (int k = 1; k <= 8; k++) {
+			fetchTile(nes, k);
+		}
+		ppu->bgL = (uint16_t) (ppu->bgL << 8) | ppu->loLatch;
+		ppu->bgH = (uint16_t) (ppu->bgH << 8) | ppu->hiLatch;
+		ppu->atL = (uint16_t) (ppu->atL << 8) | ((ppu->atLatch & 1) ? 0xFF : 0);
+		ppu->atH = (uint16_t) (ppu->atH << 8) | ((ppu->atLatch & 2) ? 0xFF : 0);
+		incrementX(ppu);
+		if (base == 248) {
+			incrementY(ppu);
+		}
+		ppu->dotTick += 8 * period;
+		ppu->dot = base + 8;
+		ppu->dots += 8;
+	}
+#pragma GCC unroll 8
+	for (int k = 1; k <= 8 && !quick; k++) {
+		int const dot = base + k;
+		ppu->dotTick += period;
+		if (watch) {
+			showBus(nes);
+		}
+		ppu->dot = dot;
+		ppu->dots++;
+		if (ppu->pendingHit && --ppu->hitDelay == 0) {
+			ppu->pendingHit = false;
+			ppu->hit = true;
+		}
+		if (visible && !whole && dotPixelNeeded(nes)) {
+			dotPixel(nes, dot - 1);
+		}
+		dotShiftSprites(ppu);
+		fetchTile(nes, k);
+		shift(ppu);
+		if (k == 8) {
+			reload(ppu);
+			incrementX(ppu);
+			if (dot == 256) {
+				incrementY(ppu);
+			}
+		}
+	}
+	// The sprite work doesn't touch the rest, so its eight dots can come after
+	if (base < 64) {
+		dotClearTile(nes, base, pre);
+	} else {
+		dotEvaluateTile(nes, base, pre);
+		if (base == 248) {
+			ppu->oam2Reset = 1;
+			dotOam2Reset(ppu, 256);
+		}
+	}
+}
+
+// Balanced: a sprite slot's eight dots of fetches, dots base+1 to base+8 of 257-320
+static inline __attribute__((always_inline)) void balancedSlot(struct NES* nes, int base, bool pre) {
+	struct Ppu* ppu = &nes->ppu;
+	int const period = nes->ppuPeriod, slot = (base - 256) >> 3;
+	bool const watch = nes->watchPpuBus;
 #pragma GCC unroll 8
 	for (int k = 1; k <= 8; k++) {
 		int const dot = base + k;
@@ -1261,34 +1387,68 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 			ppu->pendingHit = false;
 			ppu->hit = true;
 		}
-		if (visible && !whole) {
-			dotPixel(nes, dot - 1);
+		if (k == 1 && !slot) {
+			shift(ppu);
+			ppu->v = (ppu->v & ~0x41F) | (ppu->t & 0x41F);
 		}
-		dotShiftSprites(ppu);
+		if (pre && dot >= 280 && dot <= 304) {
+			ppu->v = (ppu->v & ~0x7BE0) | (ppu->t & 0x7BE0);
+		}
+		ppu->hasZero = ppu->nextHasZero;
+		ppu->oamAddr = 0;
+		dotSpriteFetchAt(nes, slot, k - 1);
+	}
+}
+
+// Balanced: one of the next line's first two tiles, dots base+1 to base+8 of 321-336
+static inline __attribute__((always_inline)) void balancedPrefetch(struct NES* nes) {
+	struct Ppu* ppu = &nes->ppu;
+	int const period = nes->ppuPeriod, base = ppu->dot;
+	bool const watch = nes->watchPpuBus;
+#pragma GCC unroll 8
+	for (int k = 1; k <= 8; k++) {
+		ppu->dotTick += period;
+		if (watch) {
+			showBus(nes);
+		}
+		ppu->dot = base + k;
+		ppu->dots++;
+		if (ppu->pendingHit && --ppu->hitDelay == 0) {
+			ppu->pendingHit = false;
+			ppu->hit = true;
+		}
 		fetchTile(nes, k);
 		shift(ppu);
 		if (k == 8) {
 			reload(ppu);
 			incrementX(ppu);
-			if (dot == 256) {
-				incrementY(ppu);
-			}
 		}
-		dotSprites(nes, dot, pre);
-		dotOam2Reset(ppu, dot);
+		ppu->oamBuffer = ppu->oam2[ppu->oam2Addr];
 	}
 }
 
-static void balancedSpan(struct NES* nes, int n, bool visible, bool pre) {
+// Balanced: dots of a line that renders with nothing else due (no register effect pending), to before
+// the line's end or the pre-render line's skippable dot; a board watching the bus sees it each dot
+static __attribute__((noinline)) void balancedSpan(struct NES* nes, int n, bool visible, bool pre) {
 	struct Ppu* ppu = &nes->ppu;
 	int const period = nes->ppuPeriod;
 	bool const watch = nes->watchPpuBus;
-	// Whole tiles where they fit
-	while (n >= 8 && !(ppu->dot & 7) && ppu->dot < 256) {
-		if (visible) {
-			balancedTile(nes, ppu->dot, true, false);
+	// Whole tiles, slots and prefetches where they fit
+	while (n >= 8 && !(ppu->dot & 7) && ppu->dot < 336) {
+		if (ppu->dot < 256) {
+			if (visible) {
+				balancedTile(nes, ppu->dot, true, false);
+			} else {
+				balancedTile(nes, ppu->dot, false, pre);
+			}
+		} else if (ppu->dot < 320) {
+			if (pre) {
+				balancedSlot(nes, ppu->dot, true);
+			} else {
+				balancedSlot(nes, ppu->dot, false);
+			}
 		} else {
-			balancedTile(nes, ppu->dot, false, pre);
+			balancedPrefetch(nes);
 		}
 		n -= 8;
 	}
