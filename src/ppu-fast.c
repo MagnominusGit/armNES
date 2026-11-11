@@ -416,14 +416,14 @@ static inline void renderDot(struct NES* nes, int dot, bool visible, bool pre) {
 // 65-256 (odd dots read, even dots check and copy, with the overflow search's diagonal walk), then
 // fetched slot by slot on 257-320 into eight shifters with X counters.
 
-static void dotIncrementOam2(struct Ppu* ppu) {
+static inline void dotIncrementOam2(struct Ppu* ppu) {
 	if (!ppu->oam2Overflowed && ++ppu->oam2Addr == 0x20) {
 		ppu->oam2Overflowed = true;
 		ppu->oam2Addr = 0;
 	}
 }
 
-static void dotEvaluate(struct NES* nes, bool readOnly) {
+static inline void dotEvaluate(struct NES* nes, bool readOnly) {
 	struct Ppu* ppu = &nes->ppu;
 	int height = ppu->tall ? 16 : 8;
 	uint8_t before = ppu->oamAddr;
@@ -494,7 +494,7 @@ static uint16_t dotPatternAddress(const struct Ppu* ppu) {
 		(((ppu->verticalOffset & 8) ^ (flipY ? 8 : 0)) << 1) | row;
 }
 
-static void dotSpriteFetch(struct NES* nes, int dot) {
+static inline void dotSpriteFetch(struct NES* nes, int dot) {
 	struct Ppu* ppu = &nes->ppu;
 	int slot = ((dot - 1) & 0x38) >> 3;
 	int height = ppu->tall ? 16 : 8;
@@ -547,7 +547,7 @@ static void dotSpriteFetch(struct NES* nes, int dot) {
 
 // Secondary OAM's address goes back to 0, and its overflowed flag clears, the dot after 63, 255 or 339
 // if rendering was on then
-static void dotOam2Reset(struct Ppu* ppu, int dot) {
+static inline void dotOam2Reset(struct Ppu* ppu, int dot) {
 	if (ppu->oam2Reset && (dot == 64 || dot == 256 || dot == 340)) {
 		ppu->oam2Reset = 0;
 		ppu->oam2Addr = 0;
@@ -556,7 +556,7 @@ static void dotOam2Reset(struct Ppu* ppu, int dot) {
 }
 
 // One dot of sprite work on a line that renders
-static void dotSprites(struct NES* nes, int dot, bool pre) {
+static inline void dotSprites(struct NES* nes, int dot, bool pre) {
 	struct Ppu* ppu = &nes->ppu;
 	if (dot == 63 || dot == 255 || dot == 339) {
 		ppu->oam2Reset = 1;
@@ -608,7 +608,7 @@ static inline uint64_t slotsNonzero(uint64_t x) {
 
 // The sprite shifters after a pixel: a slot counts its X down, then shifts out its pattern; all
 // eight at once
-static void dotShiftSprites(struct Ppu* ppu) {
+static inline void dotShiftSprites(struct Ppu* ppu) {
 	uint64_t counters, lo, hi;
 	memcpy(&counters, ppu->spriteCounter, 8);
 	memcpy(&lo, ppu->spriteL, 8);
@@ -636,7 +636,7 @@ static void dotIdleSprites(struct Ppu* ppu, int dot) {
 }
 
 // The pixel at x from the background shifters and the sprite slots
-static void dotPixel(struct NES* nes, int x) {
+static inline void dotPixel(struct NES* nes, int x) {
 	struct Ppu* ppu = &nes->ppu;
 	int bg = 0;
 	if (ppu->showBg && (x >= 8 || ppu->showBgLeft)) {
@@ -685,7 +685,7 @@ static void dotPixel(struct NES* nes, int x) {
 }
 
 // One dot of a line that renders, in the Balanced mode
-static void renderDotBalanced(struct NES* nes, int dot, bool visible, bool pre) {
+static inline void renderDotBalanced(struct NES* nes, int dot, bool visible, bool pre) {
 	struct Ppu* ppu = &nes->ppu;
 	if (dot >= 1 && dot <= 256) {
 		if (visible) {
@@ -1219,6 +1219,27 @@ static void renderHblankMmc3(struct NES* nes) {
 	renderHblankWatched(nes, 20);
 }
 
+// Balanced: dots of a line that renders with nothing else due (no register effect pending), to before
+// the line's end or the pre-render line's skippable dot; a board watching the bus sees it each dot
+static void balancedSpan(struct NES* nes, int n, bool visible, bool pre) {
+	struct Ppu* ppu = &nes->ppu;
+	int const period = nes->ppuPeriod;
+	bool const watch = nes->watchPpuBus;
+	for (int i = 0; i < n; i++) {
+		ppu->dotTick += period;
+		if (watch) {
+			showBus(nes);
+		}
+		int const dot = ++ppu->dot;
+		ppu->dots++;
+		if (ppu->pendingHit && --ppu->hitDelay == 0) {
+			ppu->pendingHit = false;
+			ppu->hit = true;
+		}
+		renderDotBalanced(nes, dot, visible, pre);
+	}
+}
+
 void fastRun(struct NES* nes, int dots) {
 	struct Ppu* ppu = &nes->ppu;
 	buildSpread();
@@ -1247,7 +1268,18 @@ void fastRun(struct NES* nes, int dots) {
 					continue;
 				}
 			} else if (nes->dotPpu) {
-				// Balanced: every other dot one at a time
+				// Balanced: render lines' dots in a run, the rest one at a time
+				bool const preLine_ = line == pre;
+				if ((line < 240 || preLine_) && rendering(ppu) && !(line == 0 && ppu->skippedDot) &&
+					dot >= (preLine_ ? 1 : 0)) {
+					int const end = preLine_ ? 338 : 340;
+					if (dot < end) {
+						int n = end - dot < dots ? end - dot : dots;
+						balancedSpan(nes, n, line < 240, preLine_);
+						dots -= n;
+						continue;
+					}
+				}
 			} else if (line == 240 && dot < 340 && (!nes->watchPpuBus || (nes->overclockRepeat && nes->overclockPostRender))) {
 				// The line after the picture (or an overclocked frame's held one): idle to its last dot
 				int n = 340 - dot;
