@@ -1327,6 +1327,11 @@ void fastRun(struct NES* nes, int dots) {
 					dots -= 8 * renderTiles(nes, dots / 8);
 					continue;
 				}
+				if (dot == 256 && dots >= 84 && nes->board->ppuBus == mmc3PpuBus) {
+					renderHblankMmc3(nes);
+					dots -= 84;
+					continue;
+				}
 				if (dot >= 256 && dot < 340 && nes->watchPpuBus) {
 					int n = dots < 340 - dot ? dots : 340 - dot;
 					renderHblankWatched(nes, n);
