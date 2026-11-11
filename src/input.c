@@ -123,7 +123,8 @@ static bool zapperLight(struct NES* nes) {
 	for (int dy = -2; dy <= 2; dy++) {
 		for (int dx = -2; dx <= 2; dx++) {
 			int px = x + dx, py = y + dy;
-			if (px < 0 || px > 255 || py < 0 || py > 239 || py > line) {
+			// Pixels the beam hasn't drawn yet this frame still hold the last one's
+			if (px < 0 || px > 255 || py < 0 || py > 239 || py > line || (py == line && px + 5 > dot)) {
 				continue;
 			}
 			uint8_t color = nes->frameBuffer[py * NES_WIDTH + px] & 0x3F;
