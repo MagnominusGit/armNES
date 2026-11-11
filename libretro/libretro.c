@@ -654,6 +654,23 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 }
 
 static uint8_t portDevice[2];
+static bool portChosen[2];
+
+// What's plugged into a port: the frontend's choice, or until it makes one (the standalone app never
+// does), what an NES 2.0 header names: a Zapper, two, a Power Pad or an Arkanoid paddle.
+static uint8_t portType(unsigned port) {
+	if (portChosen[port] || !loaded || !nes.cart.nes2) {
+		return portDevice[port];
+	}
+	switch (nes.cart.header[15] & 0x3F) {
+	case 0x08: return port ? DEVICE_ZAPPER : DEVICE_PAD;
+	case 0x09: return DEVICE_ZAPPER;
+	case 0x0B:
+	case 0x0C: return port ? DEVICE_POWER_PAD : DEVICE_PAD;
+	case 0x0F: return port ? DEVICE_PADDLE : DEVICE_PAD;
+	default: return portDevice[port];
+	}
+}
 
 // Whether the cart has its own sound chip: the Disk System's, MMC5's, Namco 163's, VRC6's, Sunsoft's
 // or VRC7's, or an NSF's, which may name any of them.
@@ -675,7 +692,7 @@ static bool cartSound(void) {
 static bool showOptions(void) {
 	bool const vs = !loaded || nes.cart.vs;
 	bool const dual = !loaded || nes.dual;
-	bool const zapper = !loaded || portDevice[0] == DEVICE_ZAPPER || portDevice[1] == DEVICE_ZAPPER;
+	bool const zapper = !loaded || portType(0) == DEVICE_ZAPPER || portType(1) == DEVICE_ZAPPER;
 	bool const motion = zapper && (optionIs(environ_cb, "armnes_zapper_aim", "Right stick (absolute)") ||
 		optionIs(environ_cb, "armnes_zapper_aim", "Right stick (pan)"));
 	bool const motionOn = motion && !optionIs(environ_cb, "armnes_motion_sensor", "Off");
@@ -718,6 +735,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {
 		case RETRO_DEVICE_NONE: portDevice[port] = DEVICE_NONE; break;
 		default: portDevice[port] = DEVICE_PAD; break;
 		}
+		portChosen[port] = true;
 		showOptions();
 	}
 }
@@ -994,8 +1012,8 @@ static void drawCrosshair(int scale) {
 static void readDevices(void) {
 	struct InputConfig* in = &nes.input;
 	crossShown = false;
-	in->device[0] = portDevice[0];
-	in->device[1] = portDevice[1];
+	in->device[0] = portType(0);
+	in->device[1] = portType(1);
 	// Auto: what an NES 2.0 header's default expansion device names
 	uint8_t named = nes.cart.nes2 ? nes.cart.header[15] & 0x3F : 0;
 	int players = fourPlayers != AUTO ? fourPlayers : named == 0x02 ? 1 : (named == 0x03 || named == 0x06) ? 2 : 0;

@@ -45,7 +45,8 @@ ones come from FCEUmm. See Credits for the full list.
 | L3 | On Disk System games, takes the disk out, then puts the next side in; VS. System service button; on controller 2, the Famicom's microphone; on Datach games, a barcode swipe |
 | Left stick | The D-pad too, unless Left Stick as D-Pad is off |
 
-Plug in a Zapper, Arkanoid paddle or Power Pad through the frontend's controller port types. The
+Plug in a Zapper, Arkanoid paddle or Power Pad through the frontend's controller port types; until
+one is chosen (the standalone app doesn't), a game whose NES 2.0 header names one gets it. The
 Zapper aims with a light gun or mouse pointer, a mouse-moved crosshair, or the right stick, and a
 touch screen aims and fires wherever it's touched. Zapper Motion (off by default) adds the
 device's motion on top of the right stick: turning it with the gyroscope or tilting it with the
