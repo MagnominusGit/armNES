@@ -185,6 +185,52 @@ void mmc3Reset(struct NES* nes, bool hard) {
 
 MMC3_BOARD(boardMmc3, "MMC3", NULL, mmc3Write);
 
+// MMC6 (4.1): 1 KB of RAM in the chip at $7000-$7FFF (mirrored), the save. $A001 lets each 512-byte
+// half be read, and written when it can also be read; it takes writes once $8000 bit 5 has enabled
+// the RAM (bit 0 kept as the mark). A half that can't be read reads 0, and both such leave the bus open.
+static void mmc6Wram(struct NES* nes) {
+	nesUnmapPrg(nes, 0x6000, 0x2000);
+	nes->readHooks |= 1 << 7;
+}
+
+static uint8_t mmc6Read(struct NES* nes, uint16_t address) {
+	struct Mmc3* m = STATE(Mmc3);
+	if (!(m->wramControl & 0xA0)) {
+		return nes->cpu.openBus;
+	}
+	return m->wramControl & (address & 0x200 ? 0x80 : 0x20) ? nes->cart.wram[address & 0x3FF] : 0;
+}
+
+static void mmc6Write(struct NES* nes, uint16_t address, uint8_t value) {
+	struct Mmc3* m = STATE(Mmc3);
+	if (address >= 0x7000 && address < 0x8000) {
+		uint8_t const half = address & 0x200 ? 0xC0 : 0x30;
+		if ((m->wramControl & half) == half) {
+			nes->cart.wram[address & 0x3FF] = value;
+		}
+		return;
+	}
+	if ((address & 0xE001) == 0xA001) {
+		if ((m->wramControl & 1) || (m->select & 0x20)) {
+			m->wramControl = value | 1;
+		}
+		return;
+	}
+	mmc3Write(nes, address, value);
+}
+
+static void mmc6Reset(struct NES* nes, bool hard) {
+	mmc3Reset(nes, hard);
+	if (hard) {
+		STATE(Mmc3)->wramControl = 0;
+	}
+}
+
+static const struct Mmc3Variant mmc6Variant = { .wram = mmc6Wram };
+
+const struct Board boardMmc6 = { .name = "MMC6", .reset = mmc6Reset, .write = mmc6Write, .read = mmc6Read, .ppuBus = mmc3PpuBus,
+	.busA12 = true, .irqQuietDots = mmc3IrqQuietDots, .sync = mmc3Sync, .stateSize = sizeof(struct Mmc3), .data = &mmc6Variant };
+
 // TxSROM (118): each name table follows bit 7 of the CHR bank at its slot in $0000-$0FFF
 static void txsromChr(struct NES* nes, uint16_t address, int bank) {
 	chr1(nes, address, bank);

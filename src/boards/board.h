@@ -77,6 +77,7 @@ BOARD(boardMmc1Parallel);
 
 // mmc3.c
 BOARD(boardMmc3);
+BOARD(boardMmc6);
 BOARD(boardTxsrom);
 BOARD(boardTqrom);
 BOARD(boardNamco108);
