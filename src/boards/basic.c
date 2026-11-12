@@ -85,7 +85,9 @@ const struct Board boardAxrom = {
 };
 
 // MMC1 (1): a serial port into four registers. SUROM and SXROM take the 256 KB PRG half from CHR
-// bank bit 4, SOROM and SXROM the work RAM bank from bits 2-3.
+// bank bit 4; the work RAM bank comes from bits 2-3 on SXROM, bit 3 on SOROM and bit 4 on SZROM
+// (16 KB of RAM with CHR ROM). On those two the battery keeps only the second chip, which the bit
+// set selects; it's kept first here, as the half saved.
 struct Mmc1 {
 	uint8_t shift, count;
 	uint8_t control, chr0, chr1, prg;
@@ -122,8 +124,10 @@ static void mmc1Sync(struct NES* nes) {
 	}
 
 	int wramBank = 0;
-	if (nes->cart.wramSize > 0x2000) {
+	if (nes->cart.wramSize > 0x4000) {
 		wramBank = (m->chr0 >> 2) & 3;
+	} else if (nes->cart.wramSize > 0x2000) {
+		wramBank = ((m->chr0 >> (nes->cart.chrRam ? 3 : 4)) & 1) ^ 1;
 	}
 	bool enabled = !(m->prg & 0x10) || nes->cart.submapper == 5;
 	if (enabled) {
