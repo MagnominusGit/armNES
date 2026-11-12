@@ -89,20 +89,20 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	// This run's pointers, which loading replaces, are left out: the same machine makes the same state
 	// wherever it runs, as netplay's checks need
 #define LEAVE_OUT(field) memset(out + offsetof(struct NES, field), 0, sizeof(((struct NES*) 0)->field))
-	LEAVE_OUT(cart.prg);
-	LEAVE_OUT(cart.chr);
-	LEAVE_OUT(cart.vram);
-	LEAVE_OUT(cart.wram);
-	LEAVE_OUT(cart.misc);
-	LEAVE_OUT(cart.disk);
-	LEAVE_OUT(board);
-	LEAVE_OUT(prgPages);
-	LEAVE_OUT(chrPages);
-	LEAVE_OUT(fdsBios);
-	LEAVE_OUT(frameBuffer);
-	LEAVE_OUT(audioOut);
-	LEAVE_OUT(dual);
-	LEAVE_OUT(vsShared);
+	LEAVE_OUT(cart.prgSlot);
+	LEAVE_OUT(cart.chrSlot);
+	LEAVE_OUT(cart.vramSlot);
+	LEAVE_OUT(cart.wramSlot);
+	LEAVE_OUT(cart.miscSlot);
+	LEAVE_OUT(cart.diskSlot);
+	LEAVE_OUT(boardSlot);
+	LEAVE_OUT(prgPagesSlot);
+	LEAVE_OUT(chrPagesSlot);
+	LEAVE_OUT(fdsBiosSlot);
+	LEAVE_OUT(frameBufferSlot);
+	LEAVE_OUT(audioOutSlot);
+	LEAVE_OUT(dualSlot);
+	LEAVE_OUT(vsSharedSlot);
 #undef LEAVE_OUT
 	out += sizeof(struct NES);
 	uint32_t tags[32];
@@ -148,7 +148,7 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	uint8_t* vsShared = nes->vsShared;
 	bool vsSub = nes->vsSub;
 	int16_t* audioOut = nes->audioOut;
-	size_t audioCapacity = nes->audioCapacity;
+	uint64_t audioCapacity = nes->audioCapacity;
 	int sampleRate = nes->sampleRate;
 	bool exactPpu = nes->exactPpu, exactTiming = nes->exactTiming, dotPpu = nes->dotPpu;
 	uint8_t pads[2] = { nes->pads[0], nes->pads[1] };

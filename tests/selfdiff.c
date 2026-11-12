@@ -52,7 +52,7 @@ static const char* differs(struct NES* a, struct NES* b) {
 		while (i < a->audioCount && a->audioOut[i] == b->audioOut[i]) {
 			i++;
 		}
-		printf("  audio %zu/%zu samples, first differs at %zu: %d/%d\n", a->audioCount, b->audioCount, i,
+		printf("  audio %zu/%zu samples, first differs at %zu: %d/%d\n", (size_t) a->audioCount, (size_t) b->audioCount, i,
 			i < a->audioCount ? a->audioOut[i] : 0, i < b->audioCount ? b->audioOut[i] : 0);
 		return "audio";
 	}

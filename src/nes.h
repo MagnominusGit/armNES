@@ -8,6 +8,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// A pointer into this run's memory, given 8 bytes on every host so save states have one layout
+#define RUN_POINTER(declaration, slot) union { declaration; uint64_t slot; }
+
 // The machine: CPU, PPU, APU, DMA, controllers and the cartridge's board, stepped one CPU cycle at a
 // time with the PPU caught up on a shared master clock.
 
@@ -240,25 +243,25 @@ struct Board {
 };
 
 struct Cart {
-	uint8_t* prg;
+	RUN_POINTER(uint8_t* prg, prgSlot);
 	uint32_t prgSize;
-	uint8_t* chr;
+	RUN_POINTER(uint8_t* chr, chrSlot);
 	uint32_t chrSize;
 	bool chrRam;
 	// CHR RAM beside CHR ROM, on boards that have both
-	uint8_t* vram;
+	RUN_POINTER(uint8_t* vram, vramSlot);
 	uint32_t vramSize;
-	uint8_t* wram;
+	RUN_POINTER(uint8_t* wram, wramSlot);
 	uint32_t wramSize;
 	// The work RAM is a ported board's own buffer, which the board frees
 	bool wramBorrowed;
 	// NES 2.0's miscellaneous ROM, such as a protection chip's program
-	uint8_t* misc;
+	RUN_POINTER(uint8_t* misc, miscSlot);
 	uint32_t miscSize;
 	// The jumper setting known for this dump, or -1
 	int jumper;
 	// Disk System sides, as the drive reads them (boards/fds.c)
-	uint8_t* disk;
+	RUN_POINTER(uint8_t* disk, diskSlot);
 	uint32_t diskSideSize;
 	int diskSides;
 	uint32_t batterySize;
@@ -328,7 +331,7 @@ struct NES {
 	struct Ppu ppu;
 	struct Apu apu;
 	struct Cart cart;
-	const struct Board* board;
+	RUN_POINTER(const struct Board* board, boardSlot);
 	uint8_t boardState[1024];
 
 	uint8_t ram[0x800];
@@ -364,17 +367,17 @@ struct NES {
 	bool dotPpu;
 
 	// $4020-$FFFF in 4 KB pages
-	uint8_t* prgPages[16];
+	RUN_POINTER(uint8_t* prgPages[16], prgPagesSlot[16]);
 	bool prgWritable[16];
 	uint16_t readHooks;
 	// $0000-$3FFF on the PPU bus in 1 KB pages
-	uint8_t* chrPages[16];
+	RUN_POINTER(uint8_t* chrPages[16], chrPagesSlot[16]);
 	bool chrWritable[16];
 	bool watchPpuBus;
 	bool ppuReadHook;
 
 	// The Disk System's BIOS, set before loading a disk
-	const uint8_t* fdsBios;
+	RUN_POINTER(const uint8_t* fdsBios, fdsBiosSlot);
 
 	// Controllers: buttons pressed, bit 0 A to bit 7 Right
 	uint8_t pads[2];
@@ -398,12 +401,12 @@ struct NES {
 	bool overclockHolding;
 	bool noSpriteLimit;
 
-	uint16_t* frameBuffer;
+	RUN_POINTER(uint16_t* frameBuffer, frameBufferSlot);
 	bool frameDone;
 
 	// Audio: samples at the CPU's rate are filtered down to sampleRate
-	int16_t* audioOut;
-	size_t audioCount, audioCapacity;
+	RUN_POINTER(int16_t* audioOut, audioOutSlot);
+	uint64_t audioCount, audioCapacity;
 	int sampleRate;
 	int64_t audioPhase;
 	int32_t audioAccum, audioAccumCount;
@@ -436,8 +439,8 @@ struct NES {
 
 	// A VS. DualSystem: the other board, the 2 KB both reach at $6000-$7FFF, whether this board can
 	// reach it now, and whether this is the second board
-	struct NES* dual;
-	uint8_t* vsShared;
+	RUN_POINTER(struct NES* dual, dualSlot);
+	RUN_POINTER(uint8_t* vsShared, vsSharedSlot);
 	bool vsSub, vsRamAccess;
 };
 
