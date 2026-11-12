@@ -86,8 +86,9 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	memcpy(out, &header, sizeof(header));
 	out += sizeof(header);
 	memcpy(out, nes, sizeof(struct NES));
-	// This run's pointers, which loading replaces, are left out: the same machine makes the same state
-	// wherever it runs, as netplay's checks need
+	// This run's pointers, and what loading keeps from the run (buttons, mixer), are left out: the same
+	// machine makes the same state wherever it runs, and a state loaded saves back the same, as
+	// netplay's checks need
 #define LEAVE_OUT(field) memset(out + offsetof(struct NES, field), 0, sizeof(((struct NES*) 0)->field))
 	LEAVE_OUT(cart.prgSlot);
 	LEAVE_OUT(cart.chrSlot);
@@ -103,6 +104,9 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	LEAVE_OUT(audioOutSlot);
 	LEAVE_OUT(dualSlot);
 	LEAVE_OUT(vsSharedSlot);
+	LEAVE_OUT(pads);
+	LEAVE_OUT(mixer);
+	LEAVE_OUT(busShown);
 #undef LEAVE_OUT
 	out += sizeof(struct NES);
 	uint32_t tags[32];
