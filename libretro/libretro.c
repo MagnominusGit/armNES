@@ -271,8 +271,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		{ { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { "Dendy", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_ppu", "PPU Accuracy", NULL,
 		"Balanced runs the picture chip dot by dot with its sprites found and fetched as the hardware "
-		"does, for most of its quirks at a few times Fast's cost. Exact models it half a dot at a time, "
-		"passing every test, but many times slower: for desktops. Takes effect when a game is loaded.",
+		"does, passing every accuracy test at under twice Fast's cost. Exact models it half a dot at a "
+		"time, cycle for cycle, but many times slower: for desktops. Takes effect when a game is loaded.",
 		NULL, "system", { { "Fast", NULL }, { "Balanced", NULL }, { "Exact", NULL }, { NULL, NULL } }, "Fast" },
 	{ "armnes_overclock", "Overclock", NULL,
 		"Extra CPU time each frame, which removes most slowdown without changing game speed. A few games "
