@@ -729,6 +729,10 @@ static void namco163Reset(struct NES* nes, bool hard) {
 		nes->readHooks |= 1 << 4 | 1 << 5;
 	}
 	if (hasNamco175Ram(nes)) {
+		// The RAM starts enabled, until $C000 says otherwise
+		if (hard) {
+			STATE(Namco163)->nt[0] = 1;
+		}
 		nesUnmapPrg(nes, 0x6000, 0x2000);
 		nes->readHooks |= 1 << 6 | 1 << 7;
 	} else {
