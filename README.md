@@ -81,7 +81,7 @@ What games show and play comes first; test ROMs that probe corners no game reach
 - The PPU draws each pixel at the cycle it would on the console, so mid-frame effects, split screens
   and sprite 0 hits land where they should. The cycle-exact PPU (PPU Accuracy: Exact, many times
   slower, for desktops) passes all 147 of AccuracyCoin's tests. Balanced, which finds and fetches
-  sprites dot by dot as the hardware does, passes all 147 as well; Fast, the default, passes 131.
+  sprites dot by dot as the hardware does, passes all 147 as well; Fast, the default, passes 132.
   Their pictures are checked against the cycle-exact one frame by frame.
 - The APU passes blargg's `apu_test` suite, including its DMC tests, and mixes its channels as the
   console's nonlinear mixer does. The Disk System's, VRC6's, VRC7's, MMC5's, Namco 163's and Sunsoft
@@ -120,7 +120,7 @@ and `armulators/package/android/build.sh` makes the APK.
 
 ## Known gaps
 
-- The fast PPU misses 16 of AccuracyCoin's 147 tests, on behavior no game is known to depend on.
+- The fast PPU misses 15 of AccuracyCoin's 147 tests, on behavior no game is known to depend on.
 - Three of blargg's APU reset tests fail: what a soft reset leaves in the frame counter and length
   counters.
 - Overclock gives games extra CPU time each frame; a few games misbehave with it.

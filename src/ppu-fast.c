@@ -2256,9 +2256,8 @@ uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 			ppu->vramReadStep = 0;
 		}
 		uint16_t v = ppu->v & 0x3FFF;
-		// Palette RAM answers directly unless the fetches have the bus (Balanced: only on a line that
-		// renders, so in vblank too)
-		bool const fetching = rendering(ppu) && (!nes->dotPpu || ppu->scanline < 240 || ppu->scanline == preLine(nes));
+		// Palette RAM answers directly unless the fetches have the bus, which is only on a line that renders
+		bool const fetching = rendering(ppu) && (ppu->scanline < 240 || ppu->scanline == preLine(nes));
 		if (!fetching && v >= 0x3F00) {
 			value = (paletteRead(ppu, v) & (ppu->gray ? 0x30 : 0x3F)) | (openBus(ppu) & 0xC0);
 		} else {
