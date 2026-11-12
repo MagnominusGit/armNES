@@ -825,6 +825,33 @@ void retro_reset(void) {
 	}
 }
 
+// A save the board keeps partly in its own RAM (batteryRam): one block for the frontend, the
+// cartridge's battery RAM then the board's. What the frontend loads goes in before the first frame;
+// after that the machine's copy comes back out before each.
+static uint8_t* saveBlock;
+static bool saveBlockIn;
+
+static uint8_t* boardBatteryRam(size_t* size) {
+	return loaded && nes.cart.battery && nes.board->batteryRam ? nes.board->batteryRam(&nes, size) : NULL;
+}
+
+static void saveBlockSync(void) {
+	size_t size;
+	uint8_t* ram = saveBlock ? boardBatteryRam(&size) : NULL;
+	if (!ram) {
+		return;
+	}
+	uint32_t const cart = nes.cart.batterySize;
+	if (saveBlockIn) {
+		memcpy(saveBlock, nes.cart.wram, cart);
+		memcpy(saveBlock + cart, ram, size);
+	} else {
+		memcpy(nes.cart.wram, saveBlock, cart);
+		memcpy(ram, saveBlock + cart, size);
+		saveBlockIn = true;
+	}
+}
+
 static int turboPeriod = 4;
 static bool allowOpposing;
 static bool leftStickDpad;
@@ -1387,6 +1414,7 @@ static void readFastForward(void) {
 }
 
 void retro_run(void) {
+	saveBlockSync();
 	input_poll_cb();
 	turboFrame++;
 	readDevices();
@@ -1836,6 +1864,12 @@ bool retro_load_game(const struct retro_game_info* game) {
 	songFrames = 0;
 	lastNsfPad = 0;
 	loaded = true;
+	size_t boardRam;
+	if (boardBatteryRam(&boardRam) && (saveBlock = malloc(nes.cart.batterySize + boardRam))) {
+		saveBlockIn = true;
+		saveBlockSync();
+		saveBlockIn = false;
+	}
 	showOptions();
 	return true;
 }
@@ -1856,6 +1890,8 @@ void retro_unload_game(void) {
 		nesFree(&nes);
 		free(unpacked);
 		unpacked = NULL;
+		free(saveBlock);
+		saveBlock = NULL;
 		loaded = false;
 		showOptions();
 	}
@@ -1892,6 +1928,8 @@ bool retro_unserialize(const void* data, size_t size) {
 	if (!loaded || size < retro_serialize_size()) {
 		return false;
 	}
+	// A state loaded before the first frame keeps its own save RAM, as it does in one block
+	saveBlockIn = true;
 	if (!nes.dual) {
 		return nesLoadState(&nes, data, size);
 	}
@@ -1924,6 +1962,9 @@ void* retro_get_memory_data(unsigned id) {
 		if (loaded && nes.cart.disk) {
 			return nes.cart.disk;
 		}
+		if (saveBlock) {
+			return saveBlock;
+		}
 		return loaded && nes.cart.battery ? nes.cart.wram : NULL;
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return nes.ram;
@@ -1938,7 +1979,11 @@ size_t retro_get_memory_size(unsigned id) {
 		if (loaded && nes.cart.disk) {
 			return (size_t) nes.cart.diskSides * nes.cart.diskSideSize;
 		}
-		return loaded && nes.cart.battery ? nes.cart.batterySize : 0;
+		size_t boardRam = 0;
+		if (saveBlock) {
+			boardBatteryRam(&boardRam);
+		}
+		return loaded && nes.cart.battery ? nes.cart.batterySize + boardRam : 0;
 	case RETRO_MEMORY_SYSTEM_RAM:
 		return sizeof(nes.ram);
 	default:

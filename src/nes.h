@@ -236,6 +236,8 @@ struct Board {
 	// State kept outside boardState: written to out, or with out NULL only measured
 	size_t (*saveExtra)(struct NES*, uint8_t* out);
 	void (*loadExtra)(struct NES*, const uint8_t* in);
+	// The board's own RAM the battery keeps, saved after the cartridge's (size bytes), or NULL
+	uint8_t* (*batteryRam)(struct NES*, size_t* size);
 	// A variant's description, for boards that share their code
 	const void* data;
 	// Writes to $4016, for boards wired to the controller port's OUT pins (the VS. System's)

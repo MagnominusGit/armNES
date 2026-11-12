@@ -716,7 +716,14 @@ static int namco163Audio(struct NES* nes) {
 
 static void namco163Reset(struct NES* nes, bool hard) {
 	if (hard) {
+		// A battery keeps the sound RAM through a power cycle
+		struct Namco163* n = STATE(Namco163);
+		uint8_t ram[sizeof(n->sound.ram)];
+		memcpy(ram, n->sound.ram, sizeof(ram));
 		memset(nes->boardState, 0, sizeof(struct Namco163));
+		if (nes->cart.mapper == 19 && nes->cart.battery) {
+			memcpy(n->sound.ram, ram, sizeof(ram));
+		}
 	}
 	if (nes->cart.mapper == 19) {
 		nes->readHooks |= 1 << 4 | 1 << 5;
@@ -730,9 +737,19 @@ static void namco163Reset(struct NES* nes, bool hard) {
 	namco163Sync(nes);
 }
 
+// With a battery, the 128 bytes of sound RAM keep a game's save (some have no other)
+static uint8_t* namco163BatteryRam(struct NES* nes, size_t* size) {
+	if (nes->cart.mapper != 19 || !nes->cart.battery) {
+		return NULL;
+	}
+	*size = sizeof(STATE(Namco163)->sound.ram);
+	return STATE(Namco163)->sound.ram;
+}
+
 const struct Board boardNamco163 = {
 	.name = "Namco 163", .reset = namco163Reset, .write = namco163Write, .read = namco163Read,
 	.cpuCycle = namco163Cycle, .audio = namco163Audio, .sync = namco163Sync, .stateSize = sizeof(struct Namco163),
+	.batteryRam = namco163BatteryRam,
 };
 
 const struct Board boardNamco175 = {
