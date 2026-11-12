@@ -642,8 +642,16 @@ static void namco163Sync(struct NES* nes) {
 	prg8(nes, 0xE000, -1);
 }
 
+static bool hasNamco175Ram(const struct NES* nes) {
+	return nes->cart.mapper == 210 && nes->cart.submapper == 1;
+}
+
 static uint8_t namco163Read(struct NES* nes, uint16_t address) {
 	struct Namco163* n = STATE(Namco163);
+	// Namco 175: 2 KB of RAM over $6000-$7FFF, read and written while $C000's bit 0 allows
+	if (hasNamco175Ram(nes) && (address & 0xE000) == 0x6000) {
+		return n->nt[0] & 1 ? nes->cart.wram[address & 0x7FF] : nes->cpu.openBus;
+	}
 	switch (address & 0xF800) {
 	case 0x4800:
 		return namco163SoundRead(&n->sound);
@@ -657,6 +665,12 @@ static uint8_t namco163Read(struct NES* nes, uint16_t address) {
 
 static void namco163Write(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Namco163* n = STATE(Namco163);
+	if (hasNamco175Ram(nes) && (address & 0xE000) == 0x6000) {
+		if (n->nt[0] & 1) {
+			nes->cart.wram[address & 0x7FF] = value;
+		}
+		return;
+	}
 	switch (address & 0xF800) {
 	case 0x4800:
 		namco163SoundWrite(&n->sound, value);
@@ -707,7 +721,12 @@ static void namco163Reset(struct NES* nes, bool hard) {
 	if (nes->cart.mapper == 19) {
 		nes->readHooks |= 1 << 4 | 1 << 5;
 	}
-	wram8(nes);
+	if (hasNamco175Ram(nes)) {
+		nesUnmapPrg(nes, 0x6000, 0x2000);
+		nes->readHooks |= 1 << 6 | 1 << 7;
+	} else {
+		wram8(nes);
+	}
 	namco163Sync(nes);
 }
 
@@ -717,7 +736,7 @@ const struct Board boardNamco163 = {
 };
 
 const struct Board boardNamco175 = {
-	.name = "Namco 175/340", .reset = namco163Reset, .write = namco163Write, .sync = namco163Sync,
+	.name = "Namco 175/340", .reset = namco163Reset, .write = namco163Write, .read = namco163Read, .sync = namco163Sync,
 	.stateSize = sizeof(struct Namco163),
 };
 
