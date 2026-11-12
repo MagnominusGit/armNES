@@ -28,6 +28,49 @@ static retro_input_state_t input_state_cb;
 static struct NES nes;
 static bool loaded;
 static uint16_t palette565[512];
+
+#ifdef __aarch64__
+#include <arm_neon.h>
+
+// The same, split into low and high bytes, 64 entries (one emphasis) per four-register table lookup
+static uint8_t palette565Low[512], palette565High[512];
+
+// The picture's palette indices to RGB565, sixteen pixels at a time while they share their emphasis
+static void convertPicture(uint16_t* out, const uint16_t* in, int count) {
+	int emphasis = -1;
+	uint8x16x4_t low, high;
+	int i = 0;
+	for (; i + 16 <= count; i += 16) {
+		uint16x8_t const a = vld1q_u16(in + i), b = vld1q_u16(in + i + 8);
+		int const first = (in[i] >> 6) & 7;
+		uint16x8_t const mask = vdupq_n_u16(0x1C0), want = vdupq_n_u16(first << 6);
+		uint16x8_t const same = vandq_u16(vceqq_u16(vandq_u16(a, mask), want), vceqq_u16(vandq_u16(b, mask), want));
+		if (vminvq_u16(same) != 0xFFFF) {
+			for (int k = 0; k < 16; k++) {
+				out[i + k] = palette565[in[i + k] & 0x1FF];
+			}
+			continue;
+		}
+		if (first != emphasis) {
+			emphasis = first;
+			low = vld1q_u8_x4(palette565Low + first * 64);
+			high = vld1q_u8_x4(palette565High + first * 64);
+		}
+		uint8x16_t const index = vandq_u8(vcombine_u8(vmovn_u16(a), vmovn_u16(b)), vdupq_n_u8(0x3F));
+		uint8x16x2_t pixels = { { vqtbl4q_u8(low, index), vqtbl4q_u8(high, index) } };
+		vst2q_u8((uint8_t*) (out + i), pixels);
+	}
+	for (; i < count; i++) {
+		out[i] = palette565[in[i] & 0x1FF];
+	}
+}
+#else
+static void convertPicture(uint16_t* out, const uint16_t* in, int count) {
+	for (int i = 0; i < count; i++) {
+		out[i] = palette565[in[i] & 0x1FF];
+	}
+}
+#endif
 static uint16_t video[2 * COMPOSITE_WIDTH * NES_HEIGHT];
 static int16_t audio[8192];
 
@@ -552,6 +595,12 @@ static void buildPalette(int which) {
 		int b = (int) (31 * fminf(fmaxf(rgb[2], 0), 1) + 0.5f);
 		palette565[entry] = r << 11 | g << 5 | b;
 	}
+#ifdef __aarch64__
+	for (int entry = 0; entry < 512; entry++) {
+		palette565Low[entry] = (uint8_t) palette565[entry];
+		palette565High[entry] = palette565[entry] >> 8;
+	}
+#endif
 }
 
 static struct OptionChoice paletteChoices[PALETTE_CUSTOM + 1];
@@ -1383,9 +1432,7 @@ void retro_run(void) {
 		scale = COMPOSITE_SCALE;
 		compositeFrame(filter, nes.region != REGION_NTSC, nes.ppu.oddFrame, nes.frameBuffer, video);
 	} else {
-		for (int i = 0; i < NES_WIDTH * NES_HEIGHT; i++) {
-			video[i] = palette565[nes.frameBuffer[i] & 0x1FF];
-		}
+		convertPicture(video, nes.frameBuffer, NES_WIDTH * NES_HEIGHT);
 	}
 	if (crossShown) {
 		drawCrosshair(scale);
