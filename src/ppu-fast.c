@@ -12,9 +12,10 @@
 
 enum { SPRITE_OPAQUE = 0x10, SPRITE_BEHIND = 0x20, SPRITE_ZERO = 0x40 };
 
-// Balanced: the dots from sprite 0's pixel to $2002 showing the hit
-enum { BALANCED_HIT_DOTS = 2 };
+// Balanced: the dots from sprite 0's pixel to the hit flag (which $2002 shows half a dot sooner)
+enum { BALANCED_HIT_DOTS = 3 };
 enum { SKIP_DOT = 1 };
+enum { READ_DOT = -1 };
 
 static inline bool rendering(const struct Ppu* ppu) {
 	return ppu->showBg || ppu->showSprites;
@@ -315,6 +316,14 @@ static inline void reload(struct Ppu* ppu) {
 static inline void shift(struct Ppu* ppu) {
 	ppu->bgL <<= 1;
 	ppu->bgH <<= 1;
+	ppu->atL <<= 1;
+	ppu->atH <<= 1;
+}
+
+// Balanced: the high plane's shifter brings in 1s, which show when rendering skips a reload
+static inline void dotShift(struct Ppu* ppu) {
+	ppu->bgL <<= 1;
+	ppu->bgH = (ppu->bgH << 1) | 1;
 	ppu->atL <<= 1;
 	ppu->atH <<= 1;
 }
@@ -715,7 +724,8 @@ static inline bool dotPixelNeeded(const struct NES* nes) {
 }
 
 // One dot of a line that renders, in the Balanced mode
-// fresh: rendering came on this dot, too late for its scroll increments and copies
+// fresh: rendering came on this dot, too late for its fetch to reload the shifters and for its scroll
+// increments and copies
 static inline void renderDotBalanced(struct NES* nes, int dot, bool visible, bool pre, bool fresh) {
 	struct Ppu* ppu = &nes->ppu;
 	if (dot >= 1 && dot <= 256) {
@@ -724,8 +734,8 @@ static inline void renderDotBalanced(struct NES* nes, int dot, bool visible, boo
 		}
 		dotShiftSprites(ppu);
 		fetchTile(nes, dot);
-		shift(ppu);
-		if (!(dot & 7)) {
+		dotShift(ppu);
+		if (!(dot & 7) && !fresh) {
 			reload(ppu);
 			incrementX(ppu);
 		}
@@ -735,7 +745,9 @@ static inline void renderDotBalanced(struct NES* nes, int dot, bool visible, boo
 		dotSprites(nes, dot, pre);
 	} else if (dot <= 320) {
 		if (dot == 257) {
-			shift(ppu);
+			dotShift(ppu);
+			// The sprite fetches' first name table read is from v before it goes back to the line's start
+			ppu->parNt = 0x2000 | (ppu->v & 0xFFF);
 			if (!fresh) {
 				ppu->v = (ppu->v & ~0x41F) | (ppu->t & 0x41F);
 			}
@@ -746,8 +758,8 @@ static inline void renderDotBalanced(struct NES* nes, int dot, bool visible, boo
 		dotSprites(nes, dot, pre);
 	} else if (dot <= 336) {
 		fetchTile(nes, dot);
-		shift(ppu);
-		if (!(dot & 7)) {
+		dotShift(ppu);
+		if (!(dot & 7) && !fresh) {
 			reload(ppu);
 			incrementX(ppu);
 		}
@@ -789,9 +801,14 @@ static void vramIncrement(struct NES* nes) {
 // Register writes and $2007 accesses take effect a few dots later, as in the half-dot model
 // Balanced: OAM corruption (after Exact). Rendering turned off on a line that renders seeds it with
 // secondary OAM's address (rounded up to a whole sprite during the evaluation); the first dot of such a
-// line with rendering on again copies OAM's first row over that row.
+// line with rendering on again copies OAM's first row over that row (unless it came on at one of the
+// alignments that only clear it).
 static void dotCorruptOam(struct Ppu* ppu) {
 	ppu->pendingCorrupt = false;
+	if (ppu->corruptOnEnable) {
+		ppu->corruptOnEnable = false;
+		return;
+	}
 	int const row = ppu->corruptIndex & 0x1F;
 	memcpy(&ppu->oam[row * 8], ppu->oam, 8);
 	ppu->oam2[row] = ppu->oam2[0];
@@ -799,21 +816,88 @@ static void dotCorruptOam(struct Ppu* ppu) {
 
 static void dotRenderingToggled(struct NES* nes) {
 	struct Ppu* ppu = &nes->ppu;
-	if (ppu->scanline >= 240 && ppu->scanline != preLine(nes)) {
+	if (rendering(ppu) && ppu->pendingCorrupt && (ppu->scanline < 240 || ppu->scanline == preLine(nes))) {
+		dotCorruptOam(ppu);
+	}
+}
+
+// The seed, a few dots after a write turned rendering off on a line that renders
+static void dotCorruptionSeed(struct NES* nes) {
+	struct Ppu* ppu = &nes->ppu;
+	if (!ppu->wasRendering2001 || (ppu->value2001 & 0x18) || ppu->pendingCorrupt ||
+		(ppu->scanline >= 240 && ppu->scanline != preLine(nes))) {
 		return;
 	}
-	if (rendering(ppu)) {
-		if (ppu->pendingCorrupt) {
-			dotCorruptOam(ppu);
-		}
-	} else if (!ppu->pendingCorrupt) {
-		int const dot = ppu->dot + 1;
-		ppu->corruptIndex = ppu->oam2Addr;
-		if (dot >= 65 && dot <= 256 && (ppu->oam2Addr & 3) && !ppu->oamAddrOverflowed) {
-			ppu->corruptIndex = (ppu->oam2Addr & 0xFC) + 4;
-		}
-		ppu->pendingCorrupt = true;
+	int const dot = ppu->dot + 1;
+	ppu->corruptIndex = ppu->oam2Addr;
+	if (dot >= 65 && dot <= 256 && (ppu->oam2Addr & 3) && !ppu->oamAddrOverflowed) {
+		ppu->corruptIndex = (ppu->oam2Addr & 0xFC) + 4;
 	}
+	ppu->pendingCorrupt = true;
+}
+
+// Balanced: the address the background or sprite fetches have on the bus on a dot of a line that
+// renders (each read's address goes out the dot before), dot 0-340
+static uint16_t dotFetchAddress(const struct Ppu* ppu, int dot) {
+	uint16_t const nt = 0x2000 | (ppu->v & 0xFFF);
+	uint16_t const at = 0x23C0 | (ppu->v & 0xC00) | ((ppu->v >> 4) & 0x38) | ((ppu->v >> 2) & 7);
+	uint16_t const bg = (ppu->bgTable ? 0x1000 : 0) | (ppu->ntLatch << 4) | (ppu->v >> 12);
+	if (dot >= 257 && dot <= 320) {
+		int const phase = (dot - 257) & 7;
+		return phase < 4 ? nt : phase < 6 ? dotPatternAddress(ppu) : dotPatternAddress(ppu) | 8;
+	}
+	if (dot == 0) {
+		return bg;
+	}
+	if (dot >= 337) {
+		return nt;
+	}
+	switch (dot & 7) {
+	case 1:
+	case 2:
+		return nt;
+	case 3:
+	case 4:
+		return at;
+	case 5:
+	case 6:
+		return bg;
+	default:
+		return bg | 8;
+	}
+}
+
+// Balanced: what that read brought in, from the background fetch's latches where the dot was its
+// name table or pattern read
+static uint8_t dotFetchValue(struct NES* nes, int dot) {
+	const struct Ppu* ppu = &nes->ppu;
+	dot = (dot + 341) % 341;
+	if ((dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336)) {
+		switch (dot & 7) {
+		case 2:
+			return ppu->ntLatch;
+		case 6:
+			return ppu->loLatch;
+		case 0:
+			return ppu->hiLatch;
+		}
+	}
+	return chrRead(nes, dot == 258 ? ppu->parNt : dotFetchAddress(ppu, dot));
+}
+
+// Balanced: a read landing on the dot that latches the low plane's address leaves the attribute
+// byte just read in the address latch, so the buffer and the low plane both come from that address
+// (after AccuracyCoin's ALE + Read)
+static void dotAleRead(struct NES* nes, int dot) {
+	struct Ppu* ppu = &nes->ppu;
+	dot = (dot + 341) % 341;
+	if ((dot & 7) != 5 || !((dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336))) {
+		return;
+	}
+	uint16_t const at = 0x23C0 | (ppu->v & 0xC00) | ((ppu->v >> 4) & 0x38) | ((ppu->v >> 2) & 7);
+	uint16_t const pattern = (ppu->bgTable ? 0x1000 : 0) | (ppu->ntLatch << 4) | (ppu->v >> 12);
+	uint16_t const address = (pattern & 0xFF00) | chrRead(nes, at);
+	ppu->readBuffer = ppu->loLatch = chrRead(nes, address);
 }
 
 static void registerEffects(struct NES* nes) {
@@ -844,6 +928,9 @@ static void registerEffects(struct NES* nes) {
 			dotRenderingToggled(nes);
 		}
 	}
+	if (ppu->delay2001Oam && --ppu->delay2001Oam == 0) {
+		dotCorruptionSeed(nes);
+	}
 	if (ppu->delay2001Emphasis && --ppu->delay2001Emphasis == 0) {
 		ppu->gray = ppu->value2001 & 0x01;
 		ppu->emphRed = ppu->value2001 & 0x20;
@@ -857,7 +944,13 @@ static void registerEffects(struct NES* nes) {
 			ppu->vramReadAddress = ppu->v & 0x3FFF;
 			break;
 		case 6:
-			ppu->readBuffer = chrRead(nes, ppu->vramReadAddress);
+			// Balanced: while rendering the fetches drive the bus, and the buffer takes what they read
+			if (nes->dotPpu && rendering(ppu) && (ppu->scanline < 240 || ppu->scanline == preLine(nes))) {
+				ppu->readBuffer = dotFetchValue(nes, ppu->dot + READ_DOT);
+				dotAleRead(nes, ppu->dot + READ_DOT);
+			} else {
+				ppu->readBuffer = chrRead(nes, ppu->vramReadAddress);
+			}
 			vramIncrement(nes);
 			ppu->vramReadStep = 0;
 			break;
@@ -897,7 +990,8 @@ static inline void step(struct NES* nes) {
 		showBus(nes);
 	}
 	bool const off = !rendering(ppu);
-	if (ppu->delay2001 | ppu->delay2001Emphasis | ppu->delay2005 | ppu->delay2006 | ppu->vramReadStep | ppu->vramWriteStep) {
+	if (ppu->delay2001 | ppu->delay2001Emphasis | ppu->delay2001Oam | ppu->delay2005 | ppu->delay2006 | ppu->vramReadStep |
+		ppu->vramWriteStep) {
 		registerEffects(nes);
 	}
 	if (++ppu->dot > 340) {
@@ -981,8 +1075,8 @@ static inline void step(struct NES* nes) {
 
 static inline bool quiet(const struct NES* nes) {
 	const struct Ppu* ppu = &nes->ppu;
-	return !(ppu->delay2001 | ppu->delay2001Emphasis | ppu->delay2005 | ppu->delay2006 | ppu->vramReadStep |
-		ppu->vramWriteStep | ppu->pendingHit);
+	return !(ppu->delay2001 | ppu->delay2001Emphasis | ppu->delay2001Oam | ppu->delay2005 | ppu->delay2006 |
+		ppu->vramReadStep | ppu->vramWriteStep | ppu->pendingHit);
 }
 
 // Each bit of a byte spread to its own byte, most significant first: eight pixels at once
@@ -1529,7 +1623,7 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 			}
 			dotShiftSprites(ppu);
 			fetchTile(nes, k);
-			shift(ppu);
+			dotShift(ppu);
 			if (k == 8) {
 				reload(ppu);
 				incrementX(ppu);
@@ -1597,7 +1691,7 @@ static bool balancedPart(struct NES* nes, int n, bool visible, bool pre) {
 		fetchTile(nes, k);
 	}
 	ppu->bgL <<= n;
-	ppu->bgH <<= n;
+	ppu->bgH = (ppu->bgH << n) | ((1 << n) - 1);
 	ppu->atL <<= n;
 	ppu->atH <<= n;
 	if (first + n == 8) {
@@ -1674,7 +1768,8 @@ static inline __attribute__((always_inline)) void balancedSlot(struct NES* nes, 
 			ppu->oamAddr = 0;
 		}
 		if (k == 1 && !slot) {
-			shift(ppu);
+			dotShift(ppu);
+			ppu->parNt = 0x2000 | (ppu->v & 0xFFF);
 			ppu->v = (ppu->v & ~0x41F) | (ppu->t & 0x41F);
 		}
 		if (pre && dot >= 280 && dot <= 304) {
@@ -1732,7 +1827,7 @@ static inline __attribute__((always_inline)) void balancedPrefetch(struct NES* n
 			ppu->hit = true;
 		}
 		fetchTile(nes, k);
-		shift(ppu);
+		dotShift(ppu);
 		if (k == 8) {
 			reload(ppu);
 			incrementX(ppu);
@@ -2128,6 +2223,10 @@ uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 		}
 		ppu->vblank = false;
 		untilEndOfAccess(nes, 7);
+		// Balanced: the hit shows from the middle of the dot before it's set
+		if (nes->dotPpu && ppu->pendingHit && ppu->hitDelay == 1 && nes->ppuClock >= 3) {
+			value |= 0x40;
+		}
 		if (ppu->overflowDelayed && ppu->dot - 1 > ppu->overflowAt) {
 			ppu->overflowDelayed = false;
 			ppu->overflow = true;
@@ -2157,7 +2256,10 @@ uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 			ppu->vramReadStep = 0;
 		}
 		uint16_t v = ppu->v & 0x3FFF;
-		if (!rendering(ppu) && v >= 0x3F00) {
+		// Palette RAM answers directly unless the fetches have the bus (Balanced: only on a line that
+		// renders, so in vblank too)
+		bool const fetching = rendering(ppu) && (!nes->dotPpu || ppu->scanline < 240 || ppu->scanline == preLine(nes));
+		if (!fetching && v >= 0x3F00) {
 			value = (paletteRead(ppu, v) & (ppu->gray ? 0x30 : 0x3F)) | (openBus(ppu) & 0xC0);
 		} else {
 			value = ppu->readBuffer;
@@ -2197,6 +2299,17 @@ void fastWriteRegister(struct NES* nes, uint16_t address, uint8_t value, uint8_t
 			return;
 		}
 		static const uint8_t delays[4][2] = { { 2, 2 }, { 2, 1 }, { 3, 1 }, { 2, 2 } };
+		if (nes->dotPpu) {
+			// Balanced: OAM corruption's seed is taken a little later, and turning rendering back on at
+			// two of the alignments clears it instead of corrupting
+			static const uint8_t oamDelays[4] = { 2, 3, 3, 2 };
+			ppu->delay2001Oam = oamDelays[phase];
+			ppu->wasRendering2001 = rendering(ppu);
+			if (!ppu->wasRendering2001 && (value & 0x18) && ppu->pendingCorrupt && (phase == 1 || phase == 2) &&
+				(ppu->scanline < 241 || ppu->scanline == preLine(nes))) {
+				ppu->corruptOnEnable = true;
+			}
+		}
 		ppu->value2001 = value;
 		ppu->delay2001 = delays[phase][0];
 		ppu->delay2001Emphasis = delays[phase][1];
