@@ -1105,7 +1105,6 @@ size_t vrc7SoundState(uint8_t* data, bool load) {
 		FIELD(s->key_flag);
 		FIELD(s->sus_flag);
 		FIELD(s->eg_out);
-		FIELD(s->update_requests);
 	}
 #undef FIELD
 	if (data && load) {
