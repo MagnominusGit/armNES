@@ -109,6 +109,9 @@ struct Ppu {
 	uint8_t hitDelay;
 	// The sprite pattern fetches are under way, for boards with separate sprite CHR banks
 	bool spriteFetch;
+	// Balanced: the dot (less 1) whose evaluation found a ninth sprite; $2002 shows it from the next
+	// (overflowDelayed until then)
+	uint8_t overflowAt;
 	// The master clock of the dot being stepped
 	uint64_t dotTick;
 	// $2007 reads and writes going through the PPU: how many dots in (0 for none) and the address

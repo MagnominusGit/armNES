@@ -12,6 +12,10 @@
 
 enum { SPRITE_OPAQUE = 0x10, SPRITE_BEHIND = 0x20, SPRITE_ZERO = 0x40 };
 
+// Balanced: the dots from sprite 0's pixel to $2002 showing the hit
+enum { BALANCED_HIT_DOTS = 2 };
+enum { SKIP_DOT = 1 };
+
 static inline bool rendering(const struct Ppu* ppu) {
 	return ppu->showBg || ppu->showSprites;
 }
@@ -442,7 +446,8 @@ static inline void dotEvaluate(struct NES* nes, int dot, bool readOnly) {
 				}
 			} else {
 				ppu->nineObjects = true;
-				ppu->overflow = true;
+				ppu->overflowDelayed = true;
+				ppu->overflowAt = dot - 1;
 				ppu->oamAddr++;
 			}
 			ppu->evalTick++;
@@ -610,6 +615,12 @@ static inline void dotSprites(struct NES* nes, int dot, bool pre) {
 	}
 }
 
+// Balanced: the dot of line 0 that stands for the one odd frames skip, where every slot shows and
+// none counts
+static inline bool dotSkipped(const struct Ppu* ppu) {
+	return ppu->scanline == 0 && ppu->skippedDot && ppu->dot == SKIP_DOT;
+}
+
 // The eight slots a byte each in a word: 1 in each byte that isn't 0
 static inline uint64_t slotsNonzero(uint64_t x) {
 	return (((x & 0x7F7F7F7F7F7F7F7Full) + 0x7F7F7F7F7F7F7F7Full) | x) >> 7 & 0x0101010101010101ull;
@@ -626,7 +637,7 @@ static inline void dotShiftSprites(struct Ppu* ppu) {
 		return;
 	}
 	memcpy(&counters, ppu->spriteCounter, 8);
-	uint64_t const counting = ppu->scanline == 0 && ppu->skippedDot ? 0 : slotsNonzero(counters);
+	uint64_t const counting = dotSkipped(ppu) ? 0 : slotsNonzero(counters);
 	uint64_t const keep = counting * 0xFF;
 	counters -= counting;
 	lo = (lo & keep) | ((lo << 1) & 0xFEFEFEFEFEFEFEFEull & ~keep);
@@ -639,7 +650,7 @@ static inline void dotShiftSprites(struct Ppu* ppu) {
 static void dotIdleSprites(struct Ppu* ppu, int dot) {
 	if (dot >= 1 && dot <= 256) {
 		for (int i = 0; i < 8; i++) {
-			if (ppu->spriteCounter[i] && !(ppu->scanline == 0 && ppu->skippedDot)) {
+			if (ppu->spriteCounter[i] && !dotSkipped(ppu)) {
 				ppu->spriteCounter[i]--;
 			}
 		}
@@ -666,13 +677,14 @@ static inline void dotPixel(struct NES* nes, int x) {
 		memcpy(&lo, ppu->spriteL, 8);
 		memcpy(&hi, ppu->spriteH, 8);
 		memcpy(&counters, ppu->spriteCounter, 8);
+		uint64_t const showing = dotSkipped(ppu) ? 0x0101010101010101ull : slotsNonzero(counters) ^ 0x0101010101010101ull;
 		uint64_t const colors = !(lo | hi) ? 0 : ((lo >> 7 & 0x0101010101010101ull) | (hi >> 6 & 0x0202020202020202ull)) &
-			(slotsNonzero(counters) ^ 0x0101010101010101ull) * 3;
+			showing * 3;
 		if (colors) {
 			int const i = __builtin_ctzll(colors) >> 3, color = colors >> (i * 8) & 3;
 			if (i == 0 && ppu->hasZero && bg && ppu->showBg && x != 255 && !ppu->hit && !ppu->pendingHit) {
 				ppu->pendingHit = true;
-				ppu->hitDelay = 3;
+				ppu->hitDelay = BALANCED_HIT_DOTS;
 			}
 			if (!bg || !(ppu->spriteAttr[i] & 0x20)) {
 				index = 0x10 | ((ppu->spriteAttr[i] & 3) << 2) | color;
@@ -703,7 +715,8 @@ static inline bool dotPixelNeeded(const struct NES* nes) {
 }
 
 // One dot of a line that renders, in the Balanced mode
-static inline void renderDotBalanced(struct NES* nes, int dot, bool visible, bool pre) {
+// fresh: rendering came on this dot, too late for its scroll increments and copies
+static inline void renderDotBalanced(struct NES* nes, int dot, bool visible, bool pre, bool fresh) {
 	struct Ppu* ppu = &nes->ppu;
 	if (dot >= 1 && dot <= 256) {
 		if (visible && dotPixelNeeded(nes)) {
@@ -716,16 +729,18 @@ static inline void renderDotBalanced(struct NES* nes, int dot, bool visible, boo
 			reload(ppu);
 			incrementX(ppu);
 		}
-		if (dot == 256) {
+		if (dot == 256 && !fresh) {
 			incrementY(ppu);
 		}
 		dotSprites(nes, dot, pre);
 	} else if (dot <= 320) {
 		if (dot == 257) {
 			shift(ppu);
-			ppu->v = (ppu->v & ~0x41F) | (ppu->t & 0x41F);
+			if (!fresh) {
+				ppu->v = (ppu->v & ~0x41F) | (ppu->t & 0x41F);
+			}
 		}
-		if (pre && dot >= 280 && dot <= 304) {
+		if (pre && dot >= 280 && dot <= 304 && !fresh) {
 			ppu->v = (ppu->v & ~0x7BE0) | (ppu->t & 0x7BE0);
 		}
 		dotSprites(nes, dot, pre);
@@ -772,6 +787,35 @@ static void vramIncrement(struct NES* nes) {
 }
 
 // Register writes and $2007 accesses take effect a few dots later, as in the half-dot model
+// Balanced: OAM corruption (after Exact). Rendering turned off on a line that renders seeds it with
+// secondary OAM's address (rounded up to a whole sprite during the evaluation); the first dot of such a
+// line with rendering on again copies OAM's first row over that row.
+static void dotCorruptOam(struct Ppu* ppu) {
+	ppu->pendingCorrupt = false;
+	int const row = ppu->corruptIndex & 0x1F;
+	memcpy(&ppu->oam[row * 8], ppu->oam, 8);
+	ppu->oam2[row] = ppu->oam2[0];
+}
+
+static void dotRenderingToggled(struct NES* nes) {
+	struct Ppu* ppu = &nes->ppu;
+	if (ppu->scanline >= 240 && ppu->scanline != preLine(nes)) {
+		return;
+	}
+	if (rendering(ppu)) {
+		if (ppu->pendingCorrupt) {
+			dotCorruptOam(ppu);
+		}
+	} else if (!ppu->pendingCorrupt) {
+		int const dot = ppu->dot + 1;
+		ppu->corruptIndex = ppu->oam2Addr;
+		if (dot >= 65 && dot <= 256 && (ppu->oam2Addr & 3) && !ppu->oamAddrOverflowed) {
+			ppu->corruptIndex = (ppu->oam2Addr & 0xFC) + 4;
+		}
+		ppu->pendingCorrupt = true;
+	}
+}
+
 static void registerEffects(struct NES* nes) {
 	struct Ppu* ppu = &nes->ppu;
 	if (ppu->delay2005 && --ppu->delay2005 == 0) {
@@ -791,10 +835,14 @@ static void registerEffects(struct NES* nes) {
 	}
 	if (ppu->delay2001 && --ppu->delay2001 == 0) {
 		uint8_t value = ppu->value2001;
+		bool const was = rendering(ppu);
 		ppu->showBgLeft = value & 0x02;
 		ppu->showSpritesLeft = value & 0x04;
 		ppu->showBg = value & 0x08;
 		ppu->showSprites = value & 0x10;
+		if (nes->dotPpu && was != rendering(ppu)) {
+			dotRenderingToggled(nes);
+		}
 	}
 	if (ppu->delay2001Emphasis && --ppu->delay2001Emphasis == 0) {
 		ppu->gray = ppu->value2001 & 0x01;
@@ -848,11 +896,16 @@ static inline void step(struct NES* nes) {
 	if (nes->watchPpuBus) {
 		showBus(nes);
 	}
+	bool const off = !rendering(ppu);
 	if (ppu->delay2001 | ppu->delay2001Emphasis | ppu->delay2005 | ppu->delay2006 | ppu->vramReadStep | ppu->vramWriteStep) {
 		registerEffects(nes);
 	}
 	if (++ppu->dot > 340) {
 		ppu->dot = 0;
+		if (ppu->overflowDelayed) {
+			ppu->overflowDelayed = false;
+			ppu->overflow = true;
+		}
 		if (nesOverclockHold(nes, ppu->scanline)) {
 		} else if (++ppu->scanline > pre) {
 			ppu->scanline = 0;
@@ -861,6 +914,10 @@ static inline void step(struct NES* nes) {
 			ppu->oddFrame = !ppu->oddFrame;
 		} else if (ppu->scanline == 1) {
 			ppu->skippedDot = false;
+		}
+		// Rendering turned back on in vblank corrupts OAM on the pre-render line
+		if (ppu->pendingCorrupt && nes->dotPpu && rendering(ppu) && ppu->scanline == pre) {
+			dotCorruptOam(ppu);
 		}
 	}
 	int line = ppu->scanline, dot = ppu->dot;
@@ -883,7 +940,7 @@ static inline void step(struct NES* nes) {
 		}
 		if (rendering(ppu)) {
 			if (nes->dotPpu) {
-				renderDotBalanced(nes, dot, visible, line == pre);
+				renderDotBalanced(nes, dot, visible, line == pre, off && rendering(ppu));
 			} else {
 				renderDot(nes, dot, visible, line == pre);
 			}
@@ -906,7 +963,7 @@ static inline void step(struct NES* nes) {
 			ppu->vblank = false;
 			ppu->hit = false;
 			ppu->pendingHit = false;
-			ppu->overflow = false;
+			ppu->overflow = ppu->overflowDelayed = false;
 		}
 	} else if (line == vblankLine(nes) && dot == 1) {
 		if (!ppu->read2002) {
@@ -1425,11 +1482,11 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 			}
 			if (hit) {
 				int const x = __builtin_ctzll(hit) >> 3;
-				if (x <= 4) {
+				if (x + 1 + BALANCED_HIT_DOTS <= 8) {
 					ppu->hit = true;
 				} else {
 					ppu->pendingHit = true;
-					ppu->hitDelay = x - 4;
+					ppu->hitDelay = x + 1 + BALANCED_HIT_DOTS - 8;
 				}
 			}
 		}
@@ -1528,11 +1585,11 @@ static bool balancedPart(struct NES* nes, int n, bool visible, bool pre) {
 		}
 		if (hit) {
 			int const x = __builtin_ctzll(hit) >> 3;
-			if (x + 4 <= n) {
+			if (x + 1 + BALANCED_HIT_DOTS <= n) {
 				ppu->hit = true;
 			} else {
 				ppu->pendingHit = true;
-				ppu->hitDelay = x + 4 - n;
+				ppu->hitDelay = x + 1 + BALANCED_HIT_DOTS - n;
 			}
 		}
 	}
@@ -1759,7 +1816,7 @@ static __attribute__((noinline)) void balancedSpan(struct NES* nes, int n, bool 
 			ppu->pendingHit = false;
 			ppu->hit = true;
 		}
-		renderDotBalanced(nes, dot, visible, pre);
+		renderDotBalanced(nes, dot, visible, pre, false);
 	}
 }
 
@@ -2071,6 +2128,10 @@ uint8_t fastReadRegister(struct NES* nes, uint16_t address) {
 		}
 		ppu->vblank = false;
 		untilEndOfAccess(nes, 7);
+		if (ppu->overflowDelayed && ppu->dot - 1 > ppu->overflowAt) {
+			ppu->overflowDelayed = false;
+			ppu->overflow = true;
+		}
 		value |= (ppu->hit ? 0x40 : 0) | (ppu->overflow ? 0x20 : 0) | (openBus(ppu) & 0x1F);
 		ppu->w = false;
 		setBus(ppu, value, 0xE0);
