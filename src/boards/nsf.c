@@ -287,14 +287,19 @@ static void nsfReset(struct NES* nes, bool hard) {
 	nsfSync(nes);
 }
 
-static void nsfRestore(struct NES* nes) {
-	nsfSync(nes);
-	vrc7SoundRestore(&NS->vrc7);
+static size_t nsfSaveExtra(struct NES* nes, uint8_t* out) {
+	return NS->chips & CHIP_VRC7 ? vrc7SoundState(out, false) : 0;
+}
+
+static void nsfLoadExtra(struct NES* nes, const uint8_t* in) {
+	if (NS->chips & CHIP_VRC7) {
+		vrc7SoundState((uint8_t*) in, true);
+	}
 }
 
 const struct Board boardNsf = {
 	.name = "NSF", .reset = nsfReset, .write = nsfWrite, .read = nsfRead, .cpuCycle = nsfCycle, .audio = nsfAudio,
-	.sync = nsfRestore, .stateSize = sizeof(struct Nsf),
+	.sync = nsfSync, .stateSize = sizeof(struct Nsf), .saveExtra = nsfSaveExtra, .loadExtra = nsfLoadExtra,
 };
 
 bool nsfCartLoad(struct NES* nes, const uint8_t* data, size_t size) {

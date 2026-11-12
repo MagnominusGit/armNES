@@ -998,8 +998,7 @@ const struct Board boardVrc6 = {
 };
 
 // VRC7 (85): VRC6's banking layout with an FM synthesizer, emu2413 in its VRC7 mode at the OPLL's
-// own rate (3.58 MHz / 72, once every 36 CPU cycles). Its registers are kept here and written to
-// the synthesizer again after a state load.
+// own rate (3.58 MHz / 72, once every 36 CPU cycles). States keep the synthesizer's own state too.
 #include "sound/emu2413.h"
 
 struct Vrc7 {
@@ -1021,16 +1020,61 @@ void vrc7SoundReset(struct Vrc7Sound* v, bool hard) {
 	}
 }
 
-void vrc7SoundRestore(const struct Vrc7Sound* v) {
-	if (opll) {
-		for (int i = 0; i < 0x40; i++) {
-			OPLL_writeReg(opll, i, v->regs[i]);
-		}
+// Field by field, so a state reads the same on every host. The rest (patch and wave table pointers,
+// levels and rates worked out from these) emu2413 works out again on its refresh.
+size_t vrc7SoundState(uint8_t* data, bool load) {
+	size_t size = 0;
+#define FIELD(x) \
+	do { \
+		if (data && load) { \
+			memcpy(&(x), data + size, sizeof(x)); \
+		} else if (data) { \
+			memcpy(data + size, &(x), sizeof(x)); \
+		} \
+		size += sizeof(x); \
+	} while (0)
+	FIELD(opll->adr);
+	FIELD(opll->out_time);
+	FIELD(opll->reg);
+	FIELD(opll->test_flag);
+	FIELD(opll->slot_key_status);
+	FIELD(opll->rhythm_mode);
+	FIELD(opll->eg_counter);
+	FIELD(opll->pm_phase);
+	FIELD(opll->am_phase);
+	FIELD(opll->lfo_am);
+	FIELD(opll->noise);
+	FIELD(opll->short_noise);
+	FIELD(opll->patch_number);
+	FIELD(opll->patch[0]);
+	FIELD(opll->patch[1]);
+	FIELD(opll->ch_out);
+	FIELD(opll->mix_out);
+	for (int i = 0; i < 18; i++) {
+		OPLL_SLOT* s = &opll->slot[i];
+		FIELD(s->type);
+		FIELD(s->output);
+		FIELD(s->pg_phase);
+		FIELD(s->pg_out);
+		FIELD(s->pg_keep);
+		FIELD(s->blk_fnum);
+		FIELD(s->fnum);
+		FIELD(s->blk);
+		FIELD(s->eg_state);
+		FIELD(s->volume);
+		FIELD(s->key_flag);
+		FIELD(s->sus_flag);
+		FIELD(s->eg_out);
+		FIELD(s->update_requests);
 	}
+#undef FIELD
+	if (data && load) {
+		OPLL_forceRefresh(opll);
+	}
+	return size;
 }
 
 void vrc7SoundWrite(struct Vrc7Sound* v, uint8_t value) {
-	v->regs[v->address & 0x3F] = value;
 	if (opll) {
 		OPLL_writeReg(opll, v->address, value);
 	}
@@ -1065,10 +1109,12 @@ static void vrc7Banks(struct NES* nes) {
 	}
 }
 
-// After a state load: the banks, and the synthesizer's registers again
-static void vrc7Sync(struct NES* nes) {
-	vrc7Banks(nes);
-	vrc7SoundRestore(&STATE(Vrc7)->sound);
+static size_t vrc7SaveExtra(struct NES* nes, uint8_t* out) {
+	return vrc7SoundState(out, false);
+}
+
+static void vrc7LoadExtra(struct NES* nes, const uint8_t* in) {
+	vrc7SoundState((uint8_t*) in, true);
 }
 
 static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
@@ -1138,5 +1184,5 @@ static void vrc7Reset(struct NES* nes, bool hard) {
 
 const struct Board boardVrc7 = {
 	.name = "VRC7", .reset = vrc7Reset, .write = vrc7Write, .cpuCycle = vrc7Cycle, .audio = vrc7Audio,
-	.sync = vrc7Sync, .stateSize = sizeof(struct Vrc7),
+	.sync = vrc7Banks, .stateSize = sizeof(struct Vrc7), .saveExtra = vrc7SaveExtra, .loadExtra = vrc7LoadExtra,
 };

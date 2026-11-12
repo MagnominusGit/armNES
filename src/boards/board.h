@@ -188,12 +188,13 @@ int vrc6SoundOutput(const struct Vrc6Sound*);
 
 // asic.c: VRC7's FM synthesizer, through emu2413; one at a time
 struct Vrc7Sound {
-	uint8_t address, regs[0x40];
+	uint8_t address;
 	uint8_t clock;
 	int16_t sample;
 };
 void vrc7SoundReset(struct Vrc7Sound*, bool hard);
-void vrc7SoundRestore(const struct Vrc7Sound*);
+// The synthesizer's own state, saved to data or loaded from it; with data NULL, only measured
+size_t vrc7SoundState(uint8_t* data, bool load);
 void vrc7SoundWrite(struct Vrc7Sound*, uint8_t value);
 void vrc7SoundCycle(struct Vrc7Sound*, bool silenced);
 int vrc7SoundOutput(const struct Vrc7Sound*);
