@@ -57,6 +57,31 @@ static const struct {
 	{ 0xC5FAFE2C, 1 },
 };
 
+// Re-releases whose emulators trap illegal opcodes put in place of instructions: the instruction
+// bytes the cartridge has there, by CRC-32 of PRG and CHR ROM and offset in PRG ROM
+static const struct {
+	uint32_t crc, offset;
+	uint8_t value;
+} hookFixes[] = {
+	// A Wii U release
+	{ 0x599b6378, 0x1098b, 0x20 }, { 0x599b6378, 0x1c203, 0xad }, { 0x599b6378, 0x1c208, 0xad },
+	{ 0x599b6378, 0x1d7be, 0xad }, { 0x599b6378, 0x1d7e7, 0x8d }, { 0x599b6378, 0x1d96c, 0x20 },
+	{ 0x599b6378, 0x1d972, 0xa9 }, { 0x599b6378, 0x1f77d, 0x60 }, { 0x599b6378, 0x1f782, 0x60 },
+	// The same game's Wii release
+	{ 0x8face947, 0x1098b, 0x20 }, { 0x8face947, 0x1c203, 0xad }, { 0x8face947, 0x1c208, 0xad },
+	{ 0x8face947, 0x1d96c, 0x20 }, { 0x8face947, 0x1d972, 0xa9 }, { 0x8face947, 0x1f77d, 0x60 },
+	{ 0x8face947, 0x1f782, 0x60 },
+	// A Virtual Console release
+	{ 0x089b6cce, 0x0104b, 0xa9 }, { 0x089b6cce, 0x01057, 0x60 }, { 0x089b6cce, 0x3e650, 0xa2 },
+	{ 0x089b6cce, 0x3e69c, 0x60 },
+	// Three releases on a collection, one with a delay loop taken out
+	{ 0xa55f66d7, 0x1fec9, 0xe8 },
+	{ 0x5ec886a4, 0x3c130, 0x8d }, { 0x5ec886a4, 0x3c161, 0xa5 },
+	{ 0xf540474e, 0x3c123, 0xa5 }, { 0xf540474e, 0x3dcaa, 0x8d }, { 0xf540474e, 0x3c7ba, 0x88 },
+	{ 0xf540474e, 0x3c7bb, 0xd0 }, { 0xf540474e, 0x3c7bc, 0xfd }, { 0xf540474e, 0x3c7bd, 0xca },
+	{ 0xf540474e, 0x3c7be, 0xd0 }, { 0xf540474e, 0x3c7bf, 0xfa },
+};
+
 static int knownJumper(uint32_t crc) {
 	for (size_t i = 0; i < sizeof(jumperSettings) / sizeof(jumperSettings[0]); i++) {
 		if (jumperSettings[i].crc == crc) {
@@ -376,6 +401,11 @@ bool cartLoad(struct NES* nes, const uint8_t* data, size_t size) {
 	memset(cart->prg, 0xFF, cart->prgSize);
 	size_t have = size > offset ? size - offset : 0;
 	memcpy(cart->prg, data + offset, have < cart->prgSize ? have : cart->prgSize);
+	for (size_t i = 0; i < sizeof(hookFixes) / sizeof(hookFixes[0]); i++) {
+		if (hookFixes[i].crc == crc && hookFixes[i].offset < cart->prgSize) {
+			cart->prg[hookFixes[i].offset] = hookFixes[i].value;
+		}
+	}
 	offset += cart->prgSize;
 
 	uint32_t chrAlloc = cart->chrSize ? cart->chrSize : 0x2000;
