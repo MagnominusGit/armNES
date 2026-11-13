@@ -176,7 +176,7 @@ static void MMC1_Restore(int version) {
 	MMC1MIRROR();
 	MMC1CHR();
 	MMC1PRG();
-	lreset = 0;
+	/* armNES: the timestamps carry on through a load, so lreset stays as saved */
 }
 
 static void MMC1CMReset(void) {
