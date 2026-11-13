@@ -589,6 +589,20 @@ static void fceuLoadExtra(struct NES* n, const uint8_t* in) {
 	if (GameStateRestore) {
 		GameStateRestore(1);
 	}
+	// FCEUmm's CHR and name table pages aren't in its state, and a board's restore doesn't always set
+	// them as they were: they come back from the loaded ones
+	for (int i = 0; i < 8; i++) {
+		if (n->chrPages[i]) {
+			VPage[i] = n->chrPages[i] - (i << 10);
+		}
+		PPUCHRRAM = (uint8_t) ((PPUCHRRAM & ~(1 << i)) | (n->chrWritable[i] << i));
+	}
+	for (int i = 0; i < 4; i++) {
+		if (n->chrPages[8 + i]) {
+			vnapage[i] = n->chrPages[8 + i];
+			PPUNTARAM = (uint8_t) ((PPUNTARAM & ~(1 << i)) | (n->chrWritable[8 + i] << i));
+		}
+	}
 	syncPages();
 }
 
