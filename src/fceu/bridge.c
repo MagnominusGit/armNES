@@ -520,6 +520,55 @@ void AddExState(void* v, uint32_t s, int type, char* desc) {
 	exCount++;
 }
 
+// FCEUmm's banks aren't in its state, and a board's restore doesn't always set them as they were,
+// so the state keeps each page as the chip it's in and where: PRG pages, CHR pages, name tables
+enum { PAGE_UNKNOWN, PAGE_NULL, PAGE_NOTHING, PAGE_NT, PAGE_PRG = 8, PAGE_CHR = PAGE_PRG + 32 };
+#define PAGE_COUNT (32 + 8 + 4)
+
+static void pageTag(const uint8_t* p, uint32_t* tag) {
+	tag[0] = PAGE_UNKNOWN;
+	tag[1] = 0;
+	if (!p) {
+		tag[0] = PAGE_NULL;
+	} else if (p >= nothing && p < nothing + sizeof(nothing)) {
+		tag[0] = PAGE_NOTHING;
+		tag[1] = (uint32_t) (p - nothing);
+	} else if (p >= NTARAM && p < NTARAM + 0x800) {
+		tag[0] = PAGE_NT;
+		tag[1] = (uint32_t) (p - NTARAM);
+	} else {
+		for (int c = 0; c < 32; c++) {
+			if (PRGptr[c] && p >= PRGptr[c] && p < PRGptr[c] + PRGsize[c]) {
+				tag[0] = PAGE_PRG + c;
+				tag[1] = (uint32_t) (p - PRGptr[c]);
+				return;
+			}
+			if (CHRptr[c] && p >= CHRptr[c] && p < CHRptr[c] + CHRsize[c]) {
+				tag[0] = PAGE_CHR + c;
+				tag[1] = (uint32_t) (p - CHRptr[c]);
+				return;
+			}
+		}
+	}
+}
+
+static bool pageFrom(const uint32_t* tag, uint8_t** p) {
+	if (tag[0] == PAGE_NULL) {
+		*p = NULL;
+	} else if (tag[0] == PAGE_NOTHING) {
+		*p = nothing + tag[1];
+	} else if (tag[0] == PAGE_NT) {
+		*p = NTARAM + tag[1];
+	} else if (tag[0] >= PAGE_PRG && tag[0] < PAGE_PRG + 32 && PRGptr[tag[0] - PAGE_PRG]) {
+		*p = PRGptr[tag[0] - PAGE_PRG] + tag[1];
+	} else if (tag[0] >= PAGE_CHR && tag[0] < PAGE_CHR + 32 && CHRptr[tag[0] - PAGE_CHR]) {
+		*p = CHRptr[tag[0] - PAGE_CHR] + tag[1];
+	} else {
+		return false;
+	}
+	return true;
+}
+
 static size_t fceuSaveExtra(struct NES* n, uint8_t* out) {
 	size_t size = sizeof(X.IRQlow);
 	if (out) {
@@ -531,7 +580,23 @@ static size_t fceuSaveExtra(struct NES* n, uint8_t* out) {
 		}
 		size += exState[i].s;
 	}
-	return size;
+	if (out) {
+		uint32_t tags[PAGE_COUNT][2];
+		for (int i = 0; i < 32; i++) {
+			pageTag(Page[i] ? Page[i] + (i << 11) : NULL, tags[i]);
+		}
+		for (int i = 0; i < 8; i++) {
+			pageTag(VPage[i] + (i << 10), tags[32 + i]);
+		}
+		for (int i = 0; i < 4; i++) {
+			pageTag(vnapage[i], tags[40 + i]);
+		}
+		memcpy(out + size, tags, sizeof(tags));
+		memcpy(out + size + sizeof(tags), PRGIsRAM, sizeof(PRGIsRAM));
+		out[size + sizeof(tags) + sizeof(PRGIsRAM)] = PPUCHRRAM;
+		out[size + sizeof(tags) + sizeof(PRGIsRAM) + 1] = PPUNTARAM;
+	}
+	return size + PAGE_COUNT * 2 * sizeof(uint32_t) + sizeof(PRGIsRAM) + 2;
 }
 
 // Copies the banks from FCEUmm's tables into the NES's
@@ -589,20 +654,27 @@ static void fceuLoadExtra(struct NES* n, const uint8_t* in) {
 	if (GameStateRestore) {
 		GameStateRestore(1);
 	}
-	// FCEUmm's CHR and name table pages aren't in its state, and a board's restore doesn't always set
-	// them as they were: they come back from the loaded ones
-	for (int i = 0; i < 8; i++) {
-		if (n->chrPages[i]) {
-			VPage[i] = n->chrPages[i] - (i << 10);
+	uint32_t tags[PAGE_COUNT][2];
+	memcpy(tags, in + size, sizeof(tags));
+	uint8_t* p;
+	for (int i = 0; i < 32; i++) {
+		if (pageFrom(tags[i], &p)) {
+			Page[i] = p ? p - (i << 11) : NULL;
 		}
-		PPUCHRRAM = (uint8_t) ((PPUCHRRAM & ~(1 << i)) | (n->chrWritable[i] << i));
+	}
+	for (int i = 0; i < 8; i++) {
+		if (pageFrom(tags[32 + i], &p) && p) {
+			VPage[i] = p - (i << 10);
+		}
 	}
 	for (int i = 0; i < 4; i++) {
-		if (n->chrPages[8 + i]) {
-			vnapage[i] = n->chrPages[8 + i];
-			PPUNTARAM = (uint8_t) ((PPUNTARAM & ~(1 << i)) | (n->chrWritable[8 + i] << i));
+		if (pageFrom(tags[40 + i], &p) && p) {
+			vnapage[i] = p;
 		}
 	}
+	memcpy(PRGIsRAM, in + size + sizeof(tags), sizeof(PRGIsRAM));
+	PPUCHRRAM = in[size + sizeof(tags) + sizeof(PRGIsRAM)];
+	PPUNTARAM = in[size + sizeof(tags) + sizeof(PRGIsRAM) + 1];
 	syncPages();
 }
 
