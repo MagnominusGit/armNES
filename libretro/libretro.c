@@ -707,7 +707,7 @@ unsigned retro_api_version(void) {
 
 void retro_get_system_info(struct retro_system_info* info) {
 	memset(info, 0, sizeof(*info));
-	info->library_version = "1.0";
+	info->library_version = "1.1";
 	info->need_fullpath = false;
 #ifdef ARMNES_ARCADE
 	// The arcade build takes archives unopened, so MAME's sets (and their parents') open here

@@ -7,7 +7,7 @@ set(APP_ACCENT Red)
 set(APP_JAVA_PACKAGE org.armnes.app)
 set(APP_JAVA_CLASS Armnes)
 # Its version, and how it's built: the CMake option that turns it on, and its target.
-set(APP_VERSION 1.0)
+set(APP_VERSION 1.1)
 set(APP_BUILD_OPTION ARMNES_APP)
 set(APP_BUILD_TARGET armnes-app)
 # For the desktop: what it is, and the files it opens.
