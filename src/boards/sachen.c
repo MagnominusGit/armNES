@@ -141,6 +141,13 @@ static uint8_t tca01Read(struct NES* nes, uint16_t address) {
 }
 
 static void tca01Reset(struct NES* nes, bool hard) {
+	// A game on this board reads $EC before it sets it, and waits forever if it's $FF: power-on RAM
+	// as Nestopia's and cah4e3's fix for it has it
+	if (hard) {
+		for (int i = 0; i < 0x800; i++) {
+			nes->ram[i] = (i & 4) ? 0x7F : 0x00;
+		}
+	}
 	prg16(nes, 0x8000, 0);
 	prg16(nes, 0xC000, 1);
 	chr8(nes, 0);
