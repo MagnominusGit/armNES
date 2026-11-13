@@ -118,7 +118,6 @@ const struct Board boardJy043 = {
 // The microphone reads as silence.
 struct Karaoke {
 	uint8_t bank, audioAddress;
-	uint8_t audioRegs[0x40];
 	uint8_t audioClock;
 	int16_t sample;
 };
@@ -133,12 +132,12 @@ static void karaokeBanks(struct NES* nes) {
 	prg16(nes, 0xC000, banks - 1);
 }
 
-static void karaokeSync(struct NES* nes) {
-	struct Karaoke* n = STATE(Karaoke);
-	karaokeBanks(nes);
-	for (int i = 0; i < 0x40; i++) {
-		OPLL_writeReg(ym2413, i, n->audioRegs[i]);
-	}
+static size_t karaokeSaveExtra(struct NES* nes, uint8_t* out) {
+	return opllState(ym2413, out, false);
+}
+
+static void karaokeLoadExtra(struct NES* nes, const uint8_t* in) {
+	opllState(ym2413, (uint8_t*) in, true);
 }
 
 static void karaokeWrite(struct NES* nes, uint16_t address, uint8_t value) {
@@ -146,7 +145,6 @@ static void karaokeWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	if ((address & 0xE003) == 0x6000) {
 		n->audioAddress = value;
 	} else if ((address & 0xE003) == 0x6001) {
-		n->audioRegs[n->audioAddress & 0x3F] = value;
 		OPLL_writeReg(ym2413, n->audioAddress, value);
 	} else if ((address & 0xE00F) == 0x8000) {
 		n->bank = value;
@@ -187,7 +185,8 @@ static void karaokeReset(struct NES* nes, bool hard) {
 
 const struct Board boardKaraoke = {
 	.name = "Karaoke (515)", .reset = karaokeReset, .write = karaokeWrite, .read = karaokeRead,
-	.cpuCycle = karaokeCycle, .audio = karaokeAudio, .sync = karaokeSync, .stateSize = sizeof(struct Karaoke),
+	.cpuCycle = karaokeCycle, .audio = karaokeAudio, .sync = karaokeBanks, .stateSize = sizeof(struct Karaoke),
+	.saveExtra = karaokeSaveExtra, .loadExtra = karaokeLoadExtra,
 };
 
 // 547: Konami's QTa adapter (VRC5), with its own 128 KB of PRG ROM before the cart's 512 KB, 8 KB of

@@ -196,6 +196,9 @@ struct Vrc7Sound {
 void vrc7SoundReset(struct Vrc7Sound*, bool hard);
 // The synthesizer's own state, saved to data or loaded from it; with data NULL, only measured
 size_t vrc7SoundState(uint8_t* data, bool load);
+// The same for any emu2413 chip
+struct __OPLL;
+size_t opllState(struct __OPLL*, uint8_t* data, bool load);
 void vrc7SoundWrite(struct Vrc7Sound*, uint8_t value);
 void vrc7SoundCycle(struct Vrc7Sound*, bool silenced);
 int vrc7SoundOutput(const struct Vrc7Sound*);

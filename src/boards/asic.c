@@ -1062,7 +1062,7 @@ void vrc7SoundReset(struct Vrc7Sound* v, bool hard) {
 
 // Field by field, so a state reads the same on every host. The rest (patch and wave table pointers,
 // levels and rates worked out from these) emu2413 works out again on its refresh.
-size_t vrc7SoundState(uint8_t* data, bool load) {
+size_t opllState(OPLL* opll, uint8_t* data, bool load) {
 	size_t size = 0;
 #define FIELD(x) \
 	do { \
@@ -1111,6 +1111,10 @@ size_t vrc7SoundState(uint8_t* data, bool load) {
 		OPLL_forceRefresh(opll);
 	}
 	return size;
+}
+
+size_t vrc7SoundState(uint8_t* data, bool load) {
+	return opllState(opll, data, load);
 }
 
 void vrc7SoundWrite(struct Vrc7Sound* v, uint8_t value) {
