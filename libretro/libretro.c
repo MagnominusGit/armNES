@@ -270,15 +270,18 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_region", "Region", NULL, "The console the game runs on. Auto reads it from the game's header.", NULL, "system",
 		{ { "Auto", NULL }, { "NTSC", NULL }, { "PAL", NULL }, { "Dendy", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_ppu", "PPU Accuracy", NULL,
-		"Balanced runs the picture chip dot by dot with its sprites found and fetched as the hardware "
-		"does, passing every accuracy test at under twice Fast's cost. Exact models it half a dot at a "
-		"time, cycle for cycle, but many times slower: for desktops. Takes effect when a game is loaded.",
+		"Fast draws everything games show, skipping timing details no known game relies on. Balanced "
+		"runs the picture chip dot by dot as the hardware does and passes every accuracy test, at under "
+		"twice Fast's cost. Exact models it cycle for cycle, many times slower: for desktops. Takes "
+		"effect when a game is loaded.",
 		NULL, "system", { { "Fast", NULL }, { "Balanced", NULL }, { "Exact", NULL }, { NULL, NULL } }, "Fast" },
 	{ "armnes_overclock", "Overclock", NULL,
-		"Extra CPU time each frame, which removes most slowdown without changing game speed. A few games "
-		"misbehave; try the other placement for those.",
-		NULL, "system", { { "Off", NULL }, { "2x (vblank)", NULL }, { "3x (vblank)", NULL }, { "4x (vblank)", NULL },
-		{ "2x (after the picture)", NULL }, { "3x (after the picture)", NULL }, { NULL, NULL } }, "Off" },
+		"Extra CPU time each frame, which removes most slowdown without changing game speed. It's added "
+		"either between frames or right after the picture is drawn. A few games misbehave; for those, "
+		"try the other one.",
+		NULL, "system", { { "Off", NULL }, { "2x (vblank)", "2x (between frames)" }, { "3x (vblank)", "3x (between frames)" },
+		{ "4x (vblank)", "4x (between frames)" }, { "2x (after the picture)", NULL }, { "3x (after the picture)", NULL },
+		{ NULL, NULL } }, "Off" },
 	{ "armnes_fds_fast", "Disk System Fast Loading", NULL,
 		"Runs up to 16 times as fast while the disk drive reads or writes, without its sound.",
 		NULL, "system", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
@@ -292,7 +295,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "video", { { NULL, NULL } }, "armNES NTSC" },
 	{ "armnes_filter", "NTSC/PAL Filter", NULL,
 		"The picture as a TV decoded it: Composite, with its color fringes and blended dithering, or the "
-		"sharper S-Video. It makes its own colors. Takes more CPU time. Off for arcade boards.",
+		"sharper S-Video. It makes its own colors. Takes more CPU time. Not used on arcade boards, whose "
+		"PPU outputs RGB.",
 		NULL, "video", { { "Off", NULL }, { "Composite", NULL }, { "S-Video", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_scanlines", "Scanlines", NULL,
 		"Dark rows between the filtered picture's lines, as a CRT's beam left them. Best with integer scaling "
@@ -303,8 +307,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"games still see the console's limit.",
 		NULL, "video", { { "8 per line", NULL }, { "No limit", NULL }, { NULL, NULL } }, "8 per line" },
 	{ "armnes_aspect", "Aspect Ratio", NULL,
-		"4:3 as a TV showed it, 8:7 PAR the console's pixel shape (about 11:8 on PAL), or square pixels.",
-		NULL, "video", { { "4:3", NULL }, { "8:7 PAR", NULL }, { "1:1", NULL }, { NULL, NULL } }, "4:3" },
+		"4:3 as a TV showed it, the console's own pixel shape (8:7, about 11:8 on PAL), or square pixels.",
+		NULL, "video", { { "4:3", NULL }, { "8:7 PAR", "Console pixels (8:7)" }, { "1:1", "Square pixels" }, { NULL, NULL } }, "4:3" },
 	{ "armnes_crop_vertical", "Crop Top and Bottom", NULL,
 		"Pixels hidden at the top and bottom, as a TV's overscan hid them.",
 		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "8" },
@@ -319,8 +323,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_pan_triangle", "Triangle Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
 	{ "armnes_volume_noise", "Noise Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
 	{ "armnes_pan_noise", "Noise Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
-	{ "armnes_volume_dmc", "DMC Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
-	{ "armnes_pan_dmc", "DMC Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
+	{ "armnes_volume_dmc", "DMC (Samples) Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
+	{ "armnes_pan_dmc", "DMC (Samples) Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
 	{ "armnes_volume_cart", "Cart Sound Volume", NULL,
 		"The sound chip in the cart or the Disk System.", NULL, "audio", VOLUME_VALUES, "100%" },
 	{ "armnes_pan_cart", "Cart Sound Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
@@ -337,44 +341,45 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"Players 3 and 4 through the NES Four Score or the Famicom's adapter. Auto follows an NES 2.0 header.",
 		NULL, "input", { { "Auto", NULL }, { "Off", NULL }, { "Four Score", NULL }, { "Famicom adapter", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_expansion", "Famicom Expansion Port", NULL,
-		"The paddle follows the mouse, the Power Pad takes controller 1's buttons, the keyboard the "
-		"keyboard (turn on Game Focus). Auto follows an NES 2.0 header.",
+		"The paddle follows the mouse, the Power Pad takes controller 1's buttons, and the Famicom "
+		"keyboard takes your keyboard (turn on Game Focus). Auto follows an NES 2.0 header.",
 		NULL, "input", { { "Auto", NULL }, { "None", NULL }, { "Paddle", NULL }, { "Power Pad", NULL },
 		{ "Keyboard", NULL }, { NULL, NULL } }, "Auto" },
-	{ "armnes_zapper_aim", "Zapper Input", NULL,
-		"The right stick moving (pan) or pointing (absolute) a crosshair (R fires, L off the screen), a "
-		"light gun or mouse pointer, or a mouse-moved crosshair (left button fires, right off the screen). "
-		"R3 centers the crosshair. Touching the screen always aims and fires.",
-		NULL, "input", { { "Right stick (pan)", NULL }, { "Right stick (absolute)", NULL }, { "Light gun", NULL },
-		{ "Mouse", NULL }, { NULL, NULL } }, "Right stick (pan)" },
-	{ "armnes_zapper_sensitivity", "Zapper Sensitivity", NULL,
+	{ "armnes_zapper_aim", "Zapper Input", "Input",
+		"Right stick: the stick moves the crosshair, or points it where the stick points; R fires, L "
+		"shoots off the screen, R3 centers. Light gun: a light gun or the mouse pointer aims. Mouse: the "
+		"mouse moves a crosshair; the left button fires, the right shoots off the screen. Touching the "
+		"screen always aims and fires.",
+		NULL, "zapper", { { "Right stick (pan)", "Right stick (moves)" }, { "Right stick (absolute)", "Right stick (points)" },
+		{ "Light gun", NULL }, { "Mouse", NULL }, { NULL, NULL } }, "Right stick (pan)" },
+	{ "armnes_zapper_sensitivity", "Zapper Sensitivity", "Sensitivity",
 		"How fast the crosshair moves. Holding L2 aims finer the further it's pulled.",
-		NULL, "input", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
+		NULL, "zapper", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
 		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
-	{ "armnes_stick_invert", "Zapper Stick Invert", NULL,
+	{ "armnes_stick_invert", "Zapper Stick Invert", "Stick Invert",
 		"Turns the right stick's aim around, side to side, up and down, or both.",
-		NULL, "input", { { "Off", NULL }, { "Horizontal", NULL }, { "Vertical", NULL }, { "Both", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_motion_sensor", "Zapper Motion", NULL,
+		NULL, "zapper", { { "Off", NULL }, { "Horizontal", NULL }, { "Vertical", NULL }, { "Both", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_motion_sensor", "Zapper Motion", "Motion",
 		"The device's motion moves the crosshair from where the right stick aims it: turning it with the "
 		"gyroscope, or tilting it with the accelerometer. R3 takes how the device is held as the middle.",
-		NULL, "input", { { "Off", NULL }, { "Gyroscope", NULL }, { "Accelerometer", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_motion_range", "Zapper Motion Range", NULL,
+		NULL, "zapper", { { "Off", NULL }, { "Gyroscope", NULL }, { "Accelerometer", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_motion_range", "Zapper Motion Range", "Motion Range",
 		"How far the motion moves the crosshair: the whole screen, to aim by motion alone, or a quarter of "
 		"it either way, for fine aim on top of the stick.",
-		NULL, "input", { { "Whole screen", NULL }, { "Fine", NULL }, { NULL, NULL } }, "Whole screen" },
-	{ "armnes_motion_sensitivity", "Zapper Motion Sensitivity", NULL,
+		NULL, "zapper", { { "Whole screen", NULL }, { "Fine", NULL }, { NULL, NULL } }, "Whole screen" },
+	{ "armnes_motion_sensitivity", "Zapper Motion Sensitivity", "Motion Sensitivity",
 		"How far the device turns or tilts to move the crosshair all the way: about 20° at 100%, less the "
 		"higher it is.",
-		NULL, "input", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
+		NULL, "zapper", { { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { "100%", NULL }, { "150%", NULL },
 		{ "200%", NULL }, { "300%", NULL }, { NULL, NULL } }, "100%" },
-	{ "armnes_motion_invert", "Zapper Motion Invert", NULL,
+	{ "armnes_motion_invert", "Zapper Motion Invert", "Motion Invert",
 		"Turns the motion's aim around, side to side, up and down, or both, for a sensor that reads one "
 		"way backwards or to taste.",
-		NULL, "input", { { "Off", NULL }, { "Horizontal", NULL }, { "Vertical", NULL }, { "Both", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_motion_rotation", "Zapper Motion Sensor Rotation", NULL,
+		NULL, "zapper", { { "Off", NULL }, { "Horizontal", NULL }, { "Vertical", NULL }, { "Both", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_motion_rotation", "Zapper Motion Sensor Rotation", "Motion Sensor Rotation",
 		"Turns the motion sensor to match the screen if aiming goes the wrong way. Usually 0° in the "
 		"standalone app, often 90° in RetroArch.",
-		NULL, "input", { { "0", "0°" }, { "90", "90°" }, { "180", "180°" }, { "270", "270°" }, { NULL, NULL } }, "0" },
+		NULL, "zapper", { { "0", "0°" }, { "90", "90°" }, { "180", "180°" }, { "270", "270°" }, { NULL, NULL } }, "0" },
 	{ "armnes_vs_ppu", "PPU", NULL, "The board's PPU, which sets its colors. Auto follows an NES 2.0 header, or the RP2C03.",
 		NULL, "vs", { { "Auto", NULL }, { "RP2C03", NULL }, { "RP2C04-0001", NULL }, { "RP2C04-0002", NULL }, { "RP2C04-0003", NULL },
 		{ "RP2C04-0004", NULL }, { "RC2C05-01", NULL }, { "RC2C05-02", NULL }, { "RC2C05-03", NULL }, { "RC2C05-04", NULL },
@@ -393,14 +398,14 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_vs_screens", "DualSystem Screens", NULL,
 		"A DualSystem cabinet's two screens side by side, or one of them.",
 		NULL, "vs", { { "Both", NULL }, { "Main board", NULL }, { "Second board", NULL }, { NULL, NULL } }, "Both" },
-	{ "armnes_vs_dip9", "DualSystem DIP Switch 9", NULL, "The second board's switches 1 to 8.", NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip10", "DualSystem DIP Switch 10", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip11", "DualSystem DIP Switch 11", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip12", "DualSystem DIP Switch 12", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip13", "DualSystem DIP Switch 13", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip14", "DualSystem DIP Switch 14", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip15", "DualSystem DIP Switch 15", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_vs_dip16", "DualSystem DIP Switch 16", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip9", "Second Board DIP Switch 1", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip10", "Second Board DIP Switch 2", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip11", "Second Board DIP Switch 3", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip12", "Second Board DIP Switch 4", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip13", "Second Board DIP Switch 5", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip14", "Second Board DIP Switch 6", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip15", "Second Board DIP Switch 7", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_vs_dip16", "Second Board DIP Switch 8", NULL, NULL, NULL, "vs", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ NULL, NULL, NULL, NULL, NULL, NULL, { { NULL, NULL } }, NULL },
 };
 
@@ -408,8 +413,9 @@ static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The console's region and speed, the Disk System and cart settings." },
 	{ "video", "Video", "Colors, the TV filter, sprites and the picture's shape and edges." },
 	{ "audio", "Audio", "Each channel's volume and where it sits between the speakers. The console mixes in mono." },
-	{ "input", "Input", "Turbo, extra players, the expansion port and the Zapper." },
-	{ "vs", "VS. System", "The arcade board's PPU, controller wiring and DIP switches. Select puts in a coin, controller 1's L3 is the service button. A DualSystem's second board takes controllers 3 and 4 (controller 3's L3 for its service button)." },
+	{ "input", "Input", "Turbo, the D-pad, extra players and the expansion port." },
+	{ "zapper", "Zapper", "How the light gun aims: the stick, a light gun, the mouse or the device's motion. Shown when a Zapper is plugged in." },
+	{ "vs", "VS. System", "The arcade board's PPU, controller wiring and DIP switches (what each game's switches do is in its manual or MAME's notes). Select puts in a coin, controller 1's L3 is the service button. A DualSystem's second board takes controllers 3 and 4 (controller 3's L3 for its service button)." },
 	{ NULL, NULL, NULL },
 };
 

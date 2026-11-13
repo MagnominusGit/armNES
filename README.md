@@ -69,24 +69,24 @@ Zapper plugged in (the motion ones only with Zapper Motion on).
 | --- | --- | --- |
 | System | Region | Auto (from the header), NTSC, PAL, Dendy |
 | | PPU Accuracy (applies when a game is loaded) | Fast, Balanced, Exact |
-| | Overclock | Off, 2x, 3x or 4x in vblank, 2x or 3x after the picture |
+| | Overclock | Off, 2x, 3x or 4x between frames, 2x or 3x after the picture |
 | | Disk System Fast Loading | Off, On (up to 16 times as fast while the drive reads or writes) |
 | | Cart Jumper (restarts the game) | Auto (the setting known for the dump), 0 to 23 |
 | Video | Palette (without the filter, which makes its own colors) | armNES NTSC (decoded from the video signal), 23 measured or tuned palettes from FCEUmm's set, Custom |
-| | NTSC/PAL Filter | Off, Composite, S-Video (off for arcade boards) |
+| | NTSC/PAL Filter | Off, Composite, S-Video (not used on arcade boards, whose PPU outputs RGB) |
 | | Scanlines (with the filter) | Off, Light, Medium, Dark |
 | | Sprite Limit | 8 per line, No limit (games still see the console's limit) |
-| | Aspect Ratio | 4:3, 8:7 PAR, 1:1 |
+| | Aspect Ratio | 4:3, Console pixels (8:7), Square pixels |
 | | Crop Top and Bottom | 8, then 0, 4, 12, 16 pixels |
 | | Crop Sides | 0, 4, 8, 12, 16 pixels |
-| Audio | Pulse 1, Pulse 2, Triangle, Noise, DMC and Cart Sound Volume | 100%, 0% to 90% in tenths |
+| Audio | Pulse 1, Pulse 2, Triangle, Noise, DMC (Samples) and Cart Sound Volume | 100%, 0% to 90% in tenths |
 | | The same channels' Position | Center, Left to Right in quarters |
 | Input | Turbo Speed | 15 per second, Off, 30, 20, 10, 7.5 per second |
 | | Allow Opposing Directions | Off, On |
 | | Left Stick as D-Pad | On, Off |
 | | 4 Players | Auto (from an NES 2.0 header), Off, Four Score, Famicom adapter |
 | | Famicom Expansion Port | Auto (from an NES 2.0 header), None, Paddle, Power Pad, Keyboard |
-| | Zapper Input | Right stick (pan), Right stick (absolute), Light gun, Mouse; touch always aims and fires |
+| Zapper | Zapper Input | Right stick (moves), Right stick (points), Light gun, Mouse; touch always aims and fires |
 | | Zapper Sensitivity | 100%, 25% to 300% |
 | | Zapper Stick Invert | Off, Horizontal, Vertical, Both |
 | | Zapper Motion | Off, Gyroscope, Accelerometer |
@@ -98,7 +98,7 @@ Zapper plugged in (the motion ones only with Zapper Motion on).
 | | Swap Controllers | Auto (from an NES 2.0 header), Off, On |
 | | DIP Switch 1 to 8 | Off, On |
 | | DualSystem Screens | Both, Main board, Second board |
-| | DualSystem DIP Switch 9 to 16 (the second board's) | Off, On |
+| | Second Board DIP Switch 1 to 8 (DualSystem) | Off, On |
 
 The NTSC/PAL filter decodes the console's video signal as a TV of the time did: Composite with its
 color fringes, blended dithering and dot crawl, or the cleaner S-Video. Its picture has two rows to a
