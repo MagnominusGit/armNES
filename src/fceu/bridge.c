@@ -498,7 +498,7 @@ DECLFW(FDSSoundWrite) {
 static struct {
 	void* v;
 	uint32_t s;
-} exState[64];
+} exState[256];
 static int exCount;
 
 void ResetExState(void (*PreSave)(void), void (*PostSave)(void)) {
@@ -506,7 +506,7 @@ void ResetExState(void (*PreSave)(void), void (*PostSave)(void)) {
 }
 
 void AddExState(void* v, uint32_t s, int type, char* desc) {
-	if (!v || exCount == 64) {
+	if (!v || exCount == 256) {
 		return;
 	}
 	if (s == ~0u) {
