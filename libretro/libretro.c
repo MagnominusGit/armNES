@@ -2996,14 +2996,20 @@ bool retro_serialize(void* data, size_t size) {
 }
 
 bool retro_unserialize(const void* data, size_t size) {
-	if (!loaded || size < retro_serialize_size()) {
+	if (!loaded) {
 		return false;
 	}
-	// A state loaded before the first frame keeps its own save RAM, as it does in one block
-	saveBlockIn = true;
+	// One board's state checks its own size (1.1's are a little shorter). A state loaded before the
+	// first frame keeps its own save RAM, as it does in one block; one refused leaves the save alone.
 	if (!nes.dual) {
-		return nesLoadState(&nes, data, size);
+		bool const ok = nesLoadState(&nes, data, size);
+		saveBlockIn |= ok;
+		return ok;
 	}
+	if (size < retro_serialize_size()) {
+		return false;
+	}
+	saveBlockIn = true;
 	size_t first = nesStateSize(&nes), second = nesStateSize(&sub);
 	if (!nesLoadState(&nes, data, first) || !nesLoadState(&sub, (const uint8_t*) data + first, second)) {
 		return false;

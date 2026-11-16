@@ -230,13 +230,16 @@ void genieImport(const struct Cheat* codes, int count) {
 	}
 }
 
+// Whether it's plugged in and has the console (0 without it, 1 the game, 2 its code screen), then its
+// registers; the same size either way
 size_t genieStateSize(void) {
-	return genie.present ? 1 + sizeof(genie.regs) : 0;
+	return 1 + sizeof(genie.regs);
 }
 
 void genieSaveState(uint8_t* out) {
+	memset(out, 0, genieStateSize());
 	if (genie.present) {
-		out[0] = genie.menu;
+		out[0] = (uint8_t) (genie.menu ? 2 : 1);
 		memcpy(out + 1, genie.regs, sizeof(genie.regs));
 	}
 }
@@ -245,8 +248,9 @@ void genieLoadState(struct NES* nes, const uint8_t* in) {
 	if (!genie.present) {
 		return;
 	}
+	// A state made without it: the game, no codes
 	genie.mapped = false;
-	genie.menu = in[0] != 0;
+	genie.menu = in[0] == 2;
 	memcpy(genie.regs, in + 1, sizeof(genie.regs));
 	genieMenuWrites = genie.menu;
 	genieMap(nes);

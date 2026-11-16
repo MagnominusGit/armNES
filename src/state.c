@@ -74,9 +74,16 @@ static size_t extraSize(const struct NES* nes) {
 	return nes->board->saveExtra ? nes->board->saveExtra((struct NES*) nes, NULL) : 0;
 }
 
+// The Game Genie's part, in every single board's state whether it's plugged in or not, so the state
+// keeps its size as the Game Genie option plugs it in or out (RetroArch sizes run-ahead and rewind as
+// the game loads). A state from before it (armNES 1.1) still loads without the Game Genie.
+static size_t genieSize(const struct NES* nes) {
+	return nes->dual || nes->vsSub ? 0 : genieStateSize();
+}
+
 size_t nesStateSize(const struct NES* nes) {
 	return sizeof(struct StateHeader) + sizeof(struct NES) + 32 * sizeof(uint32_t) + wramSize(nes) +
-		(nes->cart.chrRam ? nes->cart.chrSize : 0) + nes->cart.vramSize + extraSize(nes) + parStateSize() + genieStateSize();
+		(nes->cart.chrRam ? nes->cart.chrSize : 0) + nes->cart.vramSize + extraSize(nes) + parStateSize() + genieSize(nes);
 }
 
 bool nesSaveState(struct NES* nes, void* data, size_t size) {
@@ -153,7 +160,9 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	}
 	parSaveState(out);
 	out += parStateSize();
-	genieSaveState(out);
+	if (genieSize(nes)) {
+		genieSaveState(out);
+	}
 	parMap(nes);
 	genieMap(nes);
 	return true;
@@ -162,7 +171,8 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	const uint8_t* in = data;
 	struct StateHeader header;
-	if (size < nesStateSize(nes)) {
+	size_t const need = nesStateSize(nes);
+	if (size < need && (size < need - genieSize(nes) || geniePresent())) {
 		return false;
 	}
 	memcpy(&header, in, sizeof(header));
@@ -257,6 +267,8 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	}
 	parLoadState(nes, in);
 	in += parStateSize();
-	genieLoadState(nes, in);
+	if (size >= need && genieSize(nes)) {
+		genieLoadState(nes, in);
+	}
 	return true;
 }
