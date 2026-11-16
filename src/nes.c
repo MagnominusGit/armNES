@@ -184,6 +184,14 @@ void nesReset(struct NES* nes, bool hard) {
 	// The game's own pages for its board's reset; the Pro Action Replay's go back over them after
 	parUnmap(nes);
 	genieUnmap(nes);
+	// A board's own battery-backed RAM (the Namco 163's sound RAM) keeps its save through the power
+	uint8_t battery[256];
+	size_t batterySize = 0;
+	uint8_t* batteryRam = hard && nes->board && nes->board->batteryRam ? nes->board->batteryRam(nes, &batterySize) : NULL;
+	bool const keepBattery = batteryRam && batterySize <= sizeof(battery);
+	if (keepBattery) {
+		memcpy(battery, batteryRam, batterySize);
+	}
 	if (hard) {
 		// Power-on RAM: $FF, as FCEUmm has it; real RAM starts unknown, and some games only work when
 		// it isn't zero
@@ -221,6 +229,13 @@ void nesReset(struct NES* nes, bool hard) {
 		}
 	}
 	nes->board->reset(nes, hard);
+	if (keepBattery) {
+		size_t size = 0;
+		uint8_t* ram = nes->board->batteryRam(nes, &size);
+		if (ram && size == batterySize) {
+			memcpy(ram, battery, size);
+		}
+	}
 	nes->ppuEveryCycle = nes->board->m2Rise != NULL;
 	nes->slowCycles = nes->ppuEveryCycle || nes->board->cpuCycle || nes->exactTiming;
 	nes->boardPending = 0;

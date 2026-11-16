@@ -33,19 +33,21 @@ desktops.
   DualSystem's two boards run together, their screens side by side. The armNES app opens these sets.
   In RetroArch, use the `armnes_arcade` core for them (see Building).
 - NSF music files, with a small player.
-- Cheat cartridges, run as themselves. The Game Genie option plugs the Game Genie in between the
-  console and any cart game you load, its code screen first: the core finds it in the system (BIOS)
-  folder (`[BIOS] Game Genie (USA, Europe) (Unl).unh` or `gamegenie.nes`). The game stays the one you
-  loaded, so its saves, save states and RetroArch's cheat lookup work as usual. Or load the
-  cartridge's ROM itself and pick the game with Game on Top (one of the games beside it in its
-  folder, those played last first); the game on top keeps its own save under its own name. Cheat
-  Code 1 to 5 (3 on the Game Genie) take cheats for the game from RetroArch's cheat database (its own
-  `cheat_database_path`, or where RetroArch keeps it) and put them in the cartridge as the console
-  starts again, and kept for each game: the Pro Action Replay's in its table, shown on its screen
-  as if typed (its `00AAAAVV` codes, `AAVV` and RAM `AAAA:VV` ones); the Game Genie's in the slots its
-  screen leaves empty (its letter codes, and `AAAA:VV` or `AAAA?CC:VV` for $8000 and up). Started
-  with no game (RetroArch's Start Core), the core is a console with no cartridge: the Game Genie
-  alone with the option on.
+- Cheat cartridges, run as themselves:
+  - The Game Genie option plugs the Game Genie in between the console and any cart game you load,
+    so its code screen comes first. The core finds it in the system (BIOS) folder:
+    `[BIOS] Game Genie (USA, Europe) (Unl).unh` or `gamegenie.nes`. The game stays the one you
+    loaded, so its saves, save states and RetroArch's cheat lookup work as usual. Started with no
+    game (RetroArch's Start Core), the core is a console with no cartridge, or the Game Genie alone
+    with the option on.
+  - Or load a cheat cartridge's ROM itself and pick the game plugged into it with Game on Top (from
+    the same folder, most recently played first). The game on top keeps its own save under its own
+    name.
+  - Cheat Code 1 to 5 (3 on the Game Genie) enter cheats for the game from RetroArch's cheat database
+    (its `cheat_database_path`, or where RetroArch keeps it), as if typed on the cartridge's screen,
+    and they're kept for each game. The Pro Action Replay takes RAM codes (its `00AAAAVV`, `AAVV`,
+    and `AAAA:VV`); the Game Genie takes ROM codes (its letters, and `AAAA:VV` or `AAAA?CC:VV` for
+    $8000 and up).
   - Datel's Pro Action Replay (the three dumps of its ROM: v1.0, v1.1 and v1.2, Europe). Its screen
     takes up to five codes (`00AAAAVV`: an address and the value it keeps there each frame; B raises
     the digit under the cursor, A lowers it, Start runs the game) and its trainer finds new ones: Reset
@@ -53,8 +55,7 @@ desktops.
     is off, as on the hardware.
   - The Game Genie (No-Intro's `[BIOS] Game Genie (USA, Europe) (Unl).unh`, its 4 KB program alone, the
     pattern tables its gates make built as NESdev describes them; or the image FCEUX and Mesen take,
-    `gamegenie.nes`). Its screen takes three codes of
-    six or eight letters; Start runs the game, and the codes stay until the console is off (Reset
+    `gamegenie.nes`). Its screen takes three codes of six or eight letters; Start runs the game, and the codes stay until the console is off (Reset
     starts the game again with them, as on the hardware), including the bus conflicts some codes rely
     on (NESdev, Game Genie).
 - Games inside `.zip` and `.7z` archives. RetroArch unpacks them, so achievements recognize the game.
@@ -96,10 +97,10 @@ Zapper plugged in (the motion ones only with Zapper Motion on).
 | | PPU Accuracy (applies when a game is loaded) | Fast, Balanced, Exact |
 | | Overclock | Off, 2x, 3x or 4x between frames, 2x or 3x after the picture |
 | | Disk System Fast Loading | Off, On (up to 16 times as fast while the drive reads or writes) |
-| | Game Genie | Off, On (the Game Genie from the system folder between the console and the game; changing it starts the console again) |
-| | Cheat Code 1 to 5 | With the Game Genie option, or a cheat cartridge and a game on top: None, or one of RetroArch's cheats for the game that fits the cartridge (up to 126), going in as the console starts again |
-| | Game on Top | With a Pro Action Replay or Game Genie loaded: None, or a game beside it (those played last first, up to 126); it goes in at once, the console starting again with the cartridge's own screen |
-| | Cart Jumper (restarts the game) | Auto (the setting known for the dump), 0 to 23 |
+| | Game Genie (restarts the console) | Off, On (the Game Genie from the system folder, between the console and the game) |
+| | Game on Top (restarts the console) | With a Pro Action Replay or Game Genie loaded as the game: None, or a game from the same folder (most recently played first, up to 126) |
+| | Cheat Code 1 to 5 (restarts the console) | With the Game Genie option, or a cheat cartridge and a game on top: None, or one of RetroArch's cheats for the game that fits the cartridge (up to 126), kept for each game |
+| | Cart Jumper (restarts the console) | Auto (the setting known for the dump), 0 to 23 |
 | Video | Palette (without the filter, which makes its own colors) | armNES NTSC (decoded from the video signal), 23 measured or tuned palettes from FCEUmm's set, Custom |
 | | NTSC/PAL Filter | Off, Composite, S-Video (not used on arcade boards, whose PPU outputs RGB) |
 | | Scanlines (with the filter) | Off, Light, Medium, Dark |

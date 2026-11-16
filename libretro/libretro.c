@@ -372,21 +372,18 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"Runs up to 16 times as fast while the disk drive reads or writes, without its sound.",
 		NULL, "system", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_game_genie", "Game Genie", NULL,
-		"Plugs the Game Genie in between the console and the game, its code screen first: [BIOS] Game Genie "
-		"(USA, Europe) (Unl).unh or gamegenie.nes in the system (BIOS) folder. Cheat Code 1-3 then "
-		"offer the game's cheats from RetroArch's cheat database. Changing it starts the console again.",
+		"Plugs in the Game Genie, so its code screen comes before the game. Needs [BIOS] Game Genie (USA, "
+		"Europe) (Unl).unh or gamegenie.nes in the system (BIOS) folder. Cheat Code 1-3 list RetroArch's "
+		"cheats for the game. Changing it restarts the console.",
 		NULL, "system", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_par_game", "Game on Top", NULL,
-		"The game plugged into the cheat cartridge (a Pro Action Replay or a Game Genie), from those beside "
-		"it in its folder (the ones played last first). It goes in at once, the console starting again "
-		"with the cartridge's own screen.",
+		"With a Pro Action Replay or Game Genie loaded as the game: the game plugged into it, from the same "
+		"folder (most recently played first). Changing it restarts the console.",
 		NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
 	{ "armnes_cart_code_1", "Cheat Code 1", NULL,
-		"A cheat from RetroArch's cheat database for the game (under the Game Genie option, or on top of a "
-		"cheat cartridge loaded), put in the cartridge as if "
-		"typed on its screen: in its table on the Pro Action Replay (up to five codes in all), in the "
-		"slots its screen leaves empty on the Game Genie (up to three). It goes in as the console starts "
-		"again.", NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
+		"One of RetroArch's cheats for the game, entered into the cheat cartridge as if typed on its "
+		"screen: up to 3 codes on the Game Genie, 5 on the Pro Action Replay. Kept for each game. Changing "
+		"it restarts the console.", NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
 	{ "armnes_cart_code_2", "Cheat Code 2", NULL,
 		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
 	{ "armnes_cart_code_3", "Cheat Code 3", NULL,
@@ -397,7 +394,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
 	{ "armnes_jumper", "Cart Jumper", NULL,
 		"The cart's solder pads or DIP switches, which pick its menu, games, language or timing. Auto uses "
-		"the setting known for the dump. Changing it restarts the game.",
+		"the setting known for the dump. Changing it restarts the console.",
 		NULL, "system", { { "Auto", NULL }, { "0", NULL }, { "1", NULL }, { "2", NULL }, { "3", NULL }, { "4", NULL }, { "5", NULL }, { "6", NULL }, { "7", NULL }, { "8", NULL }, { "9", NULL }, { "10", NULL }, { "11", NULL }, { "12", NULL }, { "13", NULL }, { "14", NULL }, { "15", NULL }, { "16", NULL }, { "17", NULL }, { "18", NULL }, { "19", NULL }, { "20", NULL }, { "21", NULL }, { "22", NULL }, { "23", NULL }, { NULL, NULL } }, "Auto" },
 	{ "armnes_palette", "Palette", NULL,
 		"The colors. armNES NTSC decodes the console's video signal; the others are measured or tuned. "
@@ -544,7 +541,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 };
 
 static struct retro_core_option_v2_category categories[] = {
-	{ "system", "System", "The console's region and speed, the Disk System and cart settings." },
+	{ "system", "System", "The console's region and speed, the Disk System, cart settings and cheat cartridges." },
 	{ "video", "Video", "Colors, the TV filter, sprites and the picture's shape and edges." },
 	{ "audio", "Audio", "Each channel's volume and where it sits between the speakers. The console mixes in mono." },
 	{ "input", "Input", "Turbo, the D-pad, extra players and the expansion port." },
@@ -2593,8 +2590,8 @@ static void checkOptions(void) {
 		genieMissing = genieMissing && genieWanted;
 		if (genieWanted != genieOver && !genieMissing && genieOverFits()) {
 			if (genieOverPut(genieWanted) || !genieWanted) {
-				struct retro_message shown = { genieWanted ? "Game Genie in: the console starts again with its code screen" :
-					"Game Genie out: the console starts again", 240 };
+				struct retro_message shown = { genieWanted ? "Game Genie on: the console restarts with its code screen" :
+					"Game Genie off: the console restarts", 240 };
 				environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &shown);
 			}
 			showOptions();
@@ -2602,12 +2599,12 @@ static void checkOptions(void) {
 			cartImport();
 			cartKeepChoices(NULL);
 			nesReset(&nes, true);
-			struct retro_message shown = { "Game Genie: the codes chosen go in as the console starts again", 240 };
+			struct retro_message shown = { "Game Genie: the console restarts with the codes chosen", 240 };
 			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &shown);
 		} else if (parLoaded && *parTop && top && !strcmp(top, parTop) && cartCodesChanged()) {
 			parPutGame(top);
 			static char text[200];
-			snprintf(text, sizeof(text), "%s: the codes chosen go in as the console starts again", parName());
+			snprintf(text, sizeof(text), "%s: the console restarts with the codes chosen", parName());
 			struct retro_message shown = { text, 240 };
 			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &shown);
 		} else if (parLoaded && strcmp(top ? top : "", parTop)) {
@@ -2727,7 +2724,7 @@ static bool genieOverFits(void) {
 }
 
 // The Game Genie option: in, with the codes chosen from RetroArch's cheats for the game; or out. The
-// console starts again either way. False when it's wanted but not in the system folder.
+// console restarts either way. False when it's wanted but not in the system folder.
 static bool genieOverPut(bool on) {
 	if (!on) {
 		if (genieOver) {
