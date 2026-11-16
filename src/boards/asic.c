@@ -1038,7 +1038,8 @@ const struct Board boardVrc6 = {
 };
 
 // VRC7 (85): VRC6's banking layout with an FM synthesizer, emu2413 in its VRC7 mode at the OPLL's
-// own rate (3.58 MHz / 72, once every 36 CPU cycles). States keep the synthesizer's own state too.
+// own rate (3.58 MHz / 72, once every 36 CPU cycles), with the VRC7's own 15 instruments (Nuke.YKT's
+// dump of the chip) in place of the YM2413's. States keep the synthesizer's own state too.
 #include "sound/emu2413.h"
 
 struct Vrc7 {
@@ -1052,7 +1053,9 @@ static OPLL* opll;
 void vrc7SoundReset(struct Vrc7Sound* v, bool hard) {
 	if (!opll) {
 		opll = OPLL_new(3579545, 49716);
+		// VRC7 mode only leaves out the rhythm section: the instruments are a set of their own
 		OPLL_setChipType(opll, 1);
+		OPLL_resetPatch(opll, OPLL_VRC7_TONE);
 	}
 	if (hard) {
 		memset(v, 0, sizeof(*v));
