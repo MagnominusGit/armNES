@@ -1,8 +1,12 @@
 /* Copyright (c) 2026 Magnominus
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
+// strcasestr
+#define _GNU_SOURCE
 #include "libretro.h"
 #include "board.h"
+#include "par.h"
+#include "genie.h"
 #include "composite.h"
 #include "options.h"
 #include "arcade.h"
@@ -12,10 +16,14 @@
 #include <lists/string_list.h>
 #include <zlib.h>
 
+#include <ctype.h>
+#include <dirent.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
 
 // The libretro core: one NES, its picture through an NTSC palette, its sound at 48 kHz, two pads.
 
@@ -27,6 +35,44 @@ static retro_input_state_t input_state_cb;
 
 static struct NES nes;
 static bool loaded;
+
+// Pro Action Replay (see the game on top, further down)
+enum { PAR_CHOICES = RETRO_NUM_CORE_OPTION_VALUES_MAX - 2, PAR_NAME = 256 };
+static struct retro_core_option_v2_definition* parOption;
+static char parGames[PAR_CHOICES][PAR_NAME], parLabels[PAR_CHOICES][PAR_NAME];
+static size_t parGameCount;
+static bool parLoaded;
+// Which cheat cartridge: the Pro Action Replay or the Game Genie
+static bool parIsGenie;
+static const char* parName(void) {
+	return parIsGenie ? "Game Genie" : "Pro Action Replay";
+}
+static char parFolder[4096], parSelf[PAR_NAME];
+// The game on top (its file name; empty without one), its save file and that as last written
+static char parTop[PAR_NAME];
+static char parSave[4096];
+static uint8_t* parSaveKept;
+static size_t parSaveSize;
+static unsigned parSaveFrames;
+static uint8_t* parImage;
+static size_t parImageSize;
+
+// RetroArch's cheats for the game on top, for the five Cheat Code options
+enum { CART_SLOTS = 5, CART_CHEATS = RETRO_NUM_CORE_OPTION_VALUES_MAX - 2 };
+struct CartCheat {
+	char name[96], code[128];
+	int count;
+	struct Cheat codes[CART_SLOTS];
+};
+static struct CartCheat cartCheats[CART_CHEATS];
+static size_t cartCheatCount;
+static struct retro_core_option_v2_definition* cartCodeOptions[CART_SLOTS];
+// The codes chosen as the cartridge last started, a slot each
+static char cartCodesIn[CART_SLOTS][128];
+static bool parPutGame(const char* name);
+static const char* parChosen(void);
+static void parWriteSave(bool now);
+static void setMemoryMaps(void);
 static uint16_t palette565[512];
 
 #ifdef __aarch64__
@@ -318,6 +364,24 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_fds_fast", "Disk System Fast Loading", NULL,
 		"Runs up to 16 times as fast while the disk drive reads or writes, without its sound.",
 		NULL, "system", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_par_game", "Game on Top", NULL,
+		"The game plugged into the cheat cartridge (a Pro Action Replay or a Game Genie), from those beside "
+		"it in its folder (the ones played last first). It goes in at once, the console starting again "
+		"with the cartridge's own screen.",
+		NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
+	{ "armnes_cart_code_1", "Cheat Code 1", NULL,
+		"A cheat from RetroArch's cheat database for the game on top, put in the cheat cartridge as if "
+		"typed on its screen: in its table on the Pro Action Replay (up to five codes in all), in the "
+		"slots its screen leaves empty on the Game Genie (up to three). It goes in as the console starts "
+		"again.", NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
+	{ "armnes_cart_code_2", "Cheat Code 2", NULL,
+		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
+	{ "armnes_cart_code_3", "Cheat Code 3", NULL,
+		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
+	{ "armnes_cart_code_4", "Cheat Code 4", NULL,
+		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
+	{ "armnes_cart_code_5", "Cheat Code 5", NULL,
+		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
 	{ "armnes_jumper", "Cart Jumper", NULL,
 		"The cart's solder pads or DIP switches, which pick its menu, games, language or timing. Auto uses "
 		"the setting known for the dump. Changing it restarts the game.",
@@ -721,6 +785,18 @@ void retro_set_environment(retro_environment_t cb) {
 			d->values[PALETTE_CUSTOM + 1].value = NULL;
 		}
 	}
+	for (struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
+		if (!strcmp(d->key, "armnes_par_game")) {
+			parOption = d;
+		}
+		for (int i = 0; i < CART_SLOTS; i++) {
+			char key[32];
+			snprintf(key, sizeof(key), "armnes_cart_code_%d", i + 1);
+			if (!strcmp(d->key, key)) {
+				cartCodeOptions[i] = d;
+			}
+		}
+	}
 	bool noGame = false;
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &noGame);
 #ifdef ARMNES_ARCADE
@@ -852,6 +928,12 @@ static bool showOptions(void) {
 	bool const motionOn = motion && !optionIs(environ_cb, "armnes_motion_sensor", "Off");
 	struct { const char* key; bool show; } const shown[] = {
 		{ "armnes_fds_fast", !loaded || nes.cart.disk },
+		{ "armnes_par_game", !loaded || parLoaded },
+		{ "armnes_cart_code_1", !loaded || (parLoaded && *parTop) },
+		{ "armnes_cart_code_2", !loaded || (parLoaded && *parTop) },
+		{ "armnes_cart_code_3", !loaded || (parLoaded && *parTop) },
+		{ "armnes_cart_code_4", !loaded || (parLoaded && *parTop && !parIsGenie) },
+		{ "armnes_cart_code_5", !loaded || (parLoaded && *parTop && !parIsGenie) },
 		{ "armnes_jumper", !loaded || nes.hasJumper || nes.cart.jumper >= 0 },
 		{ "armnes_palette", !optionIs(environ_cb, "armnes_filter", "Composite") && !optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_scanlines", optionIs(environ_cb, "armnes_filter", "Composite") || optionIs(environ_cb, "armnes_filter", "S-Video") },
@@ -1514,6 +1596,9 @@ static void readFastForward(void) {
 
 void retro_run(void) {
 	saveBlockSync();
+	if (parLoaded) {
+		parWriteSave(false);
+	}
 	input_poll_cb();
 	turboFrame++;
 	readDevices();
@@ -1742,6 +1827,579 @@ static bool unpack(const struct retro_game_info* game, const uint8_t** data, siz
 	return *data != NULL;
 }
 
+// Pro Action Replay: the game plugged into it, one of the games beside it in its folder (those whose
+// saves are newest first), with its own save, the one it has played on its own. The cartridge keeps
+// nothing once the console is off.
+static const char* saveFolder(void) {
+	const char* dir = NULL;
+	return environ_cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &dir) && dir && *dir ? dir : NULL;
+}
+
+// The save a frontend gives the game on its own: its name with .srm, in the save folder
+static void parSaveFile(const char* game, char* out, size_t size) {
+	char base[PAR_NAME];
+	snprintf(base, sizeof(base), "%s", game);
+	char* dot = strrchr(base, '.');
+	if (dot && dot != base) {
+		*dot = '\0';
+	}
+	const char* dir = saveFolder();
+	snprintf(out, size, "%s/%s.srm", dir ? dir : parFolder, base);
+}
+
+static bool parGameName(const char* name) {
+	const char* dot = strrchr(name, '.');
+	if (!dot || name[0] == '.' || strstr(name, "[BIOS]") || strlen(name) >= PAR_NAME || !strcmp(name, parSelf)) {
+		return false;
+	}
+	// The cheat cartridges themselves (a Game Genie image's usual names)
+	if (strcasestr(name, "game genie") || strcasestr(name, "gamegenie") || strcasestr(name, "action replay")) {
+		return false;
+	}
+	return !strcasecmp(dot, ".nes") || !strcasecmp(dot, ".zip") || !strcasecmp(dot, ".unf") || !strcasecmp(dot, ".unif");
+}
+
+struct ParRanked {
+	char name[PAR_NAME];
+	long long time;
+};
+
+static int parNewestFirst(const void* a, const void* b) {
+	const struct ParRanked *x = a, *y = b;
+	if (x->time != y->time) {
+		return x->time > y->time ? -1 : 1;
+	}
+	return strcasecmp(x->name, y->name);
+}
+
+// The file that keeps the Game on Top chosen, as RetroArch forgets a value its list didn't have
+static void parChoiceFile(char* out, size_t size) {
+	const char* dir = saveFolder();
+	snprintf(out, size, "%s/armNES %s.txt", dir ? dir : parFolder, parName());
+}
+
+static void parListGames(void) {
+	parGameCount = 0;
+	DIR* dir = opendir(parFolder);
+	struct ParRanked* all = NULL;
+	size_t n = 0, room = 0;
+	for (struct dirent* e; dir && (e = readdir(dir));) {
+		if (!parGameName(e->d_name)) {
+			continue;
+		}
+		if (n == room) {
+			room = room ? room * 2 : 256;
+			struct ParRanked* grown = realloc(all, room * sizeof(*all));
+			if (!grown) {
+				break;
+			}
+			all = grown;
+		}
+		char file[4096];
+		struct stat st;
+		snprintf(all[n].name, PAR_NAME, "%s", e->d_name);
+		parSaveFile(e->d_name, file, sizeof(file));
+		all[n].time = stat(file, &st) ? 0 : (long long) st.st_mtime;
+		n++;
+	}
+	if (dir) {
+		closedir(dir);
+	}
+	if (all) {
+		qsort(all, n, sizeof(*all), parNewestFirst);
+	}
+	for (size_t i = 0; i < n && parGameCount < PAR_CHOICES; i++) {
+		snprintf(parGames[parGameCount], PAR_NAME, "%s", all[i].name);
+		snprintf(parLabels[parGameCount], PAR_NAME, "%s", all[i].name);
+		char* dot = strrchr(parLabels[parGameCount], '.');
+		if (dot && dot != parLabels[parGameCount]) {
+			*dot = '\0';
+		}
+		parGameCount++;
+	}
+	free(all);
+	if (!parOption) {
+		return;
+	}
+	size_t v = 0;
+	parOption->values[v++] = (struct retro_core_option_value) { "none", "None" };
+	for (size_t i = 0; i < parGameCount; i++) {
+		parOption->values[v++] = (struct retro_core_option_value) { parGames[i], parLabels[i] };
+	}
+	parOption->values[v] = (struct retro_core_option_value) { NULL, NULL };
+	optionsGive(environ_cb, &options);
+	// The choice kept from before, as the frontend may have dropped it
+	char file[4096], kept[PAR_NAME] = "";
+	parChoiceFile(file, sizeof(file));
+	FILE* f = fopen(file, "r");
+	if (f) {
+		if (fgets(kept, sizeof(kept), f)) {
+			kept[strcspn(kept, "\r\n")] = '\0';
+		}
+		fclose(f);
+	}
+	for (size_t i = 0; *kept && i < parGameCount; i++) {
+		if (!strcmp(kept, parGames[i])) {
+			struct retro_variable variable = { "armnes_par_game", parGames[i] };
+			environ_cb(RETRO_ENVIRONMENT_SET_VARIABLE, &variable);
+		}
+	}
+}
+
+// The Game on Top chosen, if it's one of those listed, else NULL
+static const char* parChosen(void) {
+	const char* value = optionValue(environ_cb, "armnes_par_game");
+	for (size_t i = 0; value && i < parGameCount; i++) {
+		if (!strcmp(value, parGames[i])) {
+			return parGames[i];
+		}
+	}
+	return NULL;
+}
+
+// The game's image (a .zip's first NES image), or NULL
+static uint8_t* parReadGame(const char* name, size_t* size) {
+	char path[4096];
+	snprintf(path, sizeof(path), "%s/%s", parFolder, name);
+	if (path_is_compressed_file(path)) {
+		struct string_list* inner = file_archive_get_file_list(path, "nes|unf|unif");
+		uint8_t* data = inner && inner->size ? archiveRead(path, inner->elems[0].data, size) : NULL;
+		string_list_free(inner);
+		return data;
+	}
+	return readFile(path, size);
+}
+
+// The game on top's battery save: the cartridge's RAM, then the board's own (as the frontend has it
+// for the game alone)
+static size_t parSaveImage(uint8_t* out) {
+	if (!nes.cart.battery || !*parTop) {
+		return 0;
+	}
+	size_t board = 0;
+	uint8_t* ram = nes.board->batteryRam ? nes.board->batteryRam(&nes, &board) : NULL;
+	if (out) {
+		memcpy(out, nes.cart.wram, nes.cart.batterySize);
+		if (ram) {
+			memcpy(out + nes.cart.batterySize, ram, board);
+		}
+	}
+	return nes.cart.batterySize + (ram ? board : 0);
+}
+
+static void parReadSave(void) {
+	free(parSaveKept);
+	parSaveKept = NULL;
+	parSaveSize = parSaveImage(NULL);
+	if (!parSaveSize || !(parSaveKept = malloc(parSaveSize))) {
+		parSaveSize = 0;
+		return;
+	}
+	size_t size = 0;
+	uint8_t* file = readFile(parSave, &size);
+	if (file && size >= nes.cart.batterySize) {
+		memcpy(nes.cart.wram, file, nes.cart.batterySize);
+		size_t board = 0;
+		uint8_t* ram = nes.board->batteryRam ? nes.board->batteryRam(&nes, &board) : NULL;
+		if (ram && size >= nes.cart.batterySize + board) {
+			memcpy(ram, file + nes.cart.batterySize, board);
+		}
+	}
+	free(file);
+	parSaveImage(parSaveKept);
+}
+
+// Written when it has changed (every 5 seconds, and as the game goes)
+static void parWriteSave(bool now) {
+	if (!parSaveSize || (!now && ++parSaveFrames < 300)) {
+		return;
+	}
+	parSaveFrames = 0;
+	uint8_t* image = malloc(parSaveSize);
+	if (!image) {
+		return;
+	}
+	parSaveImage(image);
+	if (memcmp(image, parSaveKept, parSaveSize)) {
+		FILE* f = fopen(parSave, "wb");
+		if (f) {
+			fwrite(image, 1, parSaveSize, f);
+			fclose(f);
+			memcpy(parSaveKept, image, parSaveSize);
+		}
+	}
+	free(image);
+}
+
+// Cheat codes for the cheat cartridge from RetroArch's cheat database: its .cht files for the game on top
+// (the same title and a region of its, the "(Action Replay)" and "(Game Genie)" files too), each cheat a
+// name and its codes joined by +. The Pro Action Replay takes RAM codes ($0000-$7FFF): its own 00AAAAVV,
+// AAVV for zero page, and AAAA:VV; the Game Genie ROM codes ($8000 and up): its letters, AAAA:VV and
+// AAAA?CC:VV. A cheat whose codes all fit the cartridge goes in the Cheat Code options' lists.
+static int cartSlots(void) {
+	return parIsGenie ? 3 : 5;
+}
+
+static bool isFolder(const char* path) {
+	struct stat st;
+	return !stat(path, &st) && S_ISDIR(st.st_mode);
+}
+
+static bool chtHasNes(const char* folder) {
+	char path[4096];
+	snprintf(path, sizeof(path), "%s/Nintendo - Nintendo Entertainment System", folder);
+	return isFolder(path);
+}
+
+// cheat_database_path in the retroarch.cfg in config, ~ for the home folder
+static bool chtConfigured(const char* config, char* out, size_t size) {
+	char path[4096];
+	snprintf(path, sizeof(path), "%s/retroarch.cfg", config);
+	FILE* f = fopen(path, "r");
+	if (!f) {
+		return false;
+	}
+	char line[4096];
+	bool found = false;
+	while (!found && fgets(line, sizeof(line), f)) {
+		const char* p = line + strspn(line, " \t");
+		char* open = strncmp(p, "cheat_database_path", 19) ? NULL : strchr(p, '"');
+		char* close = open ? strrchr(open + 1, '"') : NULL;
+		if (!close) {
+			continue;
+		}
+		*close = '\0';
+		const char* home = getenv("HOME");
+		snprintf(out, size, "%s%s", open[1] == '~' && home ? home : "", open[1] == '~' && home ? open + 2 : open + 1);
+		found = *out != '\0';
+	}
+	fclose(f);
+	return found;
+}
+
+// RetroArch's cheat database: as its configuration says, else where it keeps it by default
+static bool chtFolder(char* out, size_t size) {
+	const char* home = getenv("HOME");
+	const char* xdg = getenv("XDG_CONFIG_HOME");
+	const char* system = NULL;
+	environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system);
+	char configs[5][4096];
+	int n = 0;
+	if (xdg && *xdg) {
+		snprintf(configs[n++], sizeof(configs[0]), "%s/retroarch", xdg);
+	}
+	if (home) {
+		snprintf(configs[n++], sizeof(configs[0]), "%s/.config/retroarch", home);
+		snprintf(configs[n++], sizeof(configs[0]), "%s/.var/app/org.libretro.RetroArch/config/retroarch", home);
+	}
+	snprintf(configs[n++], sizeof(configs[0]), "/storage/.config/retroarch");
+	if (system && *system && strrchr(system, '/')) {
+		snprintf(configs[n], sizeof(configs[0]), "%.*s", (int) (strrchr(system, '/') - system), system);
+		n++;
+	}
+	for (int i = 0; i < n; i++) {
+		if (chtConfigured(configs[i], out, size) && chtHasNes(out)) {
+			return true;
+		}
+	}
+	static const char* const defaults[] = { "/tmp/database/cht", "/usr/share/libretro-database/cht", "/usr/share/retroarch/database/cht" };
+	for (size_t i = 0; i < sizeof(defaults) / sizeof(*defaults); i++) {
+		if (chtHasNes(defaults[i])) {
+			snprintf(out, size, "%s", defaults[i]);
+			return true;
+		}
+	}
+	for (int i = 0; home && i < 2; i++) {
+		snprintf(out, size, i ? "%s/.var/app/org.libretro.RetroArch/config/retroarch/cheats" : "%s/.config/retroarch/cheats", home);
+		if (chtHasNes(out)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// A No-Intro name's title (before " (") and regions (the first group's)
+static void chtName(const char* file, char* title, size_t titleSize, char* regions, size_t regionsSize) {
+	snprintf(title, titleSize, "%s", file);
+	char* dot = strrchr(title, '.');
+	if (dot) {
+		*dot = '\0';
+	}
+	*regions = '\0';
+	char* group = strstr(title, " (");
+	if (group) {
+		*group = '\0';
+		snprintf(regions, regionsSize, "%s", group + 2);
+		regions[strcspn(regions, ")")] = '\0';
+	}
+}
+
+// Whether two region lists ("USA, Europe") share one
+static bool regionsShare(const char* a, const char* b) {
+	if (!*a || !*b) {
+		return !*a && !*b;
+	}
+	char copy[128];
+	snprintf(copy, sizeof(copy), "%s", a);
+	for (char* r = strtok(copy, ","); r; r = strtok(NULL, ",")) {
+		r += strspn(r, " ");
+		size_t const length = strlen(r);
+		for (const char* at = strstr(b, r); at; at = strstr(at + 1, r)) {
+			if ((at == b || at[-1] == ' ' || at[-1] == ',') && (at[length] == '\0' || at[length] == ',')) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static int hexDigits(const char* s, size_t length) {
+	for (size_t i = 0; i < length; i++) {
+		if (!isxdigit((unsigned char) s[i])) {
+			return -1;
+		}
+	}
+	return (int) length;
+}
+
+// A cheat's codes as the cartridge takes them; the count, or -1 if one doesn't fit or there are too many
+static int cartCodesOf(const char* text, struct Cheat* out) {
+	int count = 0;
+	while (*text) {
+		size_t const length = strcspn(text, "+ ");
+		if (length) {
+			struct Cheat c;
+			bool ok = false;
+			if (!parIsGenie && hexDigits(text, length) == 8 && !strncmp(text, "00", 2)) {
+				unsigned address, value;
+				sscanf(text + 2, "%4x%2x", &address, &value);
+				c = (struct Cheat) { (uint16_t) address, (uint8_t) value, -1 };
+				ok = true;
+			} else if (!parIsGenie && hexDigits(text, length) == 4) {
+				unsigned address, value;
+				sscanf(text, "%2x%2x", &address, &value);
+				c = (struct Cheat) { (uint16_t) address, (uint8_t) value, -1 };
+				ok = true;
+			} else if (nesCheatParse(text, length, &c)) {
+				ok = parIsGenie ? c.address >= 0x8000 : c.address < 0x8000 && c.compare < 0;
+			}
+			if (!ok || count >= cartSlots()) {
+				return -1;
+			}
+			out[count++] = c;
+		}
+		text += length;
+		text += *text != 0;
+	}
+	return count ? count : -1;
+}
+
+static void cartReadCht(const char* path) {
+	FILE* f = fopen(path, "r");
+	if (!f) {
+		return;
+	}
+	static char names[256][96];
+	char line[1024];
+	while (fgets(line, sizeof(line), f) && cartCheatCount < CART_CHEATS) {
+		int index = -1, used = 0;
+		char field[16] = "";
+		if (sscanf(line, " cheat%d_%15[a-z] =%n", &index, field, &used) < 2 || index < 0 || index >= 256) {
+			continue;
+		}
+		char* open = strchr(line, '"');
+		char* close = open ? strrchr(open + 1, '"') : NULL;
+		if (!close) {
+			continue;
+		}
+		*close = '\0';
+		if (!strcmp(field, "desc")) {
+			snprintf(names[index], sizeof(names[index]), "%s", open + 1);
+			continue;
+		}
+		if (strcmp(field, "code")) {
+			continue;
+		}
+		struct CartCheat* c = &cartCheats[cartCheatCount];
+		c->count = cartCodesOf(open + 1, c->codes);
+		if (c->count < 0 || strlen(open + 1) >= sizeof(c->code)) {
+			continue;
+		}
+		bool known = false;
+		for (size_t i = 0; i < cartCheatCount && !known; i++) {
+			known = !strcmp(cartCheats[i].code, open + 1);
+		}
+		if (!known) {
+			snprintf(c->code, sizeof(c->code), "%s", open + 1);
+			snprintf(c->name, sizeof(c->name), "%s", *names[index] ? names[index] : open + 1);
+			cartCheatCount++;
+		}
+		names[index][0] = '\0';
+	}
+	fclose(f);
+}
+
+// The game on top's cheats into the Cheat Code options, and the choices kept for it put back
+static void cartListCheats(void) {
+	cartCheatCount = 0;
+	char folder[4096];
+	if (*parTop && chtFolder(folder, sizeof(folder))) {
+		char title[PAR_NAME], regions[128];
+		chtName(parTop, title, sizeof(title), regions, sizeof(regions));
+		snprintf(folder + strlen(folder), sizeof(folder) - strlen(folder), "/Nintendo - Nintendo Entertainment System");
+		// The cartridge's own kind of file first
+		for (int pass = 0; pass < 2; pass++) {
+			DIR* dir = opendir(folder);
+			for (struct dirent* e; dir && (e = readdir(dir));) {
+				char t[PAR_NAME], r[128];
+				chtName(e->d_name, t, sizeof(t), r, sizeof(r));
+				bool const own = strstr(e->d_name, parIsGenie ? "(Game Genie)" : "(Action Replay)") != NULL;
+				if (own != (pass == 0) || strcasecmp(t, title) || !regionsShare(r, regions)) {
+					continue;
+				}
+				char path[8192];
+				snprintf(path, sizeof(path), "%s/%s", folder, e->d_name);
+				cartReadCht(path);
+			}
+			if (dir) {
+				closedir(dir);
+			}
+		}
+	}
+	for (int k = 0; k < CART_SLOTS; k++) {
+		if (!cartCodeOptions[k]) {
+			continue;
+		}
+		size_t v = 0;
+		cartCodeOptions[k]->values[v++] = (struct retro_core_option_value) { "none", "None" };
+		for (size_t i = 0; i < cartCheatCount; i++) {
+			cartCodeOptions[k]->values[v++] = (struct retro_core_option_value) { cartCheats[i].code, cartCheats[i].name };
+		}
+		cartCodeOptions[k]->values[v] = (struct retro_core_option_value) { NULL, NULL };
+	}
+	optionsGive(environ_cb, &options);
+	// The codes chosen before for this game, kept beside the Game on Top choice
+	char file[4096], line[300];
+	parChoiceFile(file, sizeof(file));
+	FILE* f = fopen(file, "r");
+	for (bool first = true; f && fgets(line, sizeof(line), f); first = false) {
+		line[strcspn(line, "\r\n")] = '\0';
+		int k = 0, used = 0;
+		if (first || sscanf(line, "Code %d: %n", &k, &used) != 1 || !used || k < 1 || k > CART_SLOTS) {
+			continue;
+		}
+		for (size_t i = 0; i < cartCheatCount; i++) {
+			if (!strcmp(cartCheats[i].code, line + used)) {
+				char key[32];
+				snprintf(key, sizeof(key), "armnes_cart_code_%d", k);
+				struct retro_variable variable = { key, cartCheats[i].code };
+				environ_cb(RETRO_ENVIRONMENT_SET_VARIABLE, &variable);
+			}
+		}
+	}
+	if (f) {
+		fclose(f);
+	}
+}
+
+// The chosen cheats' codes to the cartridge, in order, as far as its slots go
+static void cartImport(void) {
+	struct Cheat codes[CART_SLOTS];
+	uint8_t table[CART_SLOTS][4];
+	int n = 0;
+	for (int k = 0; k < CART_SLOTS; k++) {
+		char key[32];
+		snprintf(key, sizeof(key), "armnes_cart_code_%d", k + 1);
+		const char* value = k < cartSlots() ? optionValue(environ_cb, key) : NULL;
+		*cartCodesIn[k] = '\0';
+		for (size_t i = 0; value && i < cartCheatCount; i++) {
+			const struct CartCheat* c = &cartCheats[i];
+			if (strcmp(value, c->code) || n + c->count > cartSlots()) {
+				continue;
+			}
+			snprintf(cartCodesIn[k], sizeof(cartCodesIn[k]), "%s", c->code);
+			for (int j = 0; j < c->count; j++, n++) {
+				codes[n] = c->codes[j];
+				table[n][0] = 0;
+				table[n][1] = (uint8_t) (c->codes[j].address >> 8);
+				table[n][2] = (uint8_t) c->codes[j].address;
+				table[n][3] = c->codes[j].value;
+			}
+			break;
+		}
+	}
+	genieImport(codes, parIsGenie ? n : 0);
+	parImport(table, parIsGenie ? 0 : n);
+}
+
+// Whether a Cheat Code option differs from what the cartridge started with
+static bool cartCodesChanged(void) {
+	for (int k = 0; k < cartSlots(); k++) {
+		char key[32];
+		snprintf(key, sizeof(key), "armnes_cart_code_%d", k + 1);
+		const char* value = optionValue(environ_cb, key);
+		bool const chosen = value && strcmp(value, "none");
+		if (strcmp(chosen ? value : "", cartCodesIn[k])) {
+			for (size_t i = 0; chosen && i < cartCheatCount; i++) {
+				if (!strcmp(value, cartCheats[i].code)) {
+					return true;
+				}
+			}
+			if (!chosen && *cartCodesIn[k]) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// The chosen game under the Pro Action Replay, the console started again with its menu; or none
+static bool parPutGame(const char* name) {
+	parWriteSave(true);
+	free(parSaveKept);
+	parSaveKept = NULL;
+	parSaveSize = 0;
+	*parTop = '\0';
+	parAttach(&nes, NULL, 0);
+	genieAttach(&nes, NULL, 0);
+	size_t size = 0;
+	uint8_t* data = name ? parReadGame(name, &size) : NULL;
+	cartFree(&nes);
+	bool ok = data && nesLoad(&nes, data, size);
+	free(data);
+	if (!ok) {
+		// The cartridge alone: its menu, and nothing to start
+		nesLoad(&nes, parImage, parImageSize);
+		cartListCheats();
+		return false;
+	}
+	snprintf(parTop, sizeof(parTop), "%s", name);
+	// The game's cheats to choose from, and those chosen, in the cartridge as it powers on
+	cartListCheats();
+	cartImport();
+	if (parIsGenie) {
+		genieAttach(&nes, parImage, parImageSize);
+	} else {
+		parAttach(&nes, parImage, parImageSize);
+	}
+	nesReset(&nes, true);
+	parSaveFile(name, parSave, sizeof(parSave));
+	parReadSave();
+	char file[4096];
+	parChoiceFile(file, sizeof(file));
+	FILE* f = fopen(file, "w");
+	if (f) {
+		fprintf(f, "%s\n", name);
+		for (int k = 0; k < CART_SLOTS; k++) {
+			if (*cartCodesIn[k]) {
+				fprintf(f, "Code %d: %s\n", k + 1, cartCodesIn[k]);
+			}
+		}
+		fclose(f);
+	}
+	return true;
+}
+
 static bool isDisk(const uint8_t* data, size_t size) {
 	return (size >= 4 && !memcmp(data, "FDS\x1A", 4)) || (size >= 15 && data[0] == 1 && !memcmp(data + 1, "*NINTENDO-HVC*", 14));
 }
@@ -1812,6 +2470,31 @@ static bool jumperNoticed;
 static void checkOptions(void) {
 	bool updated = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+		const char* top = parLoaded ? parChosen() : NULL;
+		if (parLoaded && *parTop && top && !strcmp(top, parTop) && cartCodesChanged()) {
+			parPutGame(top);
+			static char text[200];
+			snprintf(text, sizeof(text), "%s: the codes chosen go in as the console starts again", parName());
+			struct retro_message shown = { text, 240 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &shown);
+		} else if (parLoaded && strcmp(top ? top : "", parTop)) {
+			enum Region before = nes.region;
+			char message[300];
+			if (parPutGame(top)) {
+				const char* dot = strrchr(parTop, '.');
+				snprintf(message, sizeof(message), "%s: %.*s on top", parName(), dot ? (int) (dot - parTop) : (int) strlen(parTop), parTop);
+			} else {
+				snprintf(message, sizeof(message), "%s: no game on top", parName());
+			}
+			struct retro_message shown = { message, 240 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &shown);
+			setMemoryMaps();
+			if (nes.region != before) {
+				struct retro_system_av_info av;
+				retro_get_system_av_info(&av);
+				environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
+			}
+		}
 		int oldAspect = aspect, oldVertical = cropVertical, oldHorizontal = cropHorizontal, oldFilter = filter, oldScreens = screens;
 		readVideoOptions();
 		readSpeedOptions();
@@ -1909,6 +2592,25 @@ bool retro_load_game(const struct retro_game_info* game) {
 		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 		return false;
 	}
+	// A cheat cartridge (a Pro Action Replay or a Game Genie): the game on top is one beside it
+	parAttach(&nes, NULL, 0);
+	genieAttach(&nes, NULL, 0);
+	parIsGenie = genieIdentify(data, size);
+	parLoaded = parIsGenie || parIdentify(data, size);
+	*parTop = '\0';
+	if (parLoaded) {
+		free(parImage);
+		parImageSize = 0;
+		if ((parImage = malloc(size))) {
+			memcpy(parImage, data, size);
+			parImageSize = size;
+		}
+		const char* path = game->path ? game->path : "";
+		const char* slash = strrchr(path, '/');
+		snprintf(parFolder, sizeof(parFolder), "%.*s", slash ? (int) (slash - path) : 1, slash ? path : ".");
+		snprintf(parSelf, sizeof(parSelf), "%s", slash ? slash + 1 : path);
+		parListGames();
+	}
 	if (isDisk(data, size)) {
 		if (!loadFdsBios()) {
 			struct retro_message message = { "armNES: Disk System games need disksys.rom in the system folder", 360 };
@@ -1929,7 +2631,18 @@ bool retro_load_game(const struct retro_game_info* game) {
 	sub.audioOut = subAudio;
 	sub.audioCapacity = sizeof(subAudio) / sizeof(subAudio[0]);
 	memset(subPicture, 0, sizeof(subPicture));
-	if (!nesLoadDual(&nes, &sub, vsShared, data, size)) {
+	if (parLoaded) {
+		nesFree(&sub);
+		if (!parPutGame(parChosen())) {
+			static char text[200];
+			snprintf(text, sizeof(text), "%s: pick the game plugged into it in Core Options > System > Game on Top", parName());
+			struct retro_message message = { text, 480 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+		}
+		if (!nes.board) {
+			return false;
+		}
+	} else if (!nesLoadDual(&nes, &sub, vsShared, data, size)) {
 		nesFree(&sub);
 		if (!nesLoad(&nes, data, size)) {
 			if (nes.cart.mapper || nes.cart.prgSize) {
@@ -1964,7 +2677,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 	lastNsfPad = 0;
 	loaded = true;
 	size_t boardRam;
-	if (boardBatteryRam(&boardRam) && (saveBlock = malloc(nes.cart.batterySize + boardRam))) {
+	// The game on top keeps its save itself (parWriteSave)
+	if (!parLoaded && boardBatteryRam(&boardRam) && (saveBlock = malloc(nes.cart.batterySize + boardRam))) {
 		saveBlockIn = true;
 		saveBlockSync();
 		saveBlockIn = false;
@@ -1982,6 +2696,13 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 
 void retro_unload_game(void) {
 	useSensor(-1);
+	if (parLoaded) {
+		parWriteSave(true);
+		parAttach(&nes, NULL, 0);
+		genieAttach(&nes, NULL, 0);
+		parLoaded = false;
+		*parTop = '\0';
+	}
 	if (loaded) {
 		if (nes.dual) {
 			nesFree(&sub);
@@ -2057,6 +2778,10 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 void* retro_get_memory_data(unsigned id) {
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
+		// The game on top under a Pro Action Replay keeps its own save
+		if (parLoaded) {
+			return NULL;
+		}
 		// A disk's save is the disk
 		if (loaded && nes.cart.disk) {
 			return nes.cart.disk;
@@ -2075,6 +2800,9 @@ void* retro_get_memory_data(unsigned id) {
 size_t retro_get_memory_size(unsigned id) {
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
+		if (parLoaded) {
+			return 0;
+		}
 		if (loaded && nes.cart.disk) {
 			return (size_t) nes.cart.diskSides * nes.cart.diskSideSize;
 		}

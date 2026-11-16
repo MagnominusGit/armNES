@@ -2,6 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
+#include "par.h"
+#include "genie.h"
 
 // The CPU's address space. Reads of nothing return the last value on the data bus.
 
@@ -47,6 +49,8 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 	}
 	if (__builtin_expect(nes->cheatPages, 0) && (nes->cheatPages & (1 << (address >> 12)))) {
 		value = nesCheatRead(nes, address, value);
+		// A Game Genie's codes, on the pages it has watched
+		value = genieRead(nes, address, value);
 	}
 	cpu->openBus = value;
 	// The APU's registers answer by the CPU's address bus, which a DMA leaves where the CPU halted
@@ -86,6 +90,14 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		nes->apuQuiet = apuQuietCycles(nes);
 	} else {
 		int page = address >> 12;
+		// The Pro Action Replay's menu has $8000-$FFFF: the game's board doesn't see those writes
+		if (__builtin_expect(parMenuWrites, 0) && parWrite(nes, address, value)) {
+			return;
+		}
+		// So does a Game Genie's code screen
+		if (__builtin_expect(genieMenuWrites, 0) && genieWrite(nes, address, value)) {
+			return;
+		}
 		if (nes->board->write) {
 			nesPpuSync(nes);
 		}

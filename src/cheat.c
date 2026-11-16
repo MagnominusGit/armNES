@@ -2,6 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
+#include "genie.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -56,9 +57,15 @@ static bool parseRaw(const char* code, size_t length, struct Cheat* cheat) {
 	return true;
 }
 
+bool nesCheatParse(const char* code, size_t length, struct Cheat* cheat) {
+	return parseGenie(code, length, cheat) || parseRaw(code, length, cheat);
+}
+
 void nesCheatClear(struct NES* nes) {
 	nes->cheatCount = 0;
 	nes->cheatPages = 0;
+	// A Game Genie's codes stay
+	genieCheatPages(nes);
 }
 
 // One or more codes, joined by '+', spaces or commas; false if any can't be read

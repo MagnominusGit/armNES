@@ -33,6 +33,23 @@ desktops.
   DualSystem's two boards run together, their screens side by side. The armNES app opens these sets.
   In RetroArch, use the `armnes_arcade` core for them (see Building).
 - NSF music files, with a small player.
+- Cheat cartridges, run as themselves with a game plugged in on top: load the cartridge's ROM and pick
+  the game with Game on Top (one of the games beside it in its folder, those played last first). The
+  game on top keeps its own save under its own name. Cheat Code 1 to 5 (3 on the Game Genie) take
+  cheats for it from RetroArch's cheat database (its own `cheat_database_path`, or where RetroArch
+  keeps it), put in the cartridge as the console starts again: the Pro Action Replay's in its table,
+  shown on its screen as if typed (its `00AAAAVV` codes, `AAVV` and RAM `AAAA:VV` ones); the Game
+  Genie's in the slots its screen leaves empty (its letter codes, and `AAAA:VV` or `AAAA?CC:VV` for
+  $8000 and up).
+  - Datel's Pro Action Replay (the three dumps of its ROM: v1.0, v1.1 and v1.2, Europe). Its screen
+    takes up to five codes (`00AAAAVV`: an address and the value it keeps there each frame; B raises
+    the digit under the cursor, A lowers it, Start runs the game) and its trainer finds new ones: Reset
+    brings its menu back with what it has learnt, as on the console. Its RAM is lost when the console
+    is off, as on the hardware.
+  - The Game Genie (the image FCEUX and Mesen take, `gamegenie.nes`). Its screen takes three codes of
+    six or eight letters; Start runs the game, and the codes stay until the console is off (Reset
+    starts the game again with them, as on the hardware), including the bus conflicts some codes rely
+    on (NESdev, Game Genie).
 - Games inside `.zip` and `.7z` archives. RetroArch unpacks them, so achievements recognize the game.
 
 ## Controls
@@ -72,6 +89,8 @@ Zapper plugged in (the motion ones only with Zapper Motion on).
 | | PPU Accuracy (applies when a game is loaded) | Fast, Balanced, Exact |
 | | Overclock | Off, 2x, 3x or 4x between frames, 2x or 3x after the picture |
 | | Disk System Fast Loading | Off, On (up to 16 times as fast while the drive reads or writes) |
+| | Cheat Code 1 to 5 | With a cheat cartridge and a game on top: None, or one of RetroArch's cheats for the game that fits the cartridge (up to 126), going in as the console starts again |
+| | Game on Top | With a Pro Action Replay or Game Genie loaded: None, or a game beside it (those played last first, up to 126); it goes in at once, the console starting again with the cartridge's own screen |
 | | Cart Jumper (restarts the game) | Auto (the setting known for the dump), 0 to 23 |
 | Video | Palette (without the filter, which makes its own colors) | armNES NTSC (decoded from the video signal), 23 measured or tuned palettes from FCEUmm's set, Custom |
 | | NTSC/PAL Filter | Off, Composite, S-Video (not used on arcade boards, whose PPU outputs RGB) |

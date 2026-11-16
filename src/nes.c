@@ -2,6 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
+#include "par.h"
+#include "genie.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -179,6 +181,9 @@ void nesReset(struct NES* nes, bool hard) {
 	if (!hard && nes->board && nes->board->cpuCycles) {
 		nesBoardSync(nes);
 	}
+	// The game's own pages for its board's reset; the Pro Action Replay's go back over them after
+	parUnmap(nes);
+	genieUnmap(nes);
 	if (hard) {
 		// Power-on RAM: $FF, as FCEUmm has it; real RAM starts unknown, and some games only work when
 		// it isn't zero
@@ -222,6 +227,9 @@ void nesReset(struct NES* nes, bool hard) {
 	nes->boardQuiet = nes->board->cpuCycles ? 0 : 0xFFFF;
 	nes->mapperQuietTicks = 0;
 	nes->quietBudget = nes->quietGranted = 0;
+	// A Pro Action Replay's menu, before the reset sequence fetches the vector
+	parReset(nes, hard);
+	genieReset(nes, hard);
 	nes->busShown = false;
 	cpuReset(nes, hard);
 }

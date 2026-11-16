@@ -2,6 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
+#include "par.h"
+#include "genie.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -74,7 +76,7 @@ static size_t extraSize(const struct NES* nes) {
 
 size_t nesStateSize(const struct NES* nes) {
 	return sizeof(struct StateHeader) + sizeof(struct NES) + 32 * sizeof(uint32_t) + wramSize(nes) +
-		(nes->cart.chrRam ? nes->cart.chrSize : 0) + nes->cart.vramSize + extraSize(nes);
+		(nes->cart.chrRam ? nes->cart.chrSize : 0) + nes->cart.vramSize + extraSize(nes) + parStateSize() + genieStateSize();
 }
 
 bool nesSaveState(struct NES* nes, void* data, size_t size) {
@@ -83,6 +85,9 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	}
 	uint8_t* out = data;
 	nesBoardSync(nes);
+	// The game's pages, as the tags can name them; a cheat cartridge's go back over them after
+	parUnmap(nes);
+	genieUnmap(nes);
 	struct StateHeader header = { STATE_MAGIC, STATE_VERSION, (uint32_t) sizeof(struct NES), nes->cart.prgCrc };
 	memcpy(out, &header, sizeof(header));
 	out += sizeof(header);
@@ -144,8 +149,13 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 		out += nes->cart.vramSize;
 	}
 	if (nes->board->saveExtra) {
-		nes->board->saveExtra(nes, out);
+		out += nes->board->saveExtra(nes, out);
 	}
+	parSaveState(out);
+	out += parStateSize();
+	genieSaveState(out);
+	parMap(nes);
+	genieMap(nes);
 	return true;
 }
 
@@ -243,6 +253,10 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	}
 	if (nes->board->loadExtra) {
 		nes->board->loadExtra(nes, in);
+		in += extraSize(nes);
 	}
+	parLoadState(nes, in);
+	in += parStateSize();
+	genieLoadState(nes, in);
 	return true;
 }

@@ -2,6 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
+#include "par.h"
 
 // The 2A03's 6502: every access is a CPU cycle, split around the moment the bus is sampled so the PPU
 // is caught up to it. Interrupts are polled at the end of each cycle and taken after an instruction
@@ -837,6 +838,10 @@ static void interrupt(struct NES* nes, bool brk) {
 	cpu->p |= FLAG_I;
 	uint8_t lo = readCycle(nes, vector);
 	cpu->pc = lo | (readCycle(nes, vector + 1) << 8);
+	// A Pro Action Replay answers the NMI vector fetch with its handler while the game runs
+	if (__builtin_expect(parHooksNmi, 0) && vector == 0xFFFA) {
+		cpu->pc = parNmiVector();
+	}
 	// The vector fetch hides an interrupt that comes in the meantime for one instruction
 	cpu->prevNeedNmi = false;
 }

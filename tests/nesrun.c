@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
 #include "board.h"
+#include "par.h"
+#include "genie.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -103,6 +105,20 @@ int main(int argc, char** argv) {
 		printf("UNSUPPORTED mapper %d.%d\n", nes.cart.mapper, nes.cart.submapper);
 		return 3;
 	}
+	// NESRUN_PAR=<Pro Action Replay or Game Genie ROM>: plugged in between the console and the game, its menu first
+	if (getenv("NESRUN_PAR")) {
+		size_t parSize = 0;
+		uint8_t* parImage = readFile(getenv("NESRUN_PAR"), &parSize);
+		if (parImage && genieIdentify(parImage, parSize)) {
+			genieAttach(&nes, parImage, parSize);
+		} else if (parImage && parIdentify(parImage, parSize)) {
+			parAttach(&nes, parImage, parSize);
+		} else {
+			fprintf(stderr, "%s isn't a Pro Action Replay or a Game Genie\n", getenv("NESRUN_PAR"));
+			return 1;
+		}
+		nesReset(&nes, true);
+	}
 	// NESRUN_INFO: the header as read, then stop
 	if (getenv("NESRUN_INFO")) {
 		printf("INFO %d.%d mirror=%d battery=%d prg=%u chr=%u%s wram=%u vram=%u region=%d\n", nes.cart.mapper, nes.cart.submapper,
@@ -192,6 +208,14 @@ int main(int argc, char** argv) {
 				paletteRgb(nes.frameBuffer[i] & 0x3F, rgb);
 				fwrite(rgb, 1, 3, f);
 			}
+			fclose(f);
+		}
+	}
+	// NESRUN_PARRAM=file: the Pro Action Replay's RAM
+	if (getenv("NESRUN_PARRAM") && parMemory()) {
+		FILE* f = fopen(getenv("NESRUN_PARRAM"), "wb");
+		if (f) {
+			fwrite(parMemory(), 1, 0x1000, f);
 			fclose(f);
 		}
 	}

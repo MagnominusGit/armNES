@@ -33,6 +33,8 @@ set(CORE_SOURCES
 	src/cpu.c
 	src/input.c
 	src/nes.c
+	src/par.c
+	src/genie.c
 	src/ppu.c
 	src/ppu-fast.c
 	src/state.c

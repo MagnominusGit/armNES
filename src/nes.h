@@ -528,6 +528,8 @@ void inputWrite(struct NES*, uint8_t value);
 // cheat.c
 void nesCheatClear(struct NES*);
 bool nesCheatAdd(struct NES*, const char* codes);
+// One code (a Game Genie code, or AAAA:VV or AAAA?CC:VV) of length characters; false if it isn't one
+bool nesCheatParse(const char* code, size_t length, struct Cheat* cheat);
 uint8_t nesCheatRead(const struct NES*, uint16_t address, uint8_t value);
 void nesCheatFrame(struct NES*);
 
