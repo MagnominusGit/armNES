@@ -24,6 +24,10 @@ struct Cheat;
 // Whether the ROM image (with its header) is the Game Genie's: its 4 KB program, alone or repeated to
 // 16 KB, then its pattern tables
 bool genieIdentify(const uint8_t* data, size_t size);
+// No-Intro's headerless dump, [BIOS] Game Genie (USA, Europe) (Unl).unh (its 4 KB program alone), made
+// into the image genieIdentify takes: the program repeated to 16 KB and the pattern tables its gates
+// make. NULL (and data left alone) for anything else; the image is malloc'd.
+uint8_t* genieImageFrom(const uint8_t* data, size_t size, size_t* imageSize);
 // Plugs it in (image as genieIdentify took it) between the console and the game loaded in nes; the next
 // power-on starts its code screen. Without image, unplugs it.
 void genieAttach(struct NES*, const uint8_t* image, size_t size);

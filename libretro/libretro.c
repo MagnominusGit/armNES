@@ -797,7 +797,12 @@ void retro_set_environment(retro_environment_t cb) {
 			}
 		}
 	}
+	// Without a game it starts a cheat cartridge it finds (not the arcade core)
+#ifdef ARMNES_ARCADE
 	bool noGame = false;
+#else
+	bool noGame = true;
+#endif
 	cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &noGame);
 #ifdef ARMNES_ARCADE
 	// RetroArch 1.22.2 extracts archives despite block_extract unless asked for their path
@@ -2546,9 +2551,144 @@ static void setMemoryMaps(void) {
 	environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
 }
 
+// Started with no game: a cheat cartridge to start with (the Game Genie before the Pro Action Replay),
+// from the system folder or a ROM folder, and the games for Game on Top from that ROM folder: beside
+// the system folder (roms/bios and roms/nes, Emulation/bios and Emulation/roms/nes), or under
+// RetroArch's own content folder (rgui_browser_directory).
+static bool hasNesGames(const char* folder) {
+	DIR* dir = opendir(folder);
+	bool found = false;
+	for (struct dirent* e; dir && !found && (e = readdir(dir));) {
+		const char* dot = strrchr(e->d_name, '.');
+		found = dot && (!strcasecmp(dot, ".nes") || !strcasecmp(dot, ".zip")) && !strstr(e->d_name, "[BIOS]");
+	}
+	if (dir) {
+		closedir(dir);
+	}
+	return found;
+}
+
+static bool romFolderFind(char* out, size_t size) {
+	char candidates[8][4096];
+	int n = 0;
+	const char* system = NULL;
+	environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system);
+	if (system && *system && strrchr(system, '/')) {
+		int const parent = (int) (strrchr(system, '/') - system);
+		snprintf(candidates[n++], sizeof(candidates[0]), "%.*s/nes", parent, system);
+		snprintf(candidates[n++], sizeof(candidates[0]), "%.*s/roms/nes", parent, system);
+	}
+	const char* home = getenv("HOME");
+	const char* xdg = getenv("XDG_CONFIG_HOME");
+	char browser[4096] = "";
+	char config[4096];
+	for (int i = 0; i < 3 && !*browser; i++) {
+		if (i == 0 && xdg && *xdg) {
+			snprintf(config, sizeof(config), "%s/retroarch/retroarch.cfg", xdg);
+		} else if (i == 1 && home) {
+			snprintf(config, sizeof(config), "%s/.config/retroarch/retroarch.cfg", home);
+		} else if (i == 2) {
+			snprintf(config, sizeof(config), "/storage/.config/retroarch/retroarch.cfg");
+		} else {
+			continue;
+		}
+		FILE* f = fopen(config, "r");
+		char line[4096];
+		while (f && fgets(line, sizeof(line), f)) {
+			const char* p = line + strspn(line, " \t");
+			char* open = strncmp(p, "rgui_browser_directory", 22) ? NULL : strchr(p, '"');
+			char* close = open ? strrchr(open + 1, '"') : NULL;
+			if (close && close > open + 1) {
+				*close = '\0';
+				snprintf(browser, sizeof(browser), "%s%s", open[1] == '~' && home ? home : "", open[1] == '~' && home ? open + 2 : open + 1);
+			}
+		}
+		if (f) {
+			fclose(f);
+		}
+	}
+	if (*browser) {
+		snprintf(candidates[n++], sizeof(candidates[0]), "%s/nes", browser);
+		snprintf(candidates[n++], sizeof(candidates[0]), "%s/Nintendo - Nintendo Entertainment System", browser);
+		snprintf(candidates[n++], sizeof(candidates[0]), "%s", browser);
+	}
+	for (int i = 0; i < n; i++) {
+		if (hasNesGames(candidates[i])) {
+			snprintf(out, size, "%s", candidates[i]);
+			return true;
+		}
+	}
+	return false;
+}
+
+// A cheat cartridge's image from a file (in a .zip, its first image), the headerless Game Genie made whole
+static uint8_t* cartridgeRead(const char* path, size_t* size) {
+	uint8_t* data = NULL;
+	if (path_is_compressed_file(path)) {
+		struct string_list* inner = file_archive_get_file_list(path, "nes|unh");
+		data = inner && inner->size ? archiveRead(path, inner->elems[0].data, size) : NULL;
+		string_list_free(inner);
+	} else {
+		data = readFile(path, size);
+	}
+	uint8_t* whole = data ? genieImageFrom(data, *size, size) : NULL;
+	if (whole) {
+		free(data);
+		data = whole;
+	}
+	if (data && !genieIdentify(data, *size) && !parIdentify(data, *size)) {
+		free(data);
+		data = NULL;
+	}
+	return data;
+}
+
+static uint8_t* cartridgeFind(char* romFolder, size_t romFolderSize, char* name, size_t nameSize, size_t* size) {
+	static const char* const genies[] = {
+		"[BIOS] Game Genie (USA, Europe) (Unl).unh", "[BIOS] Game Genie (USA, Europe) (Unl).zip", "gamegenie.nes",
+		"Nintendo - Nintendo Entertainment System/gamegenie.nes", "Game Genie (USA, Europe) (Unl).unh",
+	};
+	static const char* const replays[] = {
+		"[BIOS] Pro Action Replay (Europe) (v1.2) (Unl).nes", "[BIOS] Pro Action Replay (Europe) (v1.2) (Unl).zip",
+		"[BIOS] Pro Action Replay (Europe) (v1.1) (Unl).nes", "[BIOS] Pro Action Replay (Europe) (v1.1) (Unl).zip",
+		"[BIOS] Pro Action Replay (Europe) (Unl).nes", "[BIOS] Pro Action Replay (Europe) (Unl).zip",
+	};
+	const char* system = NULL;
+	environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system);
+	if (!romFolderFind(romFolder, romFolderSize)) {
+		*romFolder = '\0';
+	}
+	const char* const folders[] = { system && *system ? system : NULL, *romFolder ? romFolder : NULL };
+	for (int kind = 0; kind < 2; kind++) {
+		const char* const* names = kind ? replays : genies;
+		size_t const count = kind ? sizeof(replays) / sizeof(*replays) : sizeof(genies) / sizeof(*genies);
+		for (int f = 0; f < 2; f++) {
+			for (size_t i = 0; folders[f] && i < count; i++) {
+				char path[8192];
+				snprintf(path, sizeof(path), "%s/%s", folders[f], names[i]);
+				uint8_t* image = cartridgeRead(path, size);
+				if (image) {
+					const char* slash = strrchr(names[i], '/');
+					snprintf(name, nameSize, "%s", slash ? slash + 1 : names[i]);
+					return image;
+				}
+			}
+		}
+	}
+	return NULL;
+}
+
 bool retro_load_game(const struct retro_game_info* game) {
+	// Without a game: a cheat cartridge found by itself, with the games of a ROM folder to go on top
+	char emptyFolder[4096] = "", emptyName[PAR_NAME] = "";
+	uint8_t* emptyImage = NULL;
+	size_t emptySize = 0;
 	if (!game || (!game->data && !game->path)) {
-		return false;
+		if (!(emptyImage = cartridgeFind(emptyFolder, sizeof(emptyFolder), emptyName, sizeof(emptyName), &emptySize))) {
+			struct retro_message message = { "armNES: no game, and no Game Genie or Pro Action Replay in the system or ROM folder to start", 480 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+			return false;
+		}
 	}
 	enum retro_pixel_format format = RETRO_PIXEL_FORMAT_RGB565;
 	if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) {
@@ -2587,10 +2727,23 @@ bool retro_load_game(const struct retro_game_info* game) {
 	size_t size;
 	free(unpacked);
 	unpacked = NULL;
-	if (!unpack(game, &data, &size)) {
+	if (emptyImage) {
+		unpacked = emptyImage;
+		data = emptyImage;
+		size = emptySize;
+	} else if (!unpack(game, &data, &size)) {
 		struct retro_message message = { "armNES: no game in this .zip, or not all of a MAME set's chips", 360 };
 		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 		return false;
+	}
+	// No-Intro's headerless Game Genie, made whole
+	size_t wholeSize = 0;
+	uint8_t* whole = genieImageFrom(data, size, &wholeSize);
+	if (whole) {
+		free(unpacked);
+		unpacked = whole;
+		data = whole;
+		size = wholeSize;
 	}
 	// A cheat cartridge (a Pro Action Replay or a Game Genie): the game on top is one beside it
 	parAttach(&nes, NULL, 0);
@@ -2605,10 +2758,16 @@ bool retro_load_game(const struct retro_game_info* game) {
 			memcpy(parImage, data, size);
 			parImageSize = size;
 		}
-		const char* path = game->path ? game->path : "";
-		const char* slash = strrchr(path, '/');
-		snprintf(parFolder, sizeof(parFolder), "%.*s", slash ? (int) (slash - path) : 1, slash ? path : ".");
-		snprintf(parSelf, sizeof(parSelf), "%s", slash ? slash + 1 : path);
+		if (emptyImage) {
+			// Its games are the ROM folder's (none without one)
+			snprintf(parFolder, sizeof(parFolder), "%s", *emptyFolder ? emptyFolder : "/nonexistent");
+			snprintf(parSelf, sizeof(parSelf), "%s", emptyName);
+		} else {
+			const char* path = game->path ? game->path : "";
+			const char* slash = strrchr(path, '/');
+			snprintf(parFolder, sizeof(parFolder), "%.*s", slash ? (int) (slash - path) : 1, slash ? path : ".");
+			snprintf(parSelf, sizeof(parSelf), "%s", slash ? slash + 1 : path);
+		}
 		parListGames();
 	}
 	if (isDisk(data, size)) {

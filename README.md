@@ -35,7 +35,11 @@ desktops.
 - NSF music files, with a small player.
 - Cheat cartridges, run as themselves with a game plugged in on top: load the cartridge's ROM and pick
   the game with Game on Top (one of the games beside it in its folder, those played last first). The
-  game on top keeps its own save under its own name. Cheat Code 1 to 5 (3 on the Game Genie) take
+  game on top keeps its own save under its own name. Started with no game (RetroArch's Start Core, or
+  Start Cheat Cartridge in the app's Core › System), the core opens the cartridge it finds itself: the
+  Game Genie before the Pro Action Replay, in the system (BIOS) folder or the NES games' folder (beside
+  the BIOS folder, as `roms/bios` and `roms/nes`, or under RetroArch's content folder), whose games
+  Game on Top then lists. Cheat Code 1 to 5 (3 on the Game Genie) take
   cheats for it from RetroArch's cheat database (its own `cheat_database_path`, or where RetroArch
   keeps it), put in the cartridge as the console starts again: the Pro Action Replay's in its table,
   shown on its screen as if typed (its `00AAAAVV` codes, `AAVV` and RAM `AAAA:VV` ones); the Game
@@ -46,7 +50,9 @@ desktops.
     the digit under the cursor, A lowers it, Start runs the game) and its trainer finds new ones: Reset
     brings its menu back with what it has learnt, as on the console. Its RAM is lost when the console
     is off, as on the hardware.
-  - The Game Genie (the image FCEUX and Mesen take, `gamegenie.nes`). Its screen takes three codes of
+  - The Game Genie (No-Intro's `[BIOS] Game Genie (USA, Europe) (Unl).unh`, its 4 KB program alone, the
+    pattern tables its gates make built as NESdev describes them; or the image FCEUX and Mesen take,
+    `gamegenie.nes`). Its screen takes three codes of
     six or eight letters; Start runs the game, and the codes stay until the console is off (Reset
     starts the game again with them, as on the hardware), including the bus conflicts some codes rely
     on (NESdev, Game Genie).

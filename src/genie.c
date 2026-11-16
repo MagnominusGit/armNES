@@ -4,6 +4,7 @@
 #include "genie.h"
 #include "nes.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include <zlib.h>
 
@@ -37,6 +38,31 @@ bool genieIdentify(const uint8_t* data, size_t size) {
 	}
 	// Its 4 KB program (the image FCEUX and Mesen take repeats it to 16 KB)
 	return (uint32_t) crc32(0, data + 16, GENIE_PRG) == 0x1A3A22A1;
+}
+
+uint8_t* genieImageFrom(const uint8_t* data, size_t size, size_t* imageSize) {
+	if (size != GENIE_PRG || (uint32_t) crc32(0, data, GENIE_PRG) != 0x1A3A22A1) {
+		return NULL;
+	}
+	enum { SIZE = 16 + 4 * GENIE_PRG + GENIE_CHR };
+	uint8_t* image = malloc(SIZE);
+	if (!image) {
+		return NULL;
+	}
+	static const uint8_t header[16] = { 'N', 'E', 'S', 0x1A, 1, 1 };
+	memcpy(image, header, sizeof(header));
+	for (int i = 0; i < 4; i++) {
+		memcpy(image + 16 + i * GENIE_PRG, data, GENIE_PRG);
+	}
+	// The pattern tables: with PPU A2 high, A4 sets D4-D7 and A5 D0-D3; with it low, A6 and A7
+	uint8_t* chr = image + 16 + 4 * GENIE_PRG;
+	for (int a = 0; a < GENIE_CHR; a++) {
+		int const high = (a & 4) ? (a >> 4) & 1 : (a >> 6) & 1;
+		int const low = (a & 4) ? (a >> 5) & 1 : (a >> 7) & 1;
+		chr[a] = (uint8_t) ((high ? 0xF0 : 0) | (low ? 0x0F : 0));
+	}
+	*imageSize = SIZE;
+	return image;
 }
 
 void genieAttach(struct NES* nes, const uint8_t* image, size_t size) {
