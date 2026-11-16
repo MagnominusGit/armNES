@@ -176,6 +176,9 @@ bool nesLoad(struct NES* nes, const uint8_t* data, size_t size) {
 }
 
 void nesReset(struct NES* nes, bool hard) {
+	if (!hard && nes->board && nes->board->cpuCycles) {
+		nesBoardSync(nes);
+	}
 	if (hard) {
 		// Power-on RAM: $FF, as FCEUmm has it; real RAM starts unknown, and some games only work when
 		// it isn't zero
@@ -215,6 +218,8 @@ void nesReset(struct NES* nes, bool hard) {
 	nes->board->reset(nes, hard);
 	nes->ppuEveryCycle = nes->board->m2Rise != NULL;
 	nes->slowCycles = nes->ppuEveryCycle || nes->board->cpuCycle || nes->exactTiming;
+	nes->boardPending = 0;
+	nes->boardQuiet = nes->board->cpuCycles ? 0 : 0xFFFF;
 	nes->mapperQuietTicks = 0;
 	nes->quietBudget = nes->quietGranted = 0;
 	nes->busShown = false;
@@ -239,6 +244,7 @@ void nesRunFrame(struct NES* nes) {
 		}
 	}
 	cpuSettle(nes);
+	nesBoardSync(nes);
 	nesApuSync(nes);
 	apuFlushAudio(nes);
 }
@@ -331,8 +337,10 @@ void nesRunFrameDual(struct NES* nes, uint16_t* subPicture) {
 			}
 		}
 	}
+	nesBoardSync(nes);
 	nesApuSync(nes);
 	apuFlushAudio(nes);
+	nesBoardSync(sub);
 	nesApuSync(sub);
 	apuFlushAudio(sub);
 }

@@ -4,6 +4,7 @@
 #include "board.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <zlib.h>
 
 // The Famicom Disk System: the RAM adapter's 32 KB of RAM at $6000-$DFFF, the BIOS at $E000, 8 KB
@@ -294,7 +295,19 @@ static bool headerMatches(struct NES* nes, int side, const uint8_t* want) {
 }
 
 // Picks the side the BIOS is about to check for: CheckDiskHeader ($E445) compares the disk's header
-// with 10 bytes at ($00), $FF matching anything
+// with 10 bytes at ($00), $FF matching anything. It's caught at its first $4025 write, in $E685 by
+// way of $E6E3 and $E64D (their return addresses on the stack), before the drive starts: watching
+// the BIOS's own page for the $E445 fetch would take every BIOS read off the CPU's fast path.
+static bool inCheckDiskHeader(const struct NES* nes) {
+	static const uint8_t returns[6] = { 0x4F, 0xE6, 0xE5, 0xE6, 0x47, 0xE4 };
+	for (int i = 0; i < 6; i++) {
+		if (nes->ram[0x100 + ((nes->cpu.s + 1 + i) & 0xFF)] != returns[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
 static void autoInsert(struct NES* nes) {
 	struct Fds* f = FD;
 	const uint8_t* want = NULL;
@@ -323,11 +336,10 @@ static uint8_t fdsRead(struct NES* nes, uint16_t address) {
 	struct Fds* f = FD;
 	uint8_t open = nes->cpu.openBus;
 	if (address >= 0xE000) {
-		if (address == 0xE445 && nes->cart.diskSides > 1) {
-			autoInsert(nes);
-		}
 		return nes->cart.prg[address - 0xE000];
 	}
+	// The drive, timer and sound as they are at this access
+	nesBoardSync(nes);
 	if (f->diskEnabled) {
 		switch (address) {
 		case 0x4030: {
@@ -359,6 +371,13 @@ static uint8_t fdsRead(struct NES* nes, uint16_t address) {
 
 static void fdsWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Fds* f = FD;
+	if (address >= 0x6000) {
+		return;
+	}
+	// The drive, timer and sound as they are at this write, which may start something: their quiet
+	// stretch is worked out again after it
+	nesBoardSync(nes);
+	nes->boardQuiet = 0;
 	if (address == 0x4023) {
 		f->diskEnabled = value & 1;
 		f->soundEnabled = value & 2;
@@ -401,6 +420,9 @@ static void fdsWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		updateIrq(nes);
 		break;
 	case 0x4025:
+		if (nes->cart.diskSides > 1 && inCheckDiskHeader(nes)) {
+			autoInsert(nes);
+		}
 		f->control = value;
 		f->diskIrq = false;
 		updateIrq(nes);
@@ -412,26 +434,85 @@ static void fdsWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	}
 }
 
-static void fdsCycle(struct NES* nes) {
+// The sound's level each cycle the board has run and the mix hasn't taken yet: levels[head..head+count),
+// the first for APU cycle first. Not in the state: at the end of each frame the mix has taken them all.
+enum { FDS_LEVELS = 1 << 16 };
+static struct {
+	int32_t levels[FDS_LEVELS];
+	uint32_t head, count;
+	uint64_t first;
+} pending;
+
+static void fdsCycles(struct NES* nes, int cycles) {
 	struct Fds* f = FD;
-	if (f->timerEnabled && f->diskEnabled) {
-		if (f->timerCounter == 0) {
-			f->timerIrq = true;
-			updateIrq(nes);
-			f->timerCounter = f->timerReload;
-			if (!f->timerRepeat) {
-				f->timerEnabled = false;
-			}
-		} else {
-			f->timerCounter--;
+	// These cycles' APU cycle numbers: the APU's count and the board's run together
+	uint64_t const start = nes->apu.cycles + (uint64_t) nes->apuPending - (uint64_t) cycles + 1;
+	if (!pending.count || pending.first + pending.count != start) {
+		pending.head = pending.count = 0;
+		pending.first = start;
+	}
+	if (pending.head + pending.count + (uint32_t) cycles > FDS_LEVELS) {
+		memmove(pending.levels, pending.levels + pending.head, pending.count * sizeof(*pending.levels));
+		pending.head = 0;
+		if (pending.count + (uint32_t) cycles > FDS_LEVELS) {
+			// Nothing has taken them for longer than a frame: the oldest go
+			uint32_t drop = pending.count + (uint32_t) cycles - FDS_LEVELS;
+			drop = drop < pending.count ? drop : pending.count;
+			memmove(pending.levels, pending.levels + drop, (pending.count - drop) * sizeof(*pending.levels));
+			pending.count -= drop;
+			pending.first += drop;
 		}
 	}
-	driveCycle(nes);
-	fdsSoundCycle(&f->sound);
+	int32_t* out = pending.levels + pending.head + pending.count;
+	for (int i = 0; i < cycles; i++) {
+		if (f->timerEnabled && f->diskEnabled) {
+			if (f->timerCounter == 0) {
+				f->timerIrq = true;
+				updateIrq(nes);
+				f->timerCounter = f->timerReload;
+				if (!f->timerRepeat) {
+					f->timerEnabled = false;
+				}
+			} else {
+				f->timerCounter--;
+			}
+		}
+		driveCycle(nes);
+		fdsSoundCycle(&f->sound);
+		*out++ = f->sound.filtered;
+		pending.count++;
+	}
 }
 
-static int fdsAudio(struct NES* nes) {
-	return FD->sound.filtered;
+// Cycles that can pass before the timer or the drive can raise the IRQ (or the drive move on)
+static int fdsQuiet(struct NES* nes) {
+	struct Fds* f = FD;
+	int quiet = 0xFFFE;
+	if (f->timerEnabled && f->diskEnabled) {
+		quiet = f->timerCounter < quiet ? f->timerCounter : quiet;
+	}
+	if (sideData(nes) && (f->control & 0x01) && !((f->control & 0x02) && !f->scanning)) {
+		int drive = f->endOfHead ? SPIN_UP : f->delay - 1;
+		quiet = drive < quiet ? drive : quiet;
+	}
+	return quiet < 0 ? 0 : quiet;
+}
+
+static int32_t fdsAudioSum(struct NES* nes, uint64_t first, uint64_t last) {
+	(void) nes;
+	int32_t sum = 0;
+	while (pending.count && pending.first <= last) {
+		if (pending.first >= first) {
+			sum += pending.levels[pending.head];
+		}
+		pending.head++;
+		pending.count--;
+		pending.first++;
+	}
+	if (!pending.count) {
+		pending.head = 0;
+	}
+	return sum;
 }
 
 static void fdsSync(struct NES* nes) {
@@ -439,7 +520,7 @@ static void fdsSync(struct NES* nes) {
 	nesMapPrg(nes, 0xE000, 0x2000, 0);
 	nesMapChr(nes, 0, 0x2000, 0);
 	nesSetMirroring(nes, (FD->control & 0x08) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
-	nes->readHooks = 1 << 4 | 1 << 0xE;
+	nes->readHooks = 1 << 4;
 }
 
 static void fdsReset(struct NES* nes, bool hard) {
@@ -467,7 +548,7 @@ static void fdsLoadExtra(struct NES* nes, const uint8_t* in) {
 }
 
 const struct Board boardFds = {
-	.name = "FDS", .reset = fdsReset, .write = fdsWrite, .read = fdsRead, .cpuCycle = fdsCycle, .audio = fdsAudio,
+	.name = "FDS", .reset = fdsReset, .write = fdsWrite, .read = fdsRead, .cpuCycles = fdsCycles, .cpuQuiet = fdsQuiet, .audioSum = fdsAudioSum,
 	.sync = fdsSync, .stateSize = sizeof(struct Fds), .saveExtra = fdsSaveExtra, .loadExtra = fdsLoadExtra,
 };
 
@@ -482,9 +563,11 @@ bool fdsBusy(struct NES* nes) {
 
 void fdsInsert(struct NES* nes, int side) {
 	if (nes->board == &boardFds && side < nes->cart.diskSides) {
+		nesBoardSync(nes);
 		FD->side = side;
 		FD->endOfHead = true;
 		FD->scanning = false;
+		nes->boardQuiet = 0;
 	}
 }
 

@@ -82,6 +82,7 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 		return false;
 	}
 	uint8_t* out = data;
+	nesBoardSync(nes);
 	struct StateHeader header = { STATE_MAGIC, STATE_VERSION, (uint32_t) sizeof(struct NES), nes->cart.prgCrc };
 	memcpy(out, &header, sizeof(header));
 	out += sizeof(header);
@@ -105,6 +106,8 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	LEAVE_OUT(dualSlot);
 	LEAVE_OUT(vsSharedSlot);
 	LEAVE_OUT(pads);
+	LEAVE_OUT(boardPending);
+	LEAVE_OUT(boardQuiet);
 	LEAVE_OUT(mixer);
 	LEAVE_OUT(busShown);
 	LEAVE_OUT(input);
@@ -213,6 +216,12 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->noSpriteLimit = noSpriteLimit;
 	nes->mixer = mixer;
 	nes->apu.stereo = mixer.custom;
+	// The board ran every cycle before the state was saved; what it may skip is worked out again
+	nes->boardPending = 0;
+	nes->boardQuiet = board->cpuCycles ? 0 : 0xFFFF;
+	// As this build works it out, whatever the build that saved it did (an older one stepped the
+	// Disk System's every cycle)
+	nes->slowCycles = nes->ppuEveryCycle || board->cpuCycle || nes->exactTiming;
 	nes->quietGranted = nes->quietBudget;
 	nes->busShown = false;
 	uint32_t tags[32];

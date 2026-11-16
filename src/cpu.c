@@ -79,6 +79,22 @@ void nesApuSync(struct NES* nes) {
 	apuCatchUp(nes);
 }
 
+// Runs the board through the CPU cycles passed, for a board with cpuCycles
+static void boardCatchUp(struct NES* nes) {
+	if (nes->boardPending) {
+		nes->board->cpuCycles(nes, nes->boardPending);
+		nes->boardPending = 0;
+	}
+	int quiet = nes->board->cpuQuiet(nes);
+	nes->boardQuiet = (uint16_t) (quiet < 0 ? 0 : quiet < 0xFFFE ? quiet : 0xFFFE);
+}
+
+void nesBoardSync(struct NES* nes) {
+	if (nes->board->cpuCycles) {
+		boardCatchUp(nes);
+	}
+}
+
 void nesPpuSync(struct NES* nes) {
 	ppuCatchUp(nes);
 }
@@ -134,6 +150,10 @@ static inline __attribute__((always_inline)) void tick(struct NES* nes) {
 		apuCatchUp(nes);
 		apuCycle(nes);
 		nes->apuQuiet = apuQuietCycles(nes);
+		if (nes->board->cpuCycles) {
+			nes->boardPending++;
+			boardCatchUp(nes);
+		}
 	}
 	nes->cpuClock++;
 	nes->masterClock++;
@@ -167,6 +187,10 @@ static inline void finishCycle(struct NES* nes) {
 		if (++nes->apuPending > nes->apuQuiet) {
 			apuCatchUp(nes);
 		}
+		// After the APU's count, so the board's cycles line up with the APU's
+		if (nes->board->cpuCycles && ++nes->boardPending > nes->boardQuiet) {
+			boardCatchUp(nes);
+		}
 	}
 	if (c <= 4) {
 		nes->ppuLag += 4 - c;
@@ -187,7 +211,7 @@ static inline void finishCycle(struct NES* nes) {
 static inline bool quietCycle(const struct NES* nes) {
 	int lag = nes->ppuLag + 8;
 	return nes->cpuClock == 0 && lag < nes->ppuQuietTicks && lag < nes->mapperQuietTicks &&
-		nes->apuPending < nes->apuQuiet;
+		nes->apuPending < nes->apuQuiet && nes->boardPending < nes->boardQuiet;
 }
 
 // After a quiet cycle with the interrupt lines settled (an IRQ may be held while I is set, NMI held
@@ -210,8 +234,10 @@ static inline void quietAhead(struct NES* nes) {
 	int byPpu = ppuRoom / period + 1;
 	int byBoard = boardRoom / period + 1;
 	int byApu = nes->apuQuiet - nes->apuPending;
+	int byBoardClock = nes->boardQuiet - nes->boardPending;
 	int n = byPpu < byBoard ? byPpu : byBoard;
 	n = n < byApu ? n : byApu;
+	n = n < byBoardClock ? n : byBoardClock;
 	nes->quietBudget = nes->quietGranted = n > 0 ? n : 0;
 }
 
@@ -224,6 +250,9 @@ static inline __attribute__((always_inline)) void quietSettle(struct NES* nes) {
 		nes->masterClock += (uint64_t) n * period;
 		nes->ppuLag += n * period;
 		nes->apuPending += n;
+		if (nes->board->cpuCycles) {
+			nes->boardPending += n;
+		}
 		nes->cpu.cycles += n;
 	}
 	nes->quietGranted = nes->quietBudget;
@@ -238,6 +267,9 @@ static inline void quietSettleTo(struct NES* nes, int mark) {
 		nes->masterClock += (uint64_t) n * period;
 		nes->ppuLag += n * period;
 		nes->apuPending += n;
+		if (nes->board->cpuCycles) {
+			nes->boardPending += n;
+		}
 		nes->cpu.cycles += n;
 		nes->quietGranted = mark;
 	}
@@ -287,6 +319,9 @@ static inline void endCycle(struct NES* nes) {
 		nes->masterClock += period;
 		nes->ppuLag += period;
 		nes->apuPending++;
+		if (nes->board->cpuCycles) {
+			nes->boardPending++;
+		}
 		bool out = ppuNmiOutput(nes);
 		cpu->nmiLine |= out;
 		if (cpu->opcodeCycle && !out) {
@@ -398,7 +433,7 @@ static __attribute__((noinline)) uint8_t readFull(struct NES* nes, uint16_t addr
 	startCycle(nes);
 	uint8_t value;
 	uint8_t* page = nes->prgPages[address >> 12];
-	if (address >= 0x8000 && page && !((nes->readHooks | nes->cheatPages) & (1 << (address >> 12)))) {
+	if (address >= 0x6000 && page && !((nes->readHooks | nes->cheatPages) & (1 << (address >> 12)))) {
 		// Program ROM, the common case
 		value = page[address & 0xFFF];
 		cpu->openBus = cpu->internalBus = value;
@@ -419,7 +454,7 @@ static inline __attribute__((always_inline)) uint8_t readCycle(struct NES* nes, 
 		uint8_t value;
 		if (address < 0x2000) {
 			value = nes->ram[address & 0x7FF];
-		} else if (address >= 0x8000 && page && !((nes->readHooks | nes->cheatPages) & (1 << (address >> 12)))) {
+		} else if (address >= 0x6000 && page && !((nes->readHooks | nes->cheatPages) & (1 << (address >> 12)))) {
 			value = page[address & 0xFFF];
 		} else {
 			return readFull(nes, address);
@@ -900,6 +935,9 @@ static uint16_t statusPoll(struct NES* nes, uint16_t address, uint64_t startCloc
 		nes->masterClock += (uint64_t) skipped * period;
 		nes->ppuLag += skipped * period;
 		nes->apuPending += skipped;
+		if (nes->board->cpuCycles) {
+			nes->boardPending += skipped;
+		}
 		cpu->cycles += skipped;
 	}
 	nes->quietBudget = nes->quietGranted = 0;

@@ -486,6 +486,16 @@ static inline void flush(struct NES* nes, bool stereo) {
 		if (stereo) {
 			nes->mixer.accumRight += right * (int32_t) (stop - at);
 		}
+		// A board's sound kept apart from the mix (Board.audioSum), added in as the APU would have
+		if (nes->board->audioSum) {
+			int32_t sum = nes->board->audioSum(nes, cycle + 1, stop);
+			if (stereo) {
+				nes->audioAccum += (int32_t) lrintf((float) sum * nes->mixer.gain[MIX_CART][0]);
+				nes->mixer.accumRight += (int32_t) lrintf((float) sum * nes->mixer.gain[MIX_CART][1]);
+			} else {
+				nes->audioAccum += sum;
+			}
+		}
 		nes->audioAccumCount += stop - cycle;
 		nes->audioPhase += (int64_t) nes->sampleRate * (int64_t) (stop - cycle);
 		cycle = stop;
@@ -504,6 +514,10 @@ static inline void flush(struct NES* nes, bool stereo) {
 }
 
 void apuFlushAudio(struct NES* nes) {
+	// The board's sound up to now, past the cycles flushed
+	if (nes->board->audioSum) {
+		nesBoardSync(nes);
+	}
 	if (nes->mixer.custom) {
 		flush(nes, true);
 	} else {

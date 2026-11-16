@@ -222,6 +222,12 @@ struct Board {
 	// Reads of the PPU's pattern and name tables, for boards that change data as it's fetched
 	uint8_t (*ppuRead)(struct NES*, uint16_t address);
 	void (*cpuCycle)(struct NES*);
+	// Instead of cpuCycle, for a board that only matters when something looks: its CPU-clocked parts
+	// run cycles at a time (cpuCycles), cpuQuiet() cycles can pass before its IRQ can change, and
+	// audioSum() is its sound summed over APU cycles first..last (each level once, as it ran)
+	void (*cpuCycles)(struct NES*, int cycles);
+	int (*cpuQuiet)(struct NES*);
+	int32_t (*audioSum)(struct NES*, uint64_t first, uint64_t last);
 	// M2 rising, partway through each CPU cycle
 	void (*m2Rise)(struct NES*);
 	// PPU dots during which the board's IRQ line can't change on its own
@@ -338,6 +344,9 @@ struct NES {
 
 	uint8_t ram[0x800];
 	enum Region region;
+	// For a board with cpuCycles: the CPU cycles it hasn't run, and how many can pass before it must
+	// (0xFFFF for other boards). In what was padding, so states keep their size; left out of them.
+	uint16_t boardPending, boardQuiet;
 	uint64_t masterClock;
 	// Master clock phases: the CPU's (cpuPeriod long) and the PPU's (ppuPeriod long). The PPU runs
 	// behind the CPU by ppuLag master clocks and catches up when something could observe it, with
@@ -509,6 +518,8 @@ void nesCheatFrame(struct NES*);
 void nesTick(struct NES*);
 void nesPpuSync(struct NES*);
 void nesApuSync(struct NES*);
+// Runs a board's cpuCycles through the cycles the CPU has passed
+void nesBoardSync(struct NES*);
 void nesPpuSyncAhead(struct NES*, int clocks);
 void cpuReset(struct NES*, bool hard);
 void cpuStep(struct NES*);
