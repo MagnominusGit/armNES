@@ -2216,6 +2216,28 @@ static int cartCodesOf(const char* text, struct Cheat* out) {
 	return count ? count : -1;
 }
 
+// RetroArch's cheat names keep some HTML entities (&quot;): the characters they stand for
+static void cartUnescape(char* s) {
+	static const struct { const char* entity; char c; } entities[] = {
+		{ "&quot;", '"' }, { "&amp;", '&' }, { "&apos;", '\'' }, { "&#39;", '\'' }, { "&lt;", '<' }, { "&gt;", '>' },
+	};
+	char* out = s;
+	for (const char* in = s; *in;) {
+		size_t i = 0;
+		size_t const count = sizeof(entities) / sizeof(*entities);
+		while (i < count && strncmp(in, entities[i].entity, strlen(entities[i].entity))) {
+			i++;
+		}
+		if (i < count) {
+			*out++ = entities[i].c;
+			in += strlen(entities[i].entity);
+		} else {
+			*out++ = *in++;
+		}
+	}
+	*out = '\0';
+}
+
 static void cartReadCht(const char* path) {
 	FILE* f = fopen(path, "r");
 	if (!f) {
@@ -2236,6 +2258,7 @@ static void cartReadCht(const char* path) {
 		}
 		*close = '\0';
 		if (!strcmp(field, "desc")) {
+			cartUnescape(open + 1);
 			snprintf(names[index], sizeof(names[index]), "%s", open + 1);
 			continue;
 		}
@@ -2300,30 +2323,40 @@ static void cartListCheats(void) {
 		cartCodeOptions[k]->values[v] = (struct retro_core_option_value) { NULL, NULL };
 	}
 	optionsGive(environ_cb, &options);
-	// The codes chosen before for this game, kept beside the Game on Top choice
+	// The codes chosen before for this game (None for those it has none for), kept beside the Game on
+	// Top choice: after "Game: <its name>", or (as written before) after the choice itself
+	if (!*parTop) {
+		return;
+	}
+	const char* chosen[CART_SLOTS] = { NULL };
 	char file[4096], line[300];
 	parChoiceFile(file, sizeof(file));
-	FILE* f = *parTop ? fopen(file, "r") : NULL;
+	FILE* f = fopen(file, "r");
+	bool mine = false;
 	for (bool first = true; f && fgets(line, sizeof(line), f); first = false) {
 		line[strcspn(line, "\r\n")] = '\0';
-		if (first && strcmp(line, parTop)) {
-			break;
+		if (first || !strncmp(line, "Game: ", 6)) {
+			mine = !strcmp(first ? line : line + 6, parTop);
+			continue;
 		}
 		int k = 0, used = 0;
-		if (first || sscanf(line, "Code %d: %n", &k, &used) != 1 || !used || k < 1 || k > CART_SLOTS) {
+		if (!mine || sscanf(line, "Code %d: %n", &k, &used) != 1 || !used || k < 1 || k > CART_SLOTS) {
 			continue;
 		}
 		for (size_t i = 0; i < cartCheatCount; i++) {
 			if (!strcmp(cartCheats[i].code, line + used)) {
-				char key[32];
-				snprintf(key, sizeof(key), "armnes_cart_code_%d", k);
-				struct retro_variable variable = { key, cartCheats[i].code };
-				environ_cb(RETRO_ENVIRONMENT_SET_VARIABLE, &variable);
+				chosen[k - 1] = cartCheats[i].code;
 			}
 		}
 	}
 	if (f) {
 		fclose(f);
+	}
+	for (int k = 0; k < CART_SLOTS; k++) {
+		char key[32];
+		snprintf(key, sizeof(key), "armnes_cart_code_%d", k + 1);
+		struct retro_variable variable = { key, chosen[k] ? chosen[k] : "none" };
+		environ_cb(RETRO_ENVIRONMENT_SET_VARIABLE, &variable);
 	}
 }
 
@@ -2378,20 +2411,75 @@ static bool cartCodesChanged(void) {
 	return false;
 }
 
-// The game on top and the codes put in, for next time
-static void cartKeepChoices(void) {
+// The codes put in for this game, kept for next time with those of the other games (the most recent
+// first, up to CART_GAMES); and the Game on Top choice, on the first line (onTop, or as it was)
+enum { CART_GAMES = 1000 };
+
+static void cartKeepChoices(const char* onTop) {
+	if (!*parTop) {
+		return;
+	}
 	char file[4096];
 	parChoiceFile(file, sizeof(file));
-	FILE* f = *parTop ? fopen(file, "w") : NULL;
-	if (f) {
-		fprintf(f, "%s\n", parTop);
+	size_t size = 0;
+	uint8_t* read = readFile(file, &size);
+	char* old = malloc(size + 1);
+	if (old) {
+		if (read) {
+			memcpy(old, read, size);
+		}
+		old[size] = '\0';
+	}
+	free(read);
+	FILE* f = fopen(file, "w");
+	if (!f) {
+		free(old);
+		return;
+	}
+	// The first line, then this game's codes
+	char* rest = old ? old + strcspn(old, "\n") : NULL;
+	char const keep = rest ? *rest : '\0';
+	if (rest) {
+		*rest = '\0';
+	}
+	fprintf(f, "%s\n", onTop ? onTop : old ? old : "");
+	int games = 0;
+	bool any = false;
+	for (int k = 0; k < CART_SLOTS; k++) {
+		any = any || *cartCodesIn[k];
+	}
+	if (any) {
+		fprintf(f, "Game: %s\n", parTop);
 		for (int k = 0; k < CART_SLOTS; k++) {
 			if (*cartCodesIn[k]) {
 				fprintf(f, "Code %d: %s\n", k + 1, cartCodesIn[k]);
 			}
 		}
-		fclose(f);
+		games++;
 	}
+	// The other games' (codes written before under the first line are its game's)
+	const char* game = old ? old : "";
+	bool copying = old && strcmp(old, parTop) && ++games <= CART_GAMES;
+	bool header = false;
+	for (char* line = rest && keep ? rest + 1 : NULL; line && *line;) {
+		char* end = line + strcspn(line, "\n");
+		char const after = *end;
+		*end = '\0';
+		if (!strncmp(line, "Game: ", 6)) {
+			game = line + 6;
+			copying = strcmp(game, parTop) && ++games <= CART_GAMES;
+			header = false;
+		} else if (copying && !strncmp(line, "Code ", 5)) {
+			if (!header) {
+				fprintf(f, "Game: %s\n", game);
+				header = true;
+			}
+			fprintf(f, "%s\n", line);
+		}
+		line = after ? end + 1 : NULL;
+	}
+	fclose(f);
+	free(old);
 }
 
 // The chosen game under the Pro Action Replay, the console started again with its menu; or none
@@ -2426,7 +2514,7 @@ static bool parPutGame(const char* name) {
 	nesReset(&nes, true);
 	parSaveFile(name, parSave, sizeof(parSave));
 	parReadSave();
-	cartKeepChoices();
+	cartKeepChoices(name);
 	return true;
 }
 
@@ -2512,7 +2600,7 @@ static void checkOptions(void) {
 			showOptions();
 		} else if (genieOver && *parTop && cartCodesChanged()) {
 			cartImport();
-			cartKeepChoices();
+			cartKeepChoices(NULL);
 			nesReset(&nes, true);
 			struct retro_message shown = { "Game Genie: the codes chosen go in as the console starts again", 240 };
 			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &shown);
@@ -2664,7 +2752,7 @@ static bool genieOverPut(bool on) {
 	snprintf(parTop, sizeof(parTop), "%s", contentName);
 	cartListCheats();
 	cartImport();
-	cartKeepChoices();
+	cartKeepChoices(NULL);
 	genieAttach(&nes, image, size);
 	free(image);
 	nesReset(&nes, true);

@@ -41,7 +41,7 @@ desktops.
   folder, those played last first); the game on top keeps its own save under its own name. Cheat
   Code 1 to 5 (3 on the Game Genie) take cheats for the game from RetroArch's cheat database (its own
   `cheat_database_path`, or where RetroArch keeps it) and put them in the cartridge as the console
-  starts again (kept for the game played last with it): the Pro Action Replay's in its table, shown on its screen
+  starts again, and kept for each game: the Pro Action Replay's in its table, shown on its screen
   as if typed (its `00AAAAVV` codes, `AAVV` and RAM `AAAA:VV` ones); the Game Genie's in the slots its
   screen leaves empty (its letter codes, and `AAAA:VV` or `AAAA?CC:VV` for $8000 and up). Started
   with no game (RetroArch's Start Core), the core is a console with no cartridge: the Game Genie
