@@ -39,7 +39,9 @@ desktops.
     `[BIOS] Game Genie (USA, Europe) (Unl).unh` or `gamegenie.nes`. The game stays the one you
     loaded, so its saves, save states and RetroArch's cheat lookup work as usual. Started with no
     game (RetroArch's Start Core), the core is a console with no cartridge, or the Game Genie alone
-    with the option on.
+    with the option on. In netplay, a player who joins gets the host's Game Genie setting for the
+    session (their own saved setting stays as it was); each player needs the Game Genie in their own
+    system folder.
   - Or load a cheat cartridge's ROM itself and pick the game plugged into it with Game on Top (from
     the same folder, most recently played first). The game on top keeps its own save under its own
     name.

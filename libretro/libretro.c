@@ -49,6 +49,9 @@ static bool parIsGenie;
 static bool genieOver;
 // Wanted, but not in the system folder: not looked for again until turned off
 static bool genieMissing;
+// The option as last seen: only a change to it plugs the Game Genie in or out, so one plugged in to
+// match a loaded state (netplay's host) stays until the option itself changes
+static bool genieOptionWas;
 static const char* parName(void) {
 	return parIsGenie ? "Game Genie" : "Pro Action Replay";
 }
@@ -2587,8 +2590,10 @@ static void checkOptions(void) {
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
 		const char* top = parLoaded ? parChosen() : NULL;
 		bool const genieWanted = optionIs(environ_cb, "armnes_game_genie", "On");
+		bool const genieChanged = genieWanted != genieOptionWas;
+		genieOptionWas = genieWanted;
 		genieMissing = genieMissing && genieWanted;
-		if (genieWanted != genieOver && !genieMissing && genieOverFits()) {
+		if (genieChanged && genieWanted != genieOver && !genieMissing && genieOverFits()) {
 			if (genieOverPut(genieWanted) || !genieWanted) {
 				struct retro_message shown = { genieWanted ? "Game Genie on: the console restarts with its code screen" :
 					"Game Genie off: the console restarts", 240 };
@@ -2756,6 +2761,22 @@ static bool genieOverPut(bool on) {
 	return true;
 }
 
+// A state says whether the Game Genie was plugged in, and netplay's host sends its own as a player joins
+// (and again if they drift apart): loading one plugs this side's Game Genie in or out to match, leaving
+// the option as it was. Each side needs it in its own system folder. Not for a cheat cartridge loaded as the
+// game, whose state is its own.
+static void genieFollowState(const uint8_t* data, size_t size) {
+	size_t const need = nesStateSize(&nes);
+	bool const wanted = size >= need && data[need - genieStateSize()] != 0;
+	if (wanted == genieOver || parLoaded || (wanted && (genieMissing || !genieOverFits()))) {
+		return;
+	}
+	if (genieOverPut(wanted)) {
+		struct retro_message message = { wanted ? "Game Genie on, as the state has it" : "Game Genie off, as the state has it", 240 };
+		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+	}
+}
+
 // The console with no cartridge (started with no game): NROM whose program spins at $C000, the screen
 // left off
 static const uint8_t* noCartridge(size_t* size) {
@@ -2894,7 +2915,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 		}
 	}
 	loaded = true;
-	if (optionIs(environ_cb, "armnes_game_genie", "On") && genieOverFits()) {
+	genieOptionWas = optionIs(environ_cb, "armnes_game_genie", "On");
+	if (genieOptionWas && genieOverFits()) {
 		genieOverPut(true);
 	} else if (!parLoaded) {
 		// The Cheat Code options empty, with no cheat cartridge
@@ -3002,6 +3024,7 @@ bool retro_unserialize(const void* data, size_t size) {
 	// One board's state checks its own size (1.1's are a little shorter). A state loaded before the
 	// first frame keeps its own save RAM, as it does in one block; one refused leaves the save alone.
 	if (!nes.dual) {
+		genieFollowState(data, size);
 		bool const ok = nesLoadState(&nes, data, size);
 		saveBlockIn |= ok;
 		return ok;
