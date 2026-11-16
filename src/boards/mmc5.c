@@ -37,6 +37,9 @@ struct Mmc5 {
 	int16_t fetchLine;
 	bool inSplit;
 	uint8_t splitY;
+	// The PCM channel's $5010 (bit 0 read mode, bit 7 IRQ enable) and its IRQ: a $00 sample trips it
+	uint8_t pcmControl;
+	bool pcmIrq;
 };
 
 #define M5 STATE(Mmc5)
@@ -115,12 +118,15 @@ static void mmc5SyncNametables(struct NES* nes) {
 	memset(fillTable(nes) + 0x3C0, (m->fillAttr & 3) * 0x55, 0x40);
 }
 
+static void mmc5PcmHooks(struct NES* nes);
+
 static void mmc5Sync(struct NES* nes) {
 	mmc5SyncPrg(nes);
 	for (int i = 0; i < 8; i++) {
 		chr1(nes, i * 0x400, chrBank(nes, i, false));
 	}
 	mmc5SyncNametables(nes);
+	mmc5PcmHooks(nes);
 }
 
 // The split's side of the screen: tiles left of the count, or from it on, read their name table and
@@ -183,10 +189,50 @@ static uint8_t mmc5PpuRead(struct NES* nes, uint16_t address) {
 	return cart->chr[offset % cart->chrSize];
 }
 
+// The IRQ line: the scanline counter's or the PCM channel's
+static void mmc5Irq(struct NES* nes) {
+	struct Mmc5* m = M5;
+	nesSetIrq(nes, IRQ_MAPPER, (m->irqEnabled && m->irqPending) || ((m->pcmControl & 0x80) && m->pcmIrq));
+}
+
+// A PCM value, written to $5011 or read from $8000-$BFFF in read mode: $00 leaves the DAC alone and
+// trips the IRQ instead
+static void mmc5Pcm(struct NES* nes, uint8_t value) {
+	struct Mmc5* m = M5;
+	if (value) {
+		m->sound.pcm = value;
+		m->pcmIrq = false;
+	} else {
+		m->pcmIrq = true;
+	}
+	mmc5Irq(nes);
+}
+
+// In read mode the PCM takes every read of $8000-$BFFF, so those pages are watched only then
+static void mmc5PcmHooks(struct NES* nes) {
+	nes->readHooks = (nes->readHooks & ~0x0F00) | ((M5->pcmControl & 1) ? 0x0F00 : 0);
+}
+
 static uint8_t mmc5Read(struct NES* nes, uint16_t address) {
 	struct Mmc5* m = M5;
+	if (address >= 0x8000) {
+		// Read mode: the byte read is the PCM's next value
+		uint8_t* page = nes->prgPages[address >> 12];
+		uint8_t value = page ? page[address & 0xFFF] : nes->cpu.openBus;
+		if (address < 0xC000 && (m->pcmControl & 1)) {
+			mmc5Pcm(nes, value);
+		}
+		return value;
+	}
 	if (address == 0x5015) {
 		return mmc5SoundStatus(&m->sound);
+	}
+	if (address == 0x5010) {
+		// The PCM IRQ (bit 7), acknowledged by the read; bit 0 0 for the letterless MMC5
+		uint8_t value = (m->pcmIrq && (m->pcmControl & 0x80)) ? 0x80 : 0;
+		m->pcmIrq = false;
+		mmc5Irq(nes);
+		return value;
 	}
 	if (address >= 0x5C00 && address < 0x6000) {
 		return m->exramMode >= 2 ? exram(nes)[address & 0x3FF] : nes->cpu.openBus;
@@ -195,7 +241,7 @@ static uint8_t mmc5Read(struct NES* nes, uint16_t address) {
 	case 0x5204: {
 		uint8_t value = (m->irqPending ? 0x80 : 0) | (m->inFrame ? 0x40 : 0);
 		m->irqPending = false;
-		nesSetIrq(nes, IRQ_MAPPER, false);
+		mmc5Irq(nes);
 		return value;
 	}
 	case 0x5205:
@@ -211,6 +257,19 @@ static void mmc5Write(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address >= 0x5C00 && address < 0x6000) {
 		if (m->exramMode != 3) {
 			exram(nes)[address & 0x3FF] = value;
+		}
+		return;
+	}
+	if (address == 0x5010) {
+		m->pcmControl = value & 0x81;
+		mmc5PcmHooks(nes);
+		mmc5Irq(nes);
+		return;
+	}
+	if (address == 0x5011) {
+		// Ignored in read mode
+		if (!(m->pcmControl & 1)) {
+			mmc5Pcm(nes, value);
 		}
 		return;
 	}
@@ -268,7 +327,7 @@ static void mmc5Write(struct NES* nes, uint16_t address, uint8_t value) {
 		return;
 	case 0x5204:
 		m->irqEnabled = value & 0x80;
-		nesSetIrq(nes, IRQ_MAPPER, m->irqEnabled && m->irqPending);
+		mmc5Irq(nes);
 		return;
 	case 0x5205:
 	case 0x5206:
@@ -302,14 +361,12 @@ static void mmc5Scanline(struct NES* nes, int line) {
 		m->inFrame = true;
 		m->lineCounter = 0;
 		m->irqPending = false;
-		nesSetIrq(nes, IRQ_MAPPER, false);
+		mmc5Irq(nes);
 		return;
 	}
 	if (++m->lineCounter == m->irqTarget) {
 		m->irqPending = true;
-		if (m->irqEnabled) {
-			nesSetIrq(nes, IRQ_MAPPER, true);
-		}
+		mmc5Irq(nes);
 	}
 }
 
@@ -359,15 +416,23 @@ void mmc5SoundCycle(struct Mmc5Sound* m) {
 	}
 }
 
-int mmc5SoundOutput(const struct Mmc5Sound* m) {
-	int out = 0;
+// The two pulses' and the PCM's levels, the chip's output their sum. The pulses are as loud as the
+// 2A03's, at any period (short ones aren't muted, as the 2A03's are); the PCM as loud as the DMC for the
+// same value, which its eighth bit can double (NESdev, MMC5 audio); all three the other way up to the
+// 2A03.
+void mmc5SoundLevels(const struct Mmc5Sound* m, int out[3]) {
 	for (int i = 0; i < 2; i++) {
 		const struct Mmc5Pulse* p = &m->pulse[i];
-		if (p->length && p->period >= 8 && (mmc5Duty[p->control >> 6] >> p->step) & 1) {
-			out += (p->control & 0x10) ? p->control & 15 : p->envelopeDecay;
-		}
+		bool high = p->length && ((mmc5Duty[p->control >> 6] >> p->step) & 1);
+		out[i] = high ? -((p->control & 0x10) ? p->control & 15 : p->envelopeDecay) * 400 : 0;
 	}
-	return out * 400 + m->pcm * 40;
+	out[2] = -m->pcm * 170;
+}
+
+int mmc5SoundOutput(const struct Mmc5Sound* m) {
+	int levels[3];
+	mmc5SoundLevels(m, levels);
+	return levels[0] + levels[1] + levels[2];
 }
 
 // $5000-$5015
@@ -391,7 +456,10 @@ void mmc5SoundWrite(struct Mmc5Sound* m, uint16_t address, uint8_t value) {
 			break;
 		}
 	} else if (address == 0x5011) {
-		m->pcm = value;
+		// $00 leaves the DAC as it was
+		if (value) {
+			m->pcm = value;
+		}
 	} else if (address == 0x5015) {
 		for (int i = 0; i < 2; i++) {
 			m->pulse[i].enabled = value & (1 << i);
@@ -412,6 +480,12 @@ static void mmc5Cycle(struct NES* nes) {
 
 static int mmc5Audio(struct NES* nes) {
 	return mmc5SoundOutput(&M5->sound);
+}
+
+static int mmc5Voices(struct NES* nes, uint8_t* ids, int* levels) {
+	int l[3];
+	mmc5SoundLevels(&M5->sound, l);
+	return addVoices(ids, levels, 0, VOICE_MMC5_PULSE1, l, 3);
 }
 
 static void mmc5Reset(struct NES* nes, bool hard) {
@@ -439,6 +513,6 @@ static void mmc5Reset(struct NES* nes, bool hard) {
 
 const struct Board boardMmc5 = {
 	.name = "MMC5", .reset = mmc5Reset, .write = mmc5Write, .read = mmc5Read, .ppuRead = mmc5PpuRead,
-	.scanline = mmc5Scanline, .irqQuietDots = mmc5IrqQuietDots, .cpuCycle = mmc5Cycle, .audio = mmc5Audio,
+	.scanline = mmc5Scanline, .irqQuietDots = mmc5IrqQuietDots, .cpuCycle = mmc5Cycle, .audio = mmc5Audio, .voices = mmc5Voices,
 	.sync = mmc5Sync, .stateSize = sizeof(struct Mmc5),
 };

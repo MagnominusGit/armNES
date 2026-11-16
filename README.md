@@ -62,7 +62,8 @@ Famicom keyboard.
 
 The menu shows only the options that do something for the game loaded: the VS. System category only
 for arcade games, Disk System Fast Loading only for disks, Cart Jumper only for carts that have one,
-the cart sound options only for carts with their own sound chip, and the Zapper options only with a
+the cart sound options only for carts with their own sound chip (and each voice's only for its chip),
+and the Zapper options only with a
 Zapper plugged in (the motion ones only with Zapper Motion on).
 
 | Category | Option | Values (default first) |
@@ -81,6 +82,7 @@ Zapper plugged in (the motion ones only with Zapper Motion on).
 | | Crop Sides | 0, 4, 8, 12, 16 pixels |
 | Audio | Pulse 1, Pulse 2, Triangle, Noise, DMC (Samples) and Cart Sound Volume | 100%, 0% to 90% in tenths |
 | | The same channels' Position | Center, Left to Right in quarters |
+| | Each voice of the cart's sound chip: VRC6 Pulse 1, 2 and Sawtooth; VRC7 FM 1 to 6; Sunsoft 5B Square A, B and C; Namco 163 Wave 1 to 8; MMC5 Pulse 1, 2 and PCM (Samples) | Volume and Position as above, on top of Cart Sound Volume |
 | Input | Turbo Speed | 15 per second, Off, 30, 20, 10, 7.5 per second |
 | | Allow Opposing Directions | Off, On |
 | | Left Stick as D-Pad | On, Off |
@@ -210,7 +212,9 @@ What games show and play comes first; test ROMs that probe corners no game reach
     132.
 - The APU passes blargg's `apu_test` suite, including its DMC tests, and mixes its channels as the
   console's nonlinear mixer does. The Disk System's, VRC6's, VRC7's, MMC5's, Namco 163's and Sunsoft
-  5B's sound chips are emulated.
+  5B's sound chips are emulated as NESdev documents them: the VRC7 with its own instruments (the
+  chip's dump) and six channels, the Namco 163 as loud as each board's submapper says (11-19.5 dB over
+  the 2A03), the MMC5's PCM with its read mode and IRQ, the FDS's modulation by NESdev's formula.
 - Save states are deterministic, so netplay, rewind and run-ahead stay in step. RetroAchievements,
   cheats (Game Genie and raw codes) and memory maps are supported.
 

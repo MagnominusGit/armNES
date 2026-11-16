@@ -182,7 +182,8 @@ static void nsfWrite(struct NES* nes, uint16_t address, uint8_t value) {
 			EXRAM[address - 0x5C00] = value;
 		}
 	}
-	if (chips & CHIP_VRC6 && address >= 0x9000 && address < 0xC000 && (address & 0xFFF) < 3) {
+	// $9000-$9002, $A000-$A002, $B000-$B002, and $9003 (frequency control)
+	if (chips & CHIP_VRC6 && address >= 0x9000 && address < 0xC000 && ((address & 0xFFF) < 3 || address == 0x9003)) {
 		vrc6SoundWrite(&n->vrc6, (address >> 12) - 9, address & 3, value);
 	}
 	if (chips & CHIP_VRC7) {
@@ -246,12 +247,47 @@ static int nsfAudio(struct NES* nes) {
 		out += mmc5SoundOutput(&n->mmc5);
 	}
 	if (chips & CHIP_N163) {
-		out += namco163SoundOutput(&n->n163);
+		out += namco163SoundOutput(&n->n163, namco163Gain(0));
 	}
 	if (chips & CHIP_5B) {
 		out += sunsoft5bOutput(&n->s5b);
 	}
 	return out;
+}
+
+static int nsfVoices(struct NES* nes, uint8_t* ids, int* levels) {
+	struct Nsf* n = NS;
+	uint8_t chips = n->chips;
+	int count = 0, l[8];
+	if (chips & CHIP_VRC6) {
+		vrc6SoundLevels(&n->vrc6, l);
+		count = addVoices(ids, levels, count, VOICE_VRC6_PULSE1, l, 3);
+	}
+	if (chips & CHIP_VRC7) {
+		vrc7SoundLevels(&n->vrc7, false, l);
+		count = addVoices(ids, levels, count, VOICE_VRC7_1, l, 6);
+	}
+	if (chips & CHIP_FDS) {
+		l[0] = n->fds.filtered;
+		count = addVoices(ids, levels, count, VOICE_FDS, l, 1);
+	}
+	if (chips & CHIP_MMC5) {
+		mmc5SoundLevels(&n->mmc5, l);
+		count = addVoices(ids, levels, count, VOICE_MMC5_PULSE1, l, 3);
+	}
+	if (chips & CHIP_N163) {
+		namco163SoundLevels(&n->n163, namco163Gain(0), l);
+		count = addVoices(ids, levels, count, VOICE_N163_1, l, 8);
+	}
+	if (chips & CHIP_5B) {
+		sunsoft5bLevels(&n->s5b, l);
+		count = addVoices(ids, levels, count, VOICE_5B_A, l, 3);
+	}
+	return count;
+}
+
+int nsfChips(struct NES* nes) {
+	return nes->board == &boardNsf ? NS->chips : 0;
 }
 
 // Every reset starts the selected song afresh: the banks, RAM and chips as the file begins them
@@ -298,7 +334,7 @@ static void nsfLoadExtra(struct NES* nes, const uint8_t* in) {
 }
 
 const struct Board boardNsf = {
-	.name = "NSF", .reset = nsfReset, .write = nsfWrite, .read = nsfRead, .cpuCycle = nsfCycle, .audio = nsfAudio,
+	.name = "NSF", .reset = nsfReset, .write = nsfWrite, .read = nsfRead, .cpuCycle = nsfCycle, .audio = nsfAudio, .voices = nsfVoices,
 	.sync = nsfSync, .stateSize = sizeof(struct Nsf), .saveExtra = nsfSaveExtra, .loadExtra = nsfLoadExtra,
 };
 

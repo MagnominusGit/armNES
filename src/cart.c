@@ -42,6 +42,34 @@ static const struct HeaderFix headerFixes[] = {
 	// Translations of a 24C01 game headed as 16, whose 24C02 it can't talk to
 	{ 0xcec78d89,  159, DEFAULT, DEFAULT, 1,       0x10,    DEFAULT, DEFAULT, NOEXTRA },
 	{ 0xfe6c086f,  159, DEFAULT, DEFAULT, 1,       0x10,    DEFAULT, DEFAULT, NOEXTRA },
+	// Namco 163 boards by how loud their sound is against the 2A03 (NESdev's mapper 19 submappers: 3 is
+	// 11-13 dB louder, 4 16-17 dB, 5 18-19.5 dB; 2 has none), for dumps with old headers
+	// Digital Devil Story - Megami Tensei II (v1.03 and v1.04 translations, Rev 1, original)
+	{ 0x9946973c,   19, 3,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0x1e9fc80b,   19, 3,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0x10c9a789,   19, 3,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0x96773f32,   19, 3,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	// Final Lap (English translation)
+	{ 0x5746a461,   19, 3,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	// Rolling Thunder (Japan, World)
+	{ 0x9edbe2e2,   19, 4,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0x6daca23a,   19, 4,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	// Erika to Satoru no Yume Bouken (original, English translation)
+	{ 0xef7996bf,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0xa3903233,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	// King of Kings (original, Namcot Collection)
+	{ 0x369da42d,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0x35e2518a,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	// Mappy Kids (Japan, World, English translation)
+	{ 0x35d8c961,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0x002c8bf8,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0x3c38637d,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	// Youkai Douchuuki (original, Namcot Collection, Virtual Console)
+	{ 0xc811dc7a,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0x87e00045,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	{ 0xeb190367,   19, 5,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
+	// Star Wars (Namco): no expansion sound
+	{ 0xca69751b,   19, 2,       DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, NOEXTRA },
 #include "fceu/ines-correct.h"
 };
 #undef PAL

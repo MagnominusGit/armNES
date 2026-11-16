@@ -383,8 +383,34 @@ static void frameCounter(struct NES* nes) {
 	}
 }
 
+// Each cart voice's gain per side, and whether any isn't 1 (the mix then goes voice by voice)
+static float voiceGains[VOICES][2];
+static bool voicesCustom;
+
+void apuSetVoiceGains(const float gains[VOICES][2], bool custom) {
+	memcpy(voiceGains, gains, sizeof(voiceGains));
+	voicesCustom = custom;
+}
+
+// The cart's sound for each side: voice by voice when the frontend sets them apart
+static void cartSides(struct NES* nes, float out[2]) {
+	const struct Board* b = nes->board;
+	if (voicesCustom && b->voices) {
+		uint8_t ids[VOICES_MOST];
+		int levels[VOICES_MOST];
+		int n = b->voices(nes, ids, levels);
+		out[0] = out[1] = 0;
+		for (int i = 0; i < n; i++) {
+			out[0] += levels[i] * voiceGains[ids[i]][0];
+			out[1] += levels[i] * voiceGains[ids[i]][1];
+		}
+		return;
+	}
+	out[0] = out[1] = b->audio ? (float) b->audio(nes) : 0;
+}
+
 // The frontend's mix: each channel scaled before the console's mixing curves, per side
-static int mixSide(const struct Mixer* m, int side, const int* levels, int cart) {
+static int mixSide(const struct Mixer* m, int side, const int* levels, float cart) {
 	const float (*g)[2] = m->gain;
 	float pulse = levels[0] * g[MIX_PULSE1][side] + levels[1] * g[MIX_PULSE2][side];
 	float tnd = 3 * levels[2] * g[MIX_TRIANGLE][side] + 2 * levels[3] * g[MIX_NOISE][side] + levels[4] * g[MIX_DMC][side];
@@ -427,9 +453,10 @@ static int mix(struct NES* nes) {
 __attribute__((noinline, cold)) static int mixStereo(struct NES* nes, int* right) {
 	int levels[5];
 	channelLevels(&nes->apu, levels);
-	int cart = nes->board->audio ? nes->board->audio(nes) : 0;
-	*right = mixSide(&nes->mixer, 1, levels, cart);
-	return mixSide(&nes->mixer, 0, levels, cart);
+	float cart[2];
+	cartSides(nes, cart);
+	*right = mixSide(&nes->mixer, 1, levels, cart[1]);
+	return mixSide(&nes->mixer, 0, levels, cart[0]);
 }
 
 static inline int16_t filter(int32_t* hpPrev, int32_t* hpOut, int32_t* lpOut, int32_t in) {

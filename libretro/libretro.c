@@ -225,6 +225,39 @@ static struct OptionChoice scanlineChoices[] = {
 	{ "Dark", 64 },
 };
 
+// A cart sound chip voice's volume and position, applied with Cart Sound Volume's
+#define VOICE_OPTION(key, name) \
+	{ "armnes_volume_" key, name " Volume", NULL, "One voice of the cart's sound chip, on top of Cart Sound Volume.", NULL, \
+		"audio", VOLUME_VALUES, "100%" }, \
+	{ "armnes_pan_" key, name " Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" }
+
+// The voices' option keys, in enum Voice's order (the NSF's Disk System has none)
+static const char* const voiceKeys[VOICE_FDS] = {
+	"vrc6_pulse1",
+	"vrc6_pulse2",
+	"vrc6_saw",
+	"vrc7_1",
+	"vrc7_2",
+	"vrc7_3",
+	"vrc7_4",
+	"vrc7_5",
+	"vrc7_6",
+	"5b_a",
+	"5b_b",
+	"5b_c",
+	"n163_1",
+	"n163_2",
+	"n163_3",
+	"n163_4",
+	"n163_5",
+	"n163_6",
+	"n163_7",
+	"n163_8",
+	"mmc5_pulse1",
+	"mmc5_pulse2",
+	"mmc5_pcm",
+};
+
 #define VOLUME_VALUES { { "0%", NULL }, { "10%", NULL }, { "20%", NULL }, { "30%", NULL }, { "40%", NULL }, { "50%", NULL }, \
 	{ "60%", NULL }, { "70%", NULL }, { "80%", NULL }, { "90%", NULL }, { "100%", NULL }, { NULL, NULL } }
 #define PAN_VALUES { { "Left", NULL }, { "75% left", NULL }, { "50% left", NULL }, { "25% left", NULL }, { "Center", NULL }, \
@@ -328,6 +361,30 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_volume_cart", "Cart Sound Volume", NULL,
 		"The sound chip in the cart or the Disk System.", NULL, "audio", VOLUME_VALUES, "100%" },
 	{ "armnes_pan_cart", "Cart Sound Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
+	// Each voice of the cart's sound chip (enum Voice's order), shown only for its chip
+	VOICE_OPTION("vrc6_pulse1", "VRC6 Pulse 1"),
+	VOICE_OPTION("vrc6_pulse2", "VRC6 Pulse 2"),
+	VOICE_OPTION("vrc6_saw", "VRC6 Sawtooth"),
+	VOICE_OPTION("vrc7_1", "VRC7 FM 1"),
+	VOICE_OPTION("vrc7_2", "VRC7 FM 2"),
+	VOICE_OPTION("vrc7_3", "VRC7 FM 3"),
+	VOICE_OPTION("vrc7_4", "VRC7 FM 4"),
+	VOICE_OPTION("vrc7_5", "VRC7 FM 5"),
+	VOICE_OPTION("vrc7_6", "VRC7 FM 6"),
+	VOICE_OPTION("5b_a", "Sunsoft 5B Square A"),
+	VOICE_OPTION("5b_b", "Sunsoft 5B Square B"),
+	VOICE_OPTION("5b_c", "Sunsoft 5B Square C"),
+	VOICE_OPTION("n163_1", "Namco 163 Wave 1"),
+	VOICE_OPTION("n163_2", "Namco 163 Wave 2"),
+	VOICE_OPTION("n163_3", "Namco 163 Wave 3"),
+	VOICE_OPTION("n163_4", "Namco 163 Wave 4"),
+	VOICE_OPTION("n163_5", "Namco 163 Wave 5"),
+	VOICE_OPTION("n163_6", "Namco 163 Wave 6"),
+	VOICE_OPTION("n163_7", "Namco 163 Wave 7"),
+	VOICE_OPTION("n163_8", "Namco 163 Wave 8"),
+	VOICE_OPTION("mmc5_pulse1", "MMC5 Pulse 1"),
+	VOICE_OPTION("mmc5_pulse2", "MMC5 Pulse 2"),
+	VOICE_OPTION("mmc5_pcm", "MMC5 PCM (Samples)"),
 	{ "armnes_turbo", "Turbo Speed", NULL,
 		"How fast the turbo buttons (X for A, Y for B) press and release.",
 		NULL, "input", { { "Off", NULL }, { "30 per second", NULL }, { "20 per second", NULL }, { "15 per second", NULL },
@@ -460,6 +517,24 @@ static void readSoundOptions(void) {
 		nes.mixer.gain[c][1] = volume / 100.0f * (pan < 0 ? 1 + pan / 100.0f : 1);
 		nes.mixer.custom |= volume != 100 || pan != 0;
 	}
+	// Each cart voice's, on top of the cart's
+	float voiceGains[VOICES][2];
+	bool voicesCustom = false;
+	for (int v = 0; v < VOICES; v++) {
+		int volume = 100, pan = 0;
+		if (v < VOICE_FDS) {
+			char key[48];
+			snprintf(key, sizeof(key), "armnes_volume_%s", voiceKeys[v]);
+			volume = optionChoice(environ_cb, key, volumeChoices, 11, 100);
+			snprintf(key, sizeof(key), "armnes_pan_%s", voiceKeys[v]);
+			pan = optionChoice(environ_cb, key, panChoices, 9, 0);
+		}
+		voiceGains[v][0] = volume / 100.0f * (pan > 0 ? 1 - pan / 100.0f : 1);
+		voiceGains[v][1] = volume / 100.0f * (pan < 0 ? 1 + pan / 100.0f : 1);
+		voicesCustom |= volume != 100 || pan != 0;
+	}
+	apuSetVoiceGains(voiceGains, voicesCustom);
+	nes.mixer.custom |= voicesCustom;
 	nes.apu.stereo = nes.mixer.custom;
 	nes.apu.mixDirty = true;
 }
@@ -797,6 +872,24 @@ static bool showOptions(void) {
 	for (size_t i = 0; i < sizeof(shown) / sizeof(*shown); i++) {
 		struct retro_core_option_display display = { shown[i].key, shown[i].show };
 		environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
+	}
+	// A sound chip's voices, for the cart or NSF that has it
+	int const nsf = loaded ? nsfChips(&nes) : 0, mapper = nes.cart.mapper;
+	bool const chips[] = {
+		!loaded || mapper == 24 || mapper == 26 || (nsf & 1),
+		!loaded || mapper == 85 || (nsf & 2),
+		!loaded || mapper == 69 || (nsf & 32),
+		!loaded || (mapper == 19 && nes.cart.submapper != 1 && nes.cart.submapper != 2) || (nsf & 16),
+		!loaded || mapper == 5 || (nsf & 8),
+	};
+	for (int v = 0; v < VOICE_FDS; v++) {
+		int const chip = v < VOICE_VRC7_1 ? 0 : v < VOICE_5B_A ? 1 : v < VOICE_N163_1 ? 2 : v < VOICE_MMC5_PULSE1 ? 3 : 4;
+		for (int side = 0; side < 2; side++) {
+			char key[48];
+			snprintf(key, sizeof(key), side ? "armnes_pan_%s" : "armnes_volume_%s", voiceKeys[v]);
+			struct retro_core_option_display display = { key, chips[chip] };
+			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
+		}
 	}
 	for (int i = 1; i <= 16; i++) {
 		char key[32];

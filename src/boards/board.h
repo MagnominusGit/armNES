@@ -151,8 +151,20 @@ struct NsfInfo {
 };
 bool nsfInfo(struct NES*, struct NsfInfo* info);
 void nsfSelect(struct NES*, int song);
+// The sound chips an NSF names ($7B: bit 0 VRC6, 1 VRC7, 2 FDS, 3 MMC5, 4 Namco 163, 5 Sunsoft 5B), or
+// 0 for other boards
+int nsfChips(struct NES*);
 
 // The sound chips on carts, for their boards and for NSF files
+
+// For Board.voices: n levels as voices first, first + 1, ... after the count already there
+static inline int addVoices(uint8_t* ids, int* levels, int count, int first, const int* from, int n) {
+	for (int i = 0; i < n; i++) {
+		ids[count + i] = (uint8_t) (first + i);
+		levels[count + i] = from[i];
+	}
+	return count + n;
+}
 
 // asic.c: Sunsoft 5B, an AY-3-8910's three square channels, noise and envelope
 struct Sunsoft5b {
@@ -162,13 +174,17 @@ struct Sunsoft5b {
 	uint8_t noiseTimer;
 	uint32_t noiseShift;
 	uint32_t envelopeTimer;
+	// The envelope: the step in its 32-step ramp, whether it's holding, and whether this ramp runs the
+	// other way (the alternating shapes turn at each ramp's end)
 	uint8_t envelopeStep;
 	bool envelopeHolding;
 	uint8_t divider;
+	bool envelopeFlip;
 };
 void sunsoft5bWrite(struct Sunsoft5b*, uint8_t value);
 void sunsoft5bCycle(struct Sunsoft5b*);
 int sunsoft5bOutput(const struct Sunsoft5b*);
+void sunsoft5bLevels(const struct Sunsoft5b*, int out[3]);
 
 // asic.c: VRC6, two pulses and a sawtooth at $9000-$B002
 struct Vrc6Pulse {
@@ -182,10 +198,13 @@ struct Vrc6Sound {
 	uint8_t sawRate, sawStep, sawAccumulator;
 	uint16_t sawPeriod, sawTimer;
 	bool sawEnabled;
+	// $9003: bit 0 halts all three, bit 1 runs them 16 times as fast, bit 2 256 times
+	uint8_t frequency;
 };
 void vrc6SoundWrite(struct Vrc6Sound*, int channel, int reg, uint8_t value);
 void vrc6SoundCycle(struct Vrc6Sound*);
 int vrc6SoundOutput(const struct Vrc6Sound*);
+void vrc6SoundLevels(const struct Vrc6Sound*, int out[3]);
 
 // asic.c: VRC7's FM synthesizer, through emu2413; one at a time
 struct Vrc7Sound {
@@ -202,6 +221,8 @@ size_t opllState(struct __OPLL*, uint8_t* data, bool load);
 void vrc7SoundWrite(struct Vrc7Sound*, uint8_t value);
 void vrc7SoundCycle(struct Vrc7Sound*, bool silenced);
 int vrc7SoundOutput(const struct Vrc7Sound*);
+void vrc7SoundLevels(const struct Vrc7Sound*, bool silenced, int out[6]);
+void vrc7SoundSilence(void);
 
 // asic.c: Namco 163, up to 8 wavetable channels in 128 bytes of RAM
 struct Namco163Sound {
@@ -213,7 +234,9 @@ struct Namco163Sound {
 uint8_t namco163SoundRead(struct Namco163Sound*);
 void namco163SoundWrite(struct Namco163Sound*, uint8_t value);
 void namco163SoundCycle(struct Namco163Sound*, bool disabled);
-int namco163SoundOutput(const struct Namco163Sound*);
+int namco163SoundOutput(const struct Namco163Sound*, int gain);
+void namco163SoundLevels(const struct Namco163Sound*, int gain, int out[8]);
+int namco163Gain(int submapper);
 
 // mmc5.c: MMC5's two pulses and PCM at $5000-$5015
 struct Mmc5Pulse {
@@ -231,6 +254,7 @@ void mmc5SoundWrite(struct Mmc5Sound*, uint16_t address, uint8_t value);
 uint8_t mmc5SoundStatus(const struct Mmc5Sound*);
 void mmc5SoundCycle(struct Mmc5Sound*);
 int mmc5SoundOutput(const struct Mmc5Sound*);
+void mmc5SoundLevels(const struct Mmc5Sound*, int out[3]);
 
 // fds.c: the Disk System's wavetable channel with its modulator at $4040-$408A
 struct FdsSound {

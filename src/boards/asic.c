@@ -97,10 +97,15 @@ struct Fme7 {
 static const uint16_t ayVolume[16] = { 0, 45, 63, 89, 126, 178, 251, 355, 501, 708, 1000, 1413, 1995, 2818, 3981, 5623 };
 
 void sunsoft5bWrite(struct Sunsoft5b* a, uint8_t value) {
+	// A register select with its high nibble set disables writes, as on the YM2149F
+	if (a->address & 0xF0) {
+		return;
+	}
 	a->regs[a->address & 15] = value;
 	if ((a->address & 15) == 13) {
 		a->envelopeStep = 0;
 		a->envelopeHolding = false;
+		a->envelopeFlip = false;
 		a->envelopeTimer = 0;
 	}
 }
@@ -127,42 +132,46 @@ void sunsoft5bCycle(struct Sunsoft5b* a) {
 	if (!a->envelopeHolding && ++a->envelopeTimer >= (envelopePeriod ? envelopePeriod : 1)) {
 		a->envelopeTimer = 0;
 		if (++a->envelopeStep >= 32) {
+			// A ramp ends: hold (shapes $00-$07 and those with hold set), or start the next ramp, the
+			// other way for the alternating shapes
 			uint8_t shape = a->regs[13];
 			if (!(shape & 8) || (shape & 1)) {
 				a->envelopeHolding = true;
 				a->envelopeStep = 31;
 			} else {
 				a->envelopeStep = 0;
+				a->envelopeFlip ^= (shape & 2) != 0;
 			}
 		}
 	}
 }
 
-int sunsoft5bOutput(const struct Sunsoft5b* a) {
+// Each of the three squares' level (noise mixed in as the chip does); the chip's output is their sum
+void sunsoft5bLevels(const struct Sunsoft5b* a, int out[3]) {
+	// The envelope's 5-bit level, two steps to each of the 16 volumes: ramping up (attack) or down,
+	// flipped on alternate ramps; held at 0 after one ramp for $00-$07, else at the far end of the
+	// ramp, or the near end with alternate ($0B and $0F turn as they stop)
 	uint8_t shape = a->regs[13];
-	int level = a->envelopeStep >> 1;
 	bool attack = shape & 4;
+	int level;
 	if (a->envelopeHolding) {
-		// After the first cycle: hold at the end, or at the start for shapes that alternate
-		bool flip = (shape & 8) && (shape & 2);
-		level = (attack ^ flip) ? 15 : 0;
-		if (!(shape & 8)) {
-			level = 0;
-		}
+		level = (shape & 8) && (attack ^ ((shape & 2) != 0)) ? 31 : 0;
 	} else {
-		bool alternate = (shape & 8) && (shape & 2) && (a->envelopeStep >= 16);
-		level = (attack ^ alternate) ? level : 15 - level;
+		level = (attack ^ a->envelopeFlip) ? a->envelopeStep : 31 - a->envelopeStep;
 	}
-	int out = 0;
+	level >>= 1;
 	for (int i = 0; i < 3; i++) {
 		bool toneOff = a->regs[7] & (1 << i), noiseOff = a->regs[7] & (8 << i);
 		bool on = (toneOff || a->toneOut[i]) && (noiseOff || (a->noiseShift & 1));
-		if (on) {
-			uint8_t volume = a->regs[8 + i];
-			out += ayVolume[(volume & 0x10) ? level : volume & 15];
-		}
+		uint8_t volume = a->regs[8 + i];
+		out[i] = on ? ayVolume[(volume & 0x10) ? level : volume & 15] : 0;
 	}
-	return out;
+}
+
+int sunsoft5bOutput(const struct Sunsoft5b* a) {
+	int levels[3];
+	sunsoft5bLevels(a, levels);
+	return levels[0] + levels[1] + levels[2];
 }
 
 static void fme7Sync(struct NES* nes) {
@@ -234,6 +243,12 @@ static int fme7Audio(struct NES* nes) {
 	return sunsoft5bOutput(&STATE(Fme7)->audio);
 }
 
+static int fme7Voices(struct NES* nes, uint8_t* ids, int* levels) {
+	int l[3];
+	sunsoft5bLevels(&STATE(Fme7)->audio, l);
+	return addVoices(ids, levels, 0, VOICE_5B_A, l, 3);
+}
+
 static void fme7Reset(struct NES* nes, bool hard) {
 	if (hard) {
 		memset(nes->boardState, 0, sizeof(struct Fme7));
@@ -243,7 +258,7 @@ static void fme7Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardFme7 = {
-	.name = "FME-7", .reset = fme7Reset, .write = fme7Write, .cpuCycle = fme7Cycle, .audio = fme7Audio, .sync = fme7Sync,
+	.name = "FME-7", .reset = fme7Reset, .write = fme7Write, .cpuCycle = fme7Cycle, .audio = fme7Audio, .voices = fme7Voices, .sync = fme7Sync,
 	.stateSize = sizeof(struct Fme7),
 };
 
@@ -564,19 +579,22 @@ struct Namco163 {
 };
 
 // The RAM through the data port, stepping the address when it's set to
+// The address steps up to $7F and stops there; it doesn't wrap
+static void namco163Step(struct Namco163Sound* n) {
+	if ((n->address & 0x80) && (n->address & 0x7F) != 0x7F) {
+		n->address++;
+	}
+}
+
 uint8_t namco163SoundRead(struct Namco163Sound* n) {
 	uint8_t value = n->ram[n->address & 0x7F];
-	if (n->address & 0x80) {
-		n->address = 0x80 | ((n->address + 1) & 0x7F);
-	}
+	namco163Step(n);
 	return value;
 }
 
 void namco163SoundWrite(struct Namco163Sound* n, uint8_t value) {
 	n->ram[n->address & 0x7F] = value;
-	if (n->address & 0x80) {
-		n->address = 0x80 | ((n->address + 1) & 0x7F);
-	}
+	namco163Step(n);
 }
 
 // One channel stepped every 15 cycles, from the last down
@@ -601,12 +619,39 @@ void namco163SoundCycle(struct Namco163Sound* n, bool disabled) {
 	n->channel = (n->channel + 1) % channels;
 }
 
-int namco163SoundOutput(const struct Namco163Sound* n) {
-	int channels = ((n->ram[0x7F] >> 4) & 7) + 1, sum = 0;
-	for (int c = 8 - channels; c < 8; c++) {
-		sum += n->output[c];
+// The channels' levels, wave 1 (registers at $78) first: each held output scaled by gain and shared
+// among the channels playing, as the chip takes turns at them; 0 for those not playing. The chip's
+// output is their sum.
+void namco163SoundLevels(const struct Namco163Sound* n, int gain, int out[8]) {
+	int const channels = ((n->ram[0x7F] >> 4) & 7) + 1;
+	for (int i = 0; i < 8; i++) {
+		int const c = 7 - i;
+		out[i] = i < channels ? n->output[c] * gain / channels : 0;
 	}
-	return sum * 64 / channels;
+}
+
+int namco163SoundOutput(const struct Namco163Sound* n, int gain) {
+	int levels[8], sum = 0;
+	namco163SoundLevels(n, gain, levels);
+	for (int i = 0; i < 8; i++) {
+		sum += levels[i];
+	}
+	return sum;
+}
+
+// Per output step, by how much louder than the 2A03 the board's N163 is (NESdev's mapper 19 submappers:
+// 3 is 11-13 dB, 4 16-17 dB, 5 18-19.5 dB, the middle of each), against the loudest 2A03 square. A
+// full-volume square of one channel spans 225 steps; the 2A03's at volume 15 spans 5953. Boards that
+// don't say (submapper 0) and NSFs get submapper 4's.
+int namco163Gain(int submapper) {
+	switch (submapper) {
+	case 3:
+		return 105; // 12 dB
+	case 5:
+		return 229; // 18.75 dB
+	default:
+		return 177; // 16.5 dB
+	}
 }
 
 static void namco163Sync(struct NES* nes) {
@@ -707,11 +752,24 @@ static void namco163Cycle(struct NES* nes) {
 	namco163SoundCycle(&n->sound, n->prg[0] & 0x40);
 }
 
+// Mapper 19 only (210 has no sound), and not submappers 1 and 2, which say the board has none
+static bool namco163Sounds(const struct NES* nes) {
+	return nes->cart.mapper == 19 && nes->cart.submapper != 1 && nes->cart.submapper != 2;
+}
+
 static int namco163Audio(struct NES* nes) {
-	if (nes->cart.mapper != 19) {
+	if (!namco163Sounds(nes)) {
 		return 0;
 	}
-	return namco163SoundOutput(&STATE(Namco163)->sound);
+	return namco163SoundOutput(&STATE(Namco163)->sound, namco163Gain(nes->cart.submapper));
+}
+
+static int namco163Voices(struct NES* nes, uint8_t* ids, int* levels) {
+	int l[8] = { 0 };
+	if (namco163Sounds(nes)) {
+		namco163SoundLevels(&STATE(Namco163)->sound, namco163Gain(nes->cart.submapper), l);
+	}
+	return addVoices(ids, levels, 0, VOICE_N163_1, l, 8);
 }
 
 static void namco163Reset(struct NES* nes, bool hard) {
@@ -752,7 +810,7 @@ static uint8_t* namco163BatteryRam(struct NES* nes, size_t* size) {
 
 const struct Board boardNamco163 = {
 	.name = "Namco 163", .reset = namco163Reset, .write = namco163Write, .read = namco163Read,
-	.cpuCycle = namco163Cycle, .audio = namco163Audio, .sync = namco163Sync, .stateSize = sizeof(struct Namco163),
+	.cpuCycle = namco163Cycle, .audio = namco163Audio, .voices = namco163Voices, .sync = namco163Sync, .stateSize = sizeof(struct Namco163),
 	.batteryRam = namco163BatteryRam,
 };
 
@@ -896,7 +954,9 @@ struct Vrc6 {
 
 // A pulse's (channel 0 and 1) or the sawtooth's (2) register 0 to 2
 void vrc6SoundWrite(struct Vrc6Sound* v, int channel, int reg, uint8_t value) {
-	if (channel < 2) {
+	if (reg == 3) {
+		v->frequency = value & 7;
+	} else if (channel < 2) {
 		struct Vrc6Pulse* p = &v->pulse[channel];
 		if (reg == 0) {
 			p->control = value;
@@ -924,15 +984,20 @@ void vrc6SoundWrite(struct Vrc6Sound* v, int channel, int reg, uint8_t value) {
 }
 
 void vrc6SoundCycle(struct Vrc6Sound* v) {
+	// $9003: halted, or the periods shifted right 4 bits (16 times as fast) or 8 (256 times)
+	if (v->frequency & 1) {
+		return;
+	}
+	int const shift = (v->frequency & 4) ? 8 : (v->frequency & 2) ? 4 : 0;
 	for (int i = 0; i < 2; i++) {
 		struct Vrc6Pulse* p = &v->pulse[i];
 		if (p->enabled && p->timer-- == 0) {
-			p->timer = p->period;
+			p->timer = p->period >> shift;
 			p->step = (p->step + 1) & 15;
 		}
 	}
 	if (v->sawEnabled && v->sawTimer-- == 0) {
-		v->sawTimer = v->sawPeriod;
+		v->sawTimer = v->sawPeriod >> shift;
 		if (++v->sawStep == 14) {
 			v->sawStep = 0;
 			v->sawAccumulator = 0;
@@ -942,18 +1007,20 @@ void vrc6SoundCycle(struct Vrc6Sound* v) {
 	}
 }
 
-int vrc6SoundOutput(const struct Vrc6Sound* v) {
-	int out = 0;
+// The two pulses' and the sawtooth's levels; the chip's output is their sum
+void vrc6SoundLevels(const struct Vrc6Sound* v, int out[3]) {
 	for (int i = 0; i < 2; i++) {
 		const struct Vrc6Pulse* p = &v->pulse[i];
-		if (p->enabled && ((p->control & 0x80) || p->step <= ((p->control >> 4) & 7))) {
-			out += p->control & 15;
-		}
+		bool high = p->enabled && ((p->control & 0x80) || p->step <= ((p->control >> 4) & 7));
+		out[i] = high ? (p->control & 15) * 380 : 0;
 	}
-	if (v->sawEnabled) {
-		out += v->sawAccumulator >> 3;
-	}
-	return out * 380;
+	out[2] = v->sawEnabled ? (v->sawAccumulator >> 3) * 380 : 0;
+}
+
+int vrc6SoundOutput(const struct Vrc6Sound* v) {
+	int levels[3];
+	vrc6SoundLevels(v, levels);
+	return levels[0] + levels[1] + levels[2];
 }
 
 static void vrc6Sync(struct NES* nes) {
@@ -986,7 +1053,8 @@ static void vrc6Write(struct NES* nes, uint16_t address, uint8_t value) {
 	case 0x9000:
 	case 0xA000:
 	case 0xB000:
-		if (sub < 3) {
+		if (sub < 3 || (address & 0xF000) == 0x9000) {
+			// $9000-$9002, $A000-$A002, $B000-$B002 and $9003 (frequency control)
 			vrc6SoundWrite(&v->sound, (address >> 12) - 9, sub, value);
 			return;
 		}
@@ -1025,6 +1093,12 @@ static int vrc6Audio(struct NES* nes) {
 	return vrc6SoundOutput(&STATE(Vrc6)->sound);
 }
 
+static int vrc6Voices(struct NES* nes, uint8_t* ids, int* levels) {
+	int l[3];
+	vrc6SoundLevels(&STATE(Vrc6)->sound, l);
+	return addVoices(ids, levels, 0, VOICE_VRC6_PULSE1, l, 3);
+}
+
 static void vrc6Reset(struct NES* nes, bool hard) {
 	if (hard) {
 		memset(nes->boardState, 0, sizeof(struct Vrc6));
@@ -1033,7 +1107,7 @@ static void vrc6Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardVrc6 = {
-	.name = "VRC6", .reset = vrc6Reset, .write = vrc6Write, .cpuCycle = vrc6Cycle, .audio = vrc6Audio,
+	.name = "VRC6", .reset = vrc6Reset, .write = vrc6Write, .cpuCycle = vrc6Cycle, .audio = vrc6Audio, .voices = vrc6Voices,
 	.sync = vrc6Sync, .stateSize = sizeof(struct Vrc6),
 };
 
@@ -1120,9 +1194,31 @@ size_t vrc7SoundState(uint8_t* data, bool load) {
 	return opllState(opll, data, load);
 }
 
+// The VRC7 takes the custom instrument ($00-$07), the test register ($0F) and six channels' registers
+// ($10-$15, $20-$25, $30-$35); it ignores the rest, the rhythm register and channels 6-8 among them
 void vrc7SoundWrite(struct Vrc7Sound* v, uint8_t value) {
+	uint8_t const a = v->address;
+	bool const taken = a < 0x08 || a == 0x0F || ((a >= 0x10 && a < 0x40) && (a & 0x0F) < 6);
+	if (opll && taken) {
+		OPLL_writeReg(opll, a, value);
+	}
+}
+
+// $E000 bit 6 set: the synthesizer silenced and its registers cleared, the tremolo LFO with them but
+// not the vibrato LFO
+void vrc7SoundSilence(void) {
 	if (opll) {
-		OPLL_writeReg(opll, v->address, value);
+		uint32_t const vibrato = opll->pm_phase;
+		OPLL_reset(opll);
+		opll->pm_phase = vibrato;
+	}
+}
+
+// Each of the six channels' level, as the last sample had them; the chip's output is their sum
+void vrc7SoundLevels(const struct Vrc7Sound* v, bool silenced, int out[6]) {
+	(void) v;
+	for (int i = 0; i < 6; i++) {
+		out[i] = silenced || !opll ? 0 : opll->ch_out[i] * 6;
 	}
 }
 
@@ -1178,6 +1274,9 @@ static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
 	case 0x9000:
 		if (!odd) {
 			v->prg[2] = value & 0x3F;
+		} else if (v->control & 0x40) {
+			// The sound held in reset: $9010 and $9030 writes are ignored
+			return;
 		} else if (address & 0x20) {
 			vrc7SoundWrite(&v->sound, value);
 			return;
@@ -1196,6 +1295,9 @@ static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
 		if (odd) {
 			v->irq.latch = value;
 			return;
+		}
+		if ((value & 0x40) && !(v->control & 0x40)) {
+			vrc7SoundSilence();
 		}
 		v->control = value;
 		break;
@@ -1220,6 +1322,13 @@ static int vrc7Audio(struct NES* nes) {
 	return vrc7SoundOutput(&STATE(Vrc7)->sound);
 }
 
+static int vrc7Voices(struct NES* nes, uint8_t* ids, int* levels) {
+	struct Vrc7* v = STATE(Vrc7);
+	int l[6];
+	vrc7SoundLevels(&v->sound, v->control & 0x40, l);
+	return addVoices(ids, levels, 0, VOICE_VRC7_1, l, 6);
+}
+
 static void vrc7Reset(struct NES* nes, bool hard) {
 	if (hard) {
 		memset(nes->boardState, 0, sizeof(struct Vrc7));
@@ -1229,6 +1338,6 @@ static void vrc7Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardVrc7 = {
-	.name = "VRC7", .reset = vrc7Reset, .write = vrc7Write, .cpuCycle = vrc7Cycle, .audio = vrc7Audio,
+	.name = "VRC7", .reset = vrc7Reset, .write = vrc7Write, .cpuCycle = vrc7Cycle, .audio = vrc7Audio, .voices = vrc7Voices,
 	.sync = vrc7Banks, .stateSize = sizeof(struct Vrc7), .saveExtra = vrc7SaveExtra, .loadExtra = vrc7LoadExtra,
 };

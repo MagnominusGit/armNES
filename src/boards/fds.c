@@ -141,27 +141,18 @@ static void envelopeTick(uint8_t* gain, bool increase) {
 	}
 }
 
-static int modulatedPitch(const struct FdsSound* s) {
-	int counter = s->modCounter;
-	int temp = counter * s->modGain;
-	int remainder = temp & 0x0F;
-	temp >>= 4;
-	if (remainder && !(temp & 0x80)) {
-		temp += counter < 0 ? -1 : 2;
+// The wave's step each CPU cycle: the pitch times the mod counter's factor, NESdev's formula (FDS audio,
+// Modulation unit), always in effect. The factor is 64 for no modulation, so the wave position is the
+// accumulator's bits 22-27 (bits 18-23 of the hardware's, which adds this every 16 cycles).
+static uint32_t modulatedPitch(const struct FdsSound* s) {
+	int temp = s->modCounter * s->modGain;
+	// Rounded up only while positive, bit 4 aside
+	if ((temp & 0x0F) && !(temp & 0x800)) {
+		temp += 0x20;
 	}
-	if (temp >= 192) {
-		temp -= 256;
-	} else if (temp < -64) {
-		temp += 256;
-	}
-	temp *= s->pitch;
-	remainder = temp & 0x3F;
-	temp >>= 6;
-	if (remainder >= 32) {
-		temp++;
-	}
-	int pitch = s->pitch + temp;
-	return pitch < 0 ? 0 : pitch;
+	// Four bits dropped, centred on $40
+	temp = ((temp + 0x400) >> 4) & 0xFF;
+	return ((uint32_t) s->pitch * (uint32_t) temp) & 0xFFFFF;
 }
 
 void fdsSoundCycle(struct FdsSound* s) {
@@ -186,11 +177,10 @@ void fdsSoundCycle(struct FdsSound* s) {
 		}
 	}
 	if (!s->waveHalt) {
-		int pitch = s->modHalt ? s->pitch : modulatedPitch(s);
-		s->wavePhase = (s->wavePhase + pitch) & 0x3FFFFF;
+		s->wavePhase = (s->wavePhase + modulatedPitch(s)) & 0x0FFFFFFF;
 	}
 	if (!s->waveWrite) {
-		s->waveOutput = s->wave[s->wavePhase >> 16];
+		s->waveOutput = s->wave[s->wavePhase >> 22];
 	}
 	// About 2.4 times a square at full volume, through the adapter's low-pass at about 2 kHz
 	static const int32_t master[4] = { 1815, 1210, 908, 726 };
@@ -363,10 +353,7 @@ static uint8_t fdsRead(struct NES* nes, uint16_t address) {
 			return (f->external & 0x7F) | 0x80;
 		}
 	}
-	if (f->soundEnabled) {
-		return fdsSoundRead(&f->sound, address, open);
-	}
-	return open;
+	return fdsSoundRead(&f->sound, address, open);
 }
 
 static void fdsWrite(struct NES* nes, uint16_t address, uint8_t value) {
@@ -381,6 +368,12 @@ static void fdsWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address == 0x4023) {
 		f->diskEnabled = value & 1;
 		f->soundEnabled = value & 2;
+		if (!f->soundEnabled) {
+			// The volume envelope as if $4080 were $80 (direct, no volume) until it's written again
+			f->sound.volumeDirect = true;
+			f->sound.volumeIncrease = false;
+			f->sound.volumeSpeed = 0;
+		}
 		if (!f->diskEnabled) {
 			f->timerEnabled = false;
 			f->timerIrq = f->diskIrq = false;
@@ -389,7 +382,9 @@ static void fdsWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		return;
 	}
 	if (address >= 0x4040 && address <= 0x408A) {
-		if (f->soundEnabled) {
+		// With the sound off ($4023 bit 1), the volume envelope, mod counter and mod table stay as the
+		// reset leaves them; the rest can still be written (NESdev, FDS audio: Audio reset)
+		if (f->soundEnabled || (address != 0x4080 && address != 0x4085 && address != 0x4088)) {
 			fdsSoundWrite(&f->sound, address, value);
 		}
 		return;
@@ -478,6 +473,12 @@ static void fdsCycles(struct NES* nes, int cycles) {
 			}
 		}
 		driveCycle(nes);
+		if (!f->soundEnabled) {
+			// The sound held in reset: no volume, the wave at its start, the mod counter at 0
+			f->sound.volume = 0;
+			f->sound.wavePhase = 0;
+			f->sound.modCounter = 0;
+		}
 		fdsSoundCycle(&f->sound);
 		*out++ = f->sound.filtered;
 		pending.count++;

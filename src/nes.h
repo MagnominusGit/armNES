@@ -207,6 +207,20 @@ struct Apu {
 	int32_t lastMix;
 };
 
+// The voices of the carts' sound chips, each with its own volume and position in the frontend's mix
+enum Voice {
+	VOICE_VRC6_PULSE1, VOICE_VRC6_PULSE2, VOICE_VRC6_SAW,
+	VOICE_VRC7_1, VOICE_VRC7_2, VOICE_VRC7_3, VOICE_VRC7_4, VOICE_VRC7_5, VOICE_VRC7_6,
+	VOICE_5B_A, VOICE_5B_B, VOICE_5B_C,
+	VOICE_N163_1, VOICE_N163_2, VOICE_N163_3, VOICE_N163_4, VOICE_N163_5, VOICE_N163_6, VOICE_N163_7, VOICE_N163_8,
+	VOICE_MMC5_PULSE1, VOICE_MMC5_PULSE2, VOICE_MMC5_PCM,
+	// An NSF's Disk System sound, which only Cart Sound Volume sets
+	VOICE_FDS,
+	VOICES
+};
+// Most voices a board has at once (an NSF with every chip)
+enum { VOICES_MOST = 24 };
+
 // A board: which parts of the cartridge the CPU and PPU see, and its registers.
 struct Board {
 	const char* name;
@@ -236,6 +250,9 @@ struct Board {
 	void (*scanline)(struct NES*, int line);
 	// The board's own sound, mixed with the APU's
 	int (*audio)(struct NES*);
+	// The same, voice by voice (ids[i] an enum Voice, levels[i] its share, summing to audio()); the
+	// count. For the frontend's mix of each voice's volume and position.
+	int (*voices)(struct NES*, uint8_t* ids, int* levels);
 	// Restore pointers from registers after a state load
 	void (*sync)(struct NES*);
 	size_t stateSize;
@@ -518,6 +535,9 @@ void nesCheatFrame(struct NES*);
 void nesTick(struct NES*);
 void nesPpuSync(struct NES*);
 void nesApuSync(struct NES*);
+// The frontend's volume and position for each voice (enum Voice): each side's gain; custom says some
+// differ from full volume in the middle
+void apuSetVoiceGains(const float gains[VOICES][2], bool custom);
 // Runs a board's cpuCycles through the cycles the CPU has passed
 void nesBoardSync(struct NES*);
 void nesPpuSyncAhead(struct NES*, int clocks);
