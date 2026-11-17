@@ -1612,10 +1612,19 @@ static void runDual(void) {
 	}
 }
 
-// R2 held fast-forwards at the frontend's maximum run speed
+// Netplay, once it has saved or loaded a state of this game: then R2 doesn't fast-forward, as the
+// other players would have to wait
+static bool netplaySeen;
+
+static void checkNetplay(void) {
+	int context = RETRO_SAVESTATE_CONTEXT_NORMAL;
+	netplaySeen |= environ_cb(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &context) && context == RETRO_SAVESTATE_CONTEXT_ROLLBACK_NETPLAY;
+}
+
+// R2 held fast-forwards at the frontend's maximum run speed, outside netplay
 static void readFastForward(void) {
 	static bool held;
-	bool now = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2) != 0;
+	bool now = !netplaySeen && input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2) != 0;
 	if (now == held) {
 		return;
 	}
@@ -2805,6 +2814,7 @@ static const uint8_t* noCartridge(size_t* size) {
 }
 
 bool retro_load_game(const struct retro_game_info* game) {
+	netplaySeen = false;
 	bool const empty = !game || (!game->data && !game->path);
 	genieMissing = false;
 	const char* contentPath = empty || !game->path ? "" : game->path;
@@ -3012,6 +3022,7 @@ size_t retro_serialize_size(void) {
 }
 
 bool retro_serialize(void* data, size_t size) {
+	checkNetplay();
 	if (!loaded || size < retro_serialize_size()) {
 		return false;
 	}
@@ -3026,6 +3037,7 @@ bool retro_serialize(void* data, size_t size) {
 }
 
 bool retro_unserialize(const void* data, size_t size) {
+	checkNetplay();
 	if (!loaded) {
 		return false;
 	}
