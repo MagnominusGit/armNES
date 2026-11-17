@@ -67,7 +67,7 @@ desktops.
 | Button | What it does |
 | --- | --- |
 | A, B, Select, Start, D-pad | The controller's own; Select also puts in a coin on VS. System games |
-| X, Y | Turbo A, turbo B, at the Turbo Speed option's rate |
+| X, Y | Turbo A, turbo B, once every Turbo Button Period |
 | R | Zapper trigger, when it aims with the right stick |
 | L | Zapper trigger off the screen, when it aims with the right stick |
 | R2 | Fast-forward while held |
@@ -113,7 +113,7 @@ Zapper plugged in (the motion ones only with Zapper Motion on).
 | Audio | Pulse 1, Pulse 2, Triangle, Noise, DMC (Samples) and Cart Sound Volume | 100%, 0% to 90% in tenths |
 | | The same channels' Position | Center, Left to Right in quarters |
 | | Each voice of the cart's sound chip: VRC6 Pulse 1, 2 and Sawtooth; VRC7 FM 1 to 6; Sunsoft 5B Square A, B and C; Namco 163 Wave 1 to 8; MMC5 Pulse 1, 2 and PCM (Samples) | Volume and Position as above, on top of Cart Sound Volume |
-| Input | Turbo Speed | 15 per second, Off, 30, 20, 10, 7.5 per second |
+| Input | Turbo Button Period | 4 frames, Off, 2 to 120 frames |
 | | Allow Opposing Directions | Off, On |
 | | Left Stick as D-Pad | On, Off |
 | | 4 Players | Auto (from an NES 2.0 header), Off, Four Score, Famicom adapter |

@@ -190,14 +190,7 @@ static struct OptionChoice overclockChoices[] = {
 };
 
 // Turbo: frames per press and release
-static struct OptionChoice turboChoices[] = {
-	{ "Off", 0 },
-	{ "30 per second", 2 },
-	{ "20 per second", 3 },
-	{ "15 per second", 4 },
-	{ "10 per second", 6 },
-	{ "7.5 per second", 8 },
-};
+enum { TURBO_FEWEST = 2, TURBO_MOST = 120 };
 
 static struct OptionChoice onOffChoices[] = {
 	{ "Off", 0 },
@@ -462,10 +455,9 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	VOICE_OPTION("mmc5_pulse1", "MMC5 Pulse 1"),
 	VOICE_OPTION("mmc5_pulse2", "MMC5 Pulse 2"),
 	VOICE_OPTION("mmc5_pcm", "MMC5 PCM (Samples)"),
-	{ "armnes_turbo", "Turbo Speed", NULL,
-		"How fast the turbo buttons (X for A, Y for B) press and release.",
-		NULL, "input", { { "Off", NULL }, { "30 per second", NULL }, { "20 per second", NULL }, { "15 per second", NULL },
-		{ "10 per second", NULL }, { "7.5 per second", NULL }, { NULL, NULL } }, "15 per second" },
+	{ "armnes_turbo_period", "Turbo Button Period", NULL,
+		"Frames per press while a turbo button is held: X for A, Y for B.",
+		NULL, "input", { { NULL, NULL } }, "4" },
 	{ "armnes_opposing", "Allow Opposing Directions", NULL,
 		"Left and right (or up and down) held together, which a real pad can't do. A few games glitch.",
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
@@ -783,6 +775,18 @@ static void readPaletteOption(void) {
 
 void retro_set_environment(retro_environment_t cb) {
 	environ_cb = cb;
+	for (struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
+		if (!strcmp(d->key, "armnes_turbo_period")) {
+			static char periods[TURBO_MOST - TURBO_FEWEST + 1][4];
+			static char labels[TURBO_MOST - TURBO_FEWEST + 1][12];
+			d->values[0] = (struct retro_core_option_value) { "off", "Off" };
+			for (int i = 0; i <= TURBO_MOST - TURBO_FEWEST; i++) {
+				snprintf(periods[i], sizeof(periods[i]), "%d", TURBO_FEWEST + i);
+				snprintf(labels[i], sizeof(labels[i]), "%d frames", TURBO_FEWEST + i);
+				d->values[i + 1] = (struct retro_core_option_value) { periods[i], labels[i] };
+			}
+		}
+	}
 	// The palette option's values: ours, the table's, and the system folder's
 	for (struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
 		if (!strcmp(d->key, "armnes_palette")) {
@@ -1067,7 +1071,11 @@ static unsigned coinFrames[4];
 static bool fdsFast;
 
 static void readInputOptions(void) {
-	turboPeriod = optionChoice(environ_cb, "armnes_turbo", turboChoices, 6, 4);
+	const char* period = optionValue(environ_cb, "armnes_turbo_period");
+	turboPeriod = period && !strcmp(period, "off") ? 0 : period ? atoi(period) : 4;
+	if (turboPeriod && (turboPeriod < TURBO_FEWEST || turboPeriod > TURBO_MOST)) {
+		turboPeriod = 4;
+	}
 	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
 	leftStickDpad = optionChoice(environ_cb, "armnes_left_stick_dpad", onOffChoices, 2, 1);
 	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 4, AUTO);
@@ -1105,8 +1113,8 @@ static uint8_t readPad(unsigned port) {
 			pad |= 1 << i;
 		}
 	}
-	// Turbo A and B: held for the first half of each period
-	if (turboPeriod && turboFrame % (unsigned) turboPeriod < (unsigned) turboPeriod / 2) {
+	// Turbo A and B: held for the first half of each period, up to 15 frames
+	if (turboPeriod && turboFrame % (unsigned) turboPeriod < (unsigned) (turboPeriod / 2 < 15 ? turboPeriod / 2 : 15)) {
 		if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X)) {
 			pad |= 0x01;
 		}
