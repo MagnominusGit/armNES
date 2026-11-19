@@ -499,7 +499,7 @@ static int fdsQuiet(struct NES* nes) {
 	return quiet < 0 ? 0 : quiet;
 }
 
-static int32_t fdsAudioSum(struct NES* nes, uint64_t first, uint64_t last) {
+static int32_t fdsAudioSum(struct NES* nes, uint64_t first, uint64_t last, float sides[2]) {
 	(void) nes;
 	int32_t sum = 0;
 	while (pending.count && pending.first <= last) {
@@ -513,6 +513,7 @@ static int32_t fdsAudioSum(struct NES* nes, uint64_t first, uint64_t last) {
 	if (!pending.count) {
 		pending.head = 0;
 	}
+	sides[0] = sides[1] = (float) sum;
 	return sum;
 }
 

@@ -395,6 +395,11 @@ void apuSetVoiceGains(const float gains[VOICES][2], bool custom) {
 // The cart's sound for each side: voice by voice when the frontend sets them apart
 static void cartSides(struct NES* nes, float out[2]) {
 	const struct Board* b = nes->board;
+	// A board with audioSum adds its sound, voices and all, after the mix
+	if (b->audioSum) {
+		out[0] = out[1] = 0;
+		return;
+	}
 	if (voicesCustom && b->voices) {
 		uint8_t ids[VOICES_MOST];
 		int levels[VOICES_MOST];
@@ -407,6 +412,102 @@ static void cartSides(struct NES* nes, float out[2]) {
 		return;
 	}
 	out[0] = out[1] = b->audio ? (float) b->audio(nes) : 0;
+}
+
+// A board's sound kept apart from the mix (Board.audioSum): runs of APU cycles at one level, oldest
+// first, with each side's for the frontend's mix (by voice when it sets them apart). first is the APU
+// cycle the oldest run's remaining cycles start on, end the one after the newest's.
+enum { CART_RUNS = 1 << 15 };
+static struct {
+	struct {
+		int32_t level;
+		uint32_t cycles;
+		float left, right;
+	} runs[CART_RUNS];
+	uint32_t head, count;
+	uint64_t first, end;
+} cartLevels;
+
+void cartLevelsStart(struct NES* nes, int cycles) {
+	// These cycles' APU cycle numbers: the APU's count and the board's run together
+	uint64_t const start = nes->apu.cycles + (uint64_t) nes->apuPending - (uint64_t) cycles + 1;
+	if (!cartLevels.count || cartLevels.end != start) {
+		cartLevels.head = cartLevels.count = 0;
+		cartLevels.first = cartLevels.end = start;
+	}
+}
+
+void cartLevelsPut(struct NES* nes, int32_t level, int cycles) {
+	if (cycles <= 0) {
+		return;
+	}
+	float left = (float) level, right = (float) level;
+	const struct Board* b = nes->board;
+	if (voicesCustom && b->voices) {
+		uint8_t ids[VOICES_MOST];
+		int levels[VOICES_MOST];
+		int n = b->voices(nes, ids, levels);
+		left = right = 0;
+		for (int i = 0; i < n; i++) {
+			left += levels[i] * voiceGains[ids[i]][0];
+			right += levels[i] * voiceGains[ids[i]][1];
+		}
+	}
+	cartLevels.end += (uint64_t) cycles;
+	if (cartLevels.count) {
+		uint32_t const last = cartLevels.head + cartLevels.count - 1;
+		if (cartLevels.runs[last].level == level && cartLevels.runs[last].left == left && cartLevels.runs[last].right == right) {
+			cartLevels.runs[last].cycles += (uint32_t) cycles;
+			return;
+		}
+	}
+	if (cartLevels.head + cartLevels.count == CART_RUNS) {
+		memmove(cartLevels.runs, cartLevels.runs + cartLevels.head, cartLevels.count * sizeof(cartLevels.runs[0]));
+		cartLevels.head = 0;
+		if (cartLevels.count == CART_RUNS) {
+			// Nothing has taken them for longer than a frame: the oldest goes
+			cartLevels.first += cartLevels.runs[0].cycles;
+			memmove(cartLevels.runs, cartLevels.runs + 1, (CART_RUNS - 1) * sizeof(cartLevels.runs[0]));
+			cartLevels.count--;
+		}
+	}
+	uint32_t const at = cartLevels.head + cartLevels.count++;
+	cartLevels.runs[at].level = level;
+	cartLevels.runs[at].cycles = (uint32_t) cycles;
+	cartLevels.runs[at].left = left;
+	cartLevels.runs[at].right = right;
+}
+
+int32_t cartLevelsSum(uint64_t first, uint64_t last, float sides[2]) {
+	int32_t sum = 0;
+	float left = 0, right = 0;
+	while (cartLevels.count && cartLevels.first <= last) {
+		uint32_t const h = cartLevels.head;
+		// The cycles before first are passed over; those up to last are taken
+		uint64_t take = cartLevels.runs[h].cycles;
+		if (cartLevels.first < first) {
+			uint64_t const skip = first - cartLevels.first;
+			take = skip < take ? skip : take;
+		} else {
+			uint64_t const room = last - cartLevels.first + 1;
+			take = room < take ? room : take;
+			sum += cartLevels.runs[h].level * (int32_t) take;
+			left += cartLevels.runs[h].left * (float) take;
+			right += cartLevels.runs[h].right * (float) take;
+		}
+		cartLevels.first += take;
+		cartLevels.runs[h].cycles -= (uint32_t) take;
+		if (!cartLevels.runs[h].cycles) {
+			cartLevels.head++;
+			cartLevels.count--;
+		}
+	}
+	if (!cartLevels.count) {
+		cartLevels.head = 0;
+	}
+	sides[0] = left;
+	sides[1] = right;
+	return sum;
 }
 
 // The frontend's mix: each channel scaled before the console's mixing curves, per side
@@ -515,10 +616,11 @@ static inline void flush(struct NES* nes, bool stereo) {
 		}
 		// A board's sound kept apart from the mix (Board.audioSum), added in as the APU would have
 		if (nes->board->audioSum) {
-			int32_t sum = nes->board->audioSum(nes, cycle + 1, stop);
+			float sides[2];
+			int32_t sum = nes->board->audioSum(nes, cycle + 1, stop, sides);
 			if (stereo) {
-				nes->audioAccum += (int32_t) lrintf((float) sum * nes->mixer.gain[MIX_CART][0]);
-				nes->mixer.accumRight += (int32_t) lrintf((float) sum * nes->mixer.gain[MIX_CART][1]);
+				nes->audioAccum += (int32_t) lrintf(sides[0] * nes->mixer.gain[MIX_CART][0]);
+				nes->mixer.accumRight += (int32_t) lrintf(sides[1] * nes->mixer.gain[MIX_CART][1]);
 			} else {
 				nes->audioAccum += sum;
 			}

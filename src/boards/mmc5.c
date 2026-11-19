@@ -220,11 +220,14 @@ static uint8_t mmc5Read(struct NES* nes, uint16_t address) {
 		uint8_t* page = nes->prgPages[address >> 12];
 		uint8_t value = page ? page[address & 0xFFF] : nes->cpu.openBus;
 		if (address < 0xC000 && (m->pcmControl & 1)) {
+			nesBoardSync(nes);
 			mmc5Pcm(nes, value);
 		}
 		return value;
 	}
 	if (address == 0x5015) {
+		// The length counters as they are at this read
+		nesBoardSync(nes);
 		return mmc5SoundStatus(&m->sound);
 	}
 	if (address == 0x5010) {
@@ -259,6 +262,10 @@ static void mmc5Write(struct NES* nes, uint16_t address, uint8_t value) {
 			exram(nes)[address & 0x3FF] = value;
 		}
 		return;
+	}
+	// The sound as it is at a write to its registers
+	if (address >= 0x5000 && address < 0x5100) {
+		nesBoardSync(nes);
 	}
 	if (address == 0x5010) {
 		m->pcmControl = value & 0x81;
@@ -474,12 +481,43 @@ uint8_t mmc5SoundStatus(const struct Mmc5Sound* m) {
 	return (m->pulse[0].length ? 1 : 0) | (m->pulse[1].length ? 2 : 0);
 }
 
-static void mmc5Cycle(struct NES* nes) {
-	mmc5SoundCycle(&M5->sound);
+// The sound through cycles CPU cycles, its level put in runs: it changes only as a pulse's timer
+// reloads (on every other cycle) or the 240 Hz step comes
+static void mmc5Cycles(struct NES* nes, int cycles) {
+	struct Mmc5Sound* m = &M5->sound;
+	cartLevelsStart(nes, cycles);
+	while (cycles > 0) {
+		// The step on the cycle that takes frameTimer to 7457; a timer at t reloads on its t+1th odd cycle
+		int hold = 7457 - m->frameTimer - 1;
+		hold = hold < 0 ? 0 : hold < cycles ? hold : cycles;
+		for (int i = 0; i < 2; i++) {
+			int const wrap = 2 * (m->pulse[i].timer + 1) - (m->odd ? 0 : 1);
+			hold = wrap - 1 < hold ? wrap - 1 : hold;
+		}
+		int const ticks = m->odd ? hold / 2 : (hold + 1) / 2;
+		for (int i = 0; i < 2; i++) {
+			m->pulse[i].timer = (uint16_t) (m->pulse[i].timer - ticks);
+		}
+		m->odd ^= hold & 1;
+		m->frameTimer = (uint16_t) (m->frameTimer + hold);
+		cartLevelsPut(nes, mmc5SoundOutput(m), hold);
+		cycles -= hold;
+		if (cycles) {
+			mmc5SoundCycle(m);
+			cartLevelsPut(nes, mmc5SoundOutput(m), 1);
+			cycles--;
+		}
+	}
 }
 
-static int mmc5Audio(struct NES* nes) {
-	return mmc5SoundOutput(&M5->sound);
+static int mmc5Quiet(struct NES* nes) {
+	(void) nes;
+	return 0xFFFE;
+}
+
+static int32_t mmc5AudioSum(struct NES* nes, uint64_t first, uint64_t last, float sides[2]) {
+	(void) nes;
+	return cartLevelsSum(first, last, sides);
 }
 
 static int mmc5Voices(struct NES* nes, uint8_t* ids, int* levels) {
@@ -513,6 +551,7 @@ static void mmc5Reset(struct NES* nes, bool hard) {
 
 const struct Board boardMmc5 = {
 	.name = "MMC5", .reset = mmc5Reset, .write = mmc5Write, .read = mmc5Read, .ppuRead = mmc5PpuRead,
-	.scanline = mmc5Scanline, .irqQuietDots = mmc5IrqQuietDots, .cpuCycle = mmc5Cycle, .audio = mmc5Audio, .voices = mmc5Voices,
+	.scanline = mmc5Scanline, .irqQuietDots = mmc5IrqQuietDots, .cpuCycles = mmc5Cycles, .cpuQuiet = mmc5Quiet, .audioSum = mmc5AudioSum,
+	.voices = mmc5Voices,
 	.sync = mmc5Sync, .stateSize = sizeof(struct Mmc5),
 };

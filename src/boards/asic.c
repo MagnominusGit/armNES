@@ -199,6 +199,10 @@ static void fme7Sync(struct NES* nes) {
 
 static void fme7Write(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Fme7* f = STATE(Fme7);
+	// The counter and the sound as they are at this write; the IRQ's quiet stretch is worked out again
+	// after it
+	nesBoardSync(nes);
+	nes->boardQuiet = 0;
 	if (address >= 0xC000) {
 		if (address < 0xE000) {
 			f->audio.address = value;
@@ -231,16 +235,42 @@ static void fme7Write(struct NES* nes, uint16_t address, uint8_t value) {
 	}
 }
 
-static void fme7Cycle(struct NES* nes) {
+// The counter and the sound through cycles CPU cycles: the counter counts down, the IRQ on its wrap
+// (on the last cycle, as fme7Quiet() keeps it there); the sound steps once every 16 cycles and holds
+// its level between
+static void fme7Cycles(struct NES* nes, int cycles) {
 	struct Fme7* f = STATE(Fme7);
-	sunsoft5bCycle(&f->audio);
-	if (f->counting && f->counter-- == 0 && f->irqEnabled) {
-		nesSetIrq(nes, IRQ_MAPPER, true);
+	if (f->counting) {
+		bool const wraps = (int) f->counter < cycles;
+		f->counter = (uint16_t) (f->counter - cycles);
+		if (wraps && f->irqEnabled) {
+			nesSetIrq(nes, IRQ_MAPPER, true);
+		}
+	}
+	cartLevelsStart(nes, cycles);
+	struct Sunsoft5b* a = &f->audio;
+	while (cycles > 0) {
+		int hold = 15 - a->divider;
+		hold = hold < 0 ? 0 : hold < cycles ? hold : cycles;
+		a->divider = (uint8_t) (a->divider + hold);
+		cartLevelsPut(nes, sunsoft5bOutput(a), hold);
+		cycles -= hold;
+		if (cycles) {
+			sunsoft5bCycle(a);
+			cartLevelsPut(nes, sunsoft5bOutput(a), 1);
+			cycles--;
+		}
 	}
 }
 
-static int fme7Audio(struct NES* nes) {
-	return sunsoft5bOutput(&STATE(Fme7)->audio);
+static int fme7Quiet(struct NES* nes) {
+	struct Fme7* f = STATE(Fme7);
+	return f->counting && f->irqEnabled && f->counter < 0xFFFE ? f->counter : 0xFFFE;
+}
+
+static int32_t boardAudioSum(struct NES* nes, uint64_t first, uint64_t last, float sides[2]) {
+	(void) nes;
+	return cartLevelsSum(first, last, sides);
 }
 
 static int fme7Voices(struct NES* nes, uint8_t* ids, int* levels) {
@@ -258,7 +288,8 @@ static void fme7Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardFme7 = {
-	.name = "FME-7", .reset = fme7Reset, .write = fme7Write, .cpuCycle = fme7Cycle, .audio = fme7Audio, .voices = fme7Voices, .sync = fme7Sync,
+	.name = "FME-7", .reset = fme7Reset, .write = fme7Write, .cpuCycles = fme7Cycles, .cpuQuiet = fme7Quiet,
+	.audioSum = boardAudioSum, .voices = fme7Voices, .sync = fme7Sync,
 	.stateSize = sizeof(struct Fme7),
 };
 
@@ -300,6 +331,29 @@ static void vrcIrqCycle(struct NES* nes, struct VrcIrq* irq) {
 	} else {
 		irq->counter++;
 	}
+}
+
+// The counter through cycles CPU cycles at once; the IRQ comes on the last, if at all, as vrcIrqQuiet()
+// keeps it there
+static void vrcIrqCycles(struct NES* nes, struct VrcIrq* irq, int cycles) {
+	for (int i = 0; i < cycles && (irq->control & 2); i++) {
+		vrcIrqCycle(nes, irq);
+	}
+}
+
+// Cycles that can pass before the counter raises the IRQ: one clock each in cycle mode; in scanline
+// mode the first clock after the prescaler runs out, the others at least 113 cycles apart (341/3)
+static int vrcIrqQuiet(const struct VrcIrq* irq) {
+	if (!(irq->control & 2)) {
+		return 0xFFFE;
+	}
+	int const steps = 0xFF - irq->counter;
+	if (irq->control & 4) {
+		return steps;
+	}
+	int const first = irq->prescaler > 0 ? (irq->prescaler + 2) / 3 : 1;
+	int const quiet = first - 1 + steps * 113;
+	return quiet < 0xFFFE ? quiet : 0xFFFE;
 }
 
 // VRC2 and VRC4 (21, 22, 23, 25): the boards wire different address lines to the chip's A0 and A1;
@@ -697,6 +751,8 @@ static uint8_t namco163Read(struct NES* nes, uint16_t address) {
 	if (hasNamco175Ram(nes) && (address & 0xE000) == 0x6000) {
 		return n->nt[0] & 1 ? nes->cart.wram[address & 0x7FF] : nes->cpu.openBus;
 	}
+	// The counter and the sound RAM as they are at this read
+	nesBoardSync(nes);
 	switch (address & 0xF800) {
 	case 0x4800:
 		return namco163SoundRead(&n->sound);
@@ -716,6 +772,10 @@ static void namco163Write(struct NES* nes, uint16_t address, uint8_t value) {
 		}
 		return;
 	}
+	// The counter and the sound as they are at this write; the IRQ's quiet stretch is worked out again
+	// after it
+	nesBoardSync(nes);
+	nes->boardQuiet = 0;
 	switch (address & 0xF800) {
 	case 0x4800:
 		namco163SoundWrite(&n->sound, value);
@@ -744,12 +804,51 @@ static void namco163Write(struct NES* nes, uint16_t address, uint8_t value) {
 	namco163Sync(nes);
 }
 
-static void namco163Cycle(struct NES* nes) {
+static int namco163Audio(struct NES* nes);
+
+// The counter and the sound through cycles CPU cycles: the counter counts up while enabled and stops
+// at $7FFF with the IRQ (on the last cycle, as namco163Quiet() keeps it there); the sound steps a
+// channel every 15 cycles and holds its level between
+static void namco163Cycles(struct NES* nes, int cycles) {
 	struct Namco163* n = STATE(Namco163);
-	if ((n->counter & 0x8000) && (n->counter & 0x7FFF) != 0x7FFF && ++n->counter == 0xFFFF) {
-		nesSetIrq(nes, IRQ_MAPPER, true);
+	if ((n->counter & 0x8000) && (n->counter & 0x7FFF) != 0x7FFF) {
+		int const left = 0xFFFF - n->counter;
+		if (cycles >= left) {
+			n->counter = 0xFFFF;
+			nesSetIrq(nes, IRQ_MAPPER, true);
+		} else {
+			n->counter = (uint16_t) (n->counter + cycles);
+		}
 	}
-	namco163SoundCycle(&n->sound, n->prg[0] & 0x40);
+	cartLevelsStart(nes, cycles);
+	struct Namco163Sound* s = &n->sound;
+	bool const disabled = n->prg[0] & 0x40;
+	if (disabled) {
+		// The tick counts on, past 15, and the channels hold
+		s->tick = (uint8_t) (s->tick + cycles);
+		cartLevelsPut(nes, namco163Audio(nes), cycles);
+		return;
+	}
+	while (cycles > 0) {
+		int hold = 14 - s->tick;
+		hold = hold < 0 ? 0 : hold < cycles ? hold : cycles;
+		s->tick = (uint8_t) (s->tick + hold);
+		cartLevelsPut(nes, namco163Audio(nes), hold);
+		cycles -= hold;
+		if (cycles) {
+			namco163SoundCycle(s, false);
+			cartLevelsPut(nes, namco163Audio(nes), 1);
+			cycles--;
+		}
+	}
+}
+
+static int namco163Quiet(struct NES* nes) {
+	struct Namco163* n = STATE(Namco163);
+	if ((n->counter & 0x8000) && (n->counter & 0x7FFF) != 0x7FFF) {
+		return 0xFFFF - n->counter - 1;
+	}
+	return 0xFFFE;
 }
 
 // Mapper 19 only (210 has no sound), and not submappers 1 and 2, which say the board has none
@@ -810,7 +909,7 @@ static uint8_t* namco163BatteryRam(struct NES* nes, size_t* size) {
 
 const struct Board boardNamco163 = {
 	.name = "Namco 163", .reset = namco163Reset, .write = namco163Write, .read = namco163Read,
-	.cpuCycle = namco163Cycle, .audio = namco163Audio, .voices = namco163Voices, .sync = namco163Sync, .stateSize = sizeof(struct Namco163),
+	.cpuCycles = namco163Cycles, .cpuQuiet = namco163Quiet, .audioSum = boardAudioSum, .voices = namco163Voices, .sync = namco163Sync, .stateSize = sizeof(struct Namco163),
 	.batteryRam = namco163BatteryRam,
 };
 
@@ -1007,6 +1106,40 @@ void vrc6SoundCycle(struct Vrc6Sound* v) {
 	}
 }
 
+// The sound through cycles CPU cycles, its level put in runs: it changes only as a timer reloads
+static void vrc6SoundRun(struct NES* nes, struct Vrc6Sound* v, int cycles) {
+	while (cycles > 0) {
+		// Cycles before the next reload: a timer at t reloads on the cycle after t more
+		int hold = cycles;
+		bool const running = !(v->frequency & 1);
+		if (running) {
+			for (int i = 0; i < 2; i++) {
+				if (v->pulse[i].enabled && v->pulse[i].timer < hold) {
+					hold = v->pulse[i].timer;
+				}
+			}
+			if (v->sawEnabled && v->sawTimer < hold) {
+				hold = v->sawTimer;
+			}
+			for (int i = 0; i < 2; i++) {
+				if (v->pulse[i].enabled) {
+					v->pulse[i].timer = (uint16_t) (v->pulse[i].timer - hold);
+				}
+			}
+			if (v->sawEnabled) {
+				v->sawTimer = (uint16_t) (v->sawTimer - hold);
+			}
+		}
+		cartLevelsPut(nes, vrc6SoundOutput(v), hold);
+		cycles -= hold;
+		if (cycles) {
+			vrc6SoundCycle(v);
+			cartLevelsPut(nes, vrc6SoundOutput(v), 1);
+			cycles--;
+		}
+	}
+}
+
 // The two pulses' and the sawtooth's levels; the chip's output is their sum
 void vrc6SoundLevels(const struct Vrc6Sound* v, int out[3]) {
 	for (int i = 0; i < 2; i++) {
@@ -1045,6 +1178,10 @@ static void vrc6Write(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address < 0x8000) {
 		return;
 	}
+	// The IRQ counter and the sound as they are at this write; the IRQ's quiet stretch is worked out
+	// again after it
+	nesBoardSync(nes);
+	nes->boardQuiet = 0;
 	int sub = nes->cart.mapper == 26 ? ((address & 1) << 1) | ((address >> 1) & 1) : address & 3;
 	switch (address & 0xF000) {
 	case 0x8000:
@@ -1083,14 +1220,15 @@ static void vrc6Write(struct NES* nes, uint16_t address, uint8_t value) {
 	vrc6Sync(nes);
 }
 
-static void vrc6Cycle(struct NES* nes) {
+static void vrc6Cycles(struct NES* nes, int cycles) {
 	struct Vrc6* v = STATE(Vrc6);
-	vrcIrqCycle(nes, &v->irq);
-	vrc6SoundCycle(&v->sound);
+	vrcIrqCycles(nes, &v->irq, cycles);
+	cartLevelsStart(nes, cycles);
+	vrc6SoundRun(nes, &v->sound, cycles);
 }
 
-static int vrc6Audio(struct NES* nes) {
-	return vrc6SoundOutput(&STATE(Vrc6)->sound);
+static int vrc6Quiet(struct NES* nes) {
+	return vrcIrqQuiet(&STATE(Vrc6)->irq);
 }
 
 static int vrc6Voices(struct NES* nes, uint8_t* ids, int* levels) {
@@ -1107,7 +1245,8 @@ static void vrc6Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardVrc6 = {
-	.name = "VRC6", .reset = vrc6Reset, .write = vrc6Write, .cpuCycle = vrc6Cycle, .audio = vrc6Audio, .voices = vrc6Voices,
+	.name = "VRC6", .reset = vrc6Reset, .write = vrc6Write, .cpuCycles = vrc6Cycles, .cpuQuiet = vrc6Quiet, .audioSum = boardAudioSum,
+	.voices = vrc6Voices,
 	.sync = vrc6Sync, .stateSize = sizeof(struct Vrc6),
 };
 
@@ -1264,6 +1403,10 @@ static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address < 0x8000) {
 		return;
 	}
+	// The IRQ counter and the synthesizer as they are at this write; the IRQ's quiet stretch is worked
+	// out again after it
+	nesBoardSync(nes);
+	nes->boardQuiet = 0;
 	// The register select line: A4 on VRC7a, A3 on VRC7b, either without a submapper
 	int line = nes->cart.submapper == 1 ? 0x08 : nes->cart.submapper == 2 ? 0x10 : 0x18;
 	bool odd = address & line;
@@ -1312,15 +1455,33 @@ static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
 	vrc7Banks(nes);
 }
 
-static void vrc7Cycle(struct NES* nes) {
+// The IRQ counter and the synthesizer through cycles CPU cycles, the sound held between the
+// synthesizer's samples, one every 36 cycles
+static void vrc7Cycles(struct NES* nes, int cycles) {
 	struct Vrc7* v = STATE(Vrc7);
-	vrcIrqCycle(nes, &v->irq);
-	vrc7SoundCycle(&v->sound, v->control & 0x40);
+	vrcIrqCycles(nes, &v->irq, cycles);
+	cartLevelsStart(nes, cycles);
+	struct Vrc7Sound* s = &v->sound;
+	bool const silenced = v->control & 0x40;
+	while (cycles > 0) {
+		int hold = 35 - s->clock;
+		hold = hold < cycles ? hold : cycles;
+		s->clock = (uint8_t) (s->clock + hold);
+		cartLevelsPut(nes, vrc7SoundOutput(s), hold);
+		cycles -= hold;
+		if (cycles) {
+			s->clock = 0;
+			s->sample = silenced || !opll ? 0 : OPLL_calc(opll);
+			cartLevelsPut(nes, vrc7SoundOutput(s), 1);
+			cycles--;
+		}
+	}
 }
 
-static int vrc7Audio(struct NES* nes) {
-	return vrc7SoundOutput(&STATE(Vrc7)->sound);
+static int vrc7Quiet(struct NES* nes) {
+	return vrcIrqQuiet(&STATE(Vrc7)->irq);
 }
+
 
 static int vrc7Voices(struct NES* nes, uint8_t* ids, int* levels) {
 	struct Vrc7* v = STATE(Vrc7);
@@ -1338,6 +1499,7 @@ static void vrc7Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardVrc7 = {
-	.name = "VRC7", .reset = vrc7Reset, .write = vrc7Write, .cpuCycle = vrc7Cycle, .audio = vrc7Audio, .voices = vrc7Voices,
+	.name = "VRC7", .reset = vrc7Reset, .write = vrc7Write, .cpuCycles = vrc7Cycles, .cpuQuiet = vrc7Quiet, .audioSum = boardAudioSum,
+	.voices = vrc7Voices,
 	.sync = vrc7Banks, .stateSize = sizeof(struct Vrc7), .saveExtra = vrc7SaveExtra, .loadExtra = vrc7LoadExtra,
 };
