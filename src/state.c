@@ -91,6 +91,9 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 		return false;
 	}
 	uint8_t* out = data;
+	// Quiet cycles already run are counted first: loading drops any left uncounted (before the first
+	// frame there can be some), and the run would go on a few cycles out from the one saved
+	cpuSettle(nes);
 	nesBoardSync(nes);
 	// The game's pages, as the tags can name them; a cheat cartridge's go back over them after
 	parUnmap(nes);
