@@ -884,11 +884,6 @@ uint8_t cpuPeek(struct NES* nes, uint16_t address) {
 	return 0;
 }
 
-// A loop waiting on $2002 (BIT or LDA, then a branch on bit 7 or 6 back to it, 7 cycles a pass; or LDA,
-// AND and BEQ or BNE, 9):
-// while the flags it reads can't change and nothing else can happen, the passes it would make leave
-// nothing behind but time, as the next read rewrites A, the flags and the PPU's open bus. Called at
-// the read, three cycles into a pass.
 // A JMP to itself, waiting for an interrupt: whole passes (3 cycles each) are skipped while nothing can
 // interrupt, as statusPoll() does, when the jump's bytes read alike on every pass (RAM, a ROM page no
 // board or cheat watches, or the NSF player's own code)
@@ -927,6 +922,11 @@ static void idleJump(struct NES* nes, uint16_t at, uint64_t startClock, int star
 	nes->quietBudget = nes->quietGranted = 0;
 }
 
+// A loop waiting on $2002 (BIT or LDA, then a branch on bit 7 or 6 back to it, 7 cycles a pass; or LDA,
+// AND and BEQ or BNE, 9):
+// while the flags it reads can't change and nothing else can happen, the passes it would make leave
+// nothing behind but time, as the next read rewrites A, the flags and the PPU's open bus. Called at
+// the read, three cycles into a pass.
 static uint16_t statusPoll(struct NES* nes, uint16_t address, uint64_t startClock, int startBudget) {
 	struct Cpu* cpu = &nes->cpu;
 	struct Ppu* ppu = &nes->ppu;

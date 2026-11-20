@@ -81,6 +81,9 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		}
 		if ((address & 7) != 4 || nes->exactPpu || nes->dotPpu || !fastOamWriteAhead(nes, value)) {
 			nesPpuSync(nes);
+			if (nes->board->registerWrite) {
+				nes->board->registerWrite(nes, address, value);
+			}
 			ppuWriteRegister(nes, address, value, before);
 			// The board's IRQ bound depends on what the PPU is about to put on its bus
 			if (nes->board->irqQuietDots) {

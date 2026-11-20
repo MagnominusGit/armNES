@@ -236,6 +236,9 @@ struct Board {
 	// IRQ, so the PPU is caught up first and the IRQ's quiet stretch worked out again after; NULL for
 	// always (writes to the board's work RAM, its keyboard, its sound or its PRG banks needn't)
 	bool (*writesFollowPpu)(struct NES*, uint16_t address, uint8_t value);
+	// Writes to the PPU's registers ($2000-$3FFF), shown to a board that watches them (a CHR RAM lock
+	// set by writes to $2007) with the PPU caught up, just before the PPU takes them; NULL for none
+	void (*registerWrite)(struct NES*, uint16_t address, uint8_t value);
 	// For a board watching every PPU address (not an MMC3's A12 filter) whose watch can't raise its IRQ:
 	// whether whole tiles may show it their fetches, in step()'s order, instead of dot by dot
 	bool (*tilesShowBus)(struct NES*);

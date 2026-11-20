@@ -918,6 +918,21 @@ static void fceuWrite(struct NES* n, uint16_t address, uint8_t value) {
 	leave();
 }
 
+// A board's handler on a PPU register (FFE's CHR RAM lock, 195's and 252's CHR RAM pages on $2007),
+// run on what the CPU writes there before armNES's PPU takes it; the board passes it on to FCEUmm's
+// PPU, which here is nothing
+static void fceuRegisterWrite(struct NES* n, uint16_t address, uint8_t value) {
+	if (BWrite[address] == BNull) {
+		return;
+	}
+	nesBoardWriteSync(n);
+	enter(n);
+	X.DB = value;
+	BWrite[address](address, value);
+	n->mapperQuietTicks = 0;
+	leave();
+}
+
 // A write to plain PRG RAM, or to nothing, leaves the PPU and the board's IRQ alone
 static bool fceuWritesFollowPpu(struct NES* n, uint16_t address, uint8_t value) {
 	(void) n;
@@ -1278,21 +1293,21 @@ static void fceuReset(struct NES* n, bool hard) {
 }
 
 const struct Board boardFceu = {
-	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .writesFollowPpu = fceuWritesFollowPpu, .read = fceuRead, .ppuBus = fceuPpuBus, .ppuRead = fceuPpuRead, .busShownBlank = true, .busRepeatsIgnored = fceuBusRepeatsIgnored,
+	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .writesFollowPpu = fceuWritesFollowPpu, .registerWrite = fceuRegisterWrite, .read = fceuRead, .ppuBus = fceuPpuBus, .ppuRead = fceuPpuRead, .busShownBlank = true, .busRepeatsIgnored = fceuBusRepeatsIgnored,
 	.irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline, .sync = fceuSync, .saveExtra = fceuSaveExtra,
 	.readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
 	.loadExtra = fceuLoadExtra,
 };
 
 const struct Board boardFceuCycle = {
-	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .writesFollowPpu = fceuWritesFollowPpu, .read = fceuRead, .ppuBus = fceuPpuBus, .ppuRead = fceuPpuRead, .busShownBlank = true, .busRepeatsIgnored = fceuBusRepeatsIgnored,
+	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .writesFollowPpu = fceuWritesFollowPpu, .registerWrite = fceuRegisterWrite, .read = fceuRead, .ppuBus = fceuPpuBus, .ppuRead = fceuPpuRead, .busShownBlank = true, .busRepeatsIgnored = fceuBusRepeatsIgnored,
 	.cpuCycle = fceuCycle, .irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline, .sync = fceuSync,
 	.readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
 	.saveExtra = fceuSaveExtra, .loadExtra = fceuLoadExtra,
 };
 
 const struct Board boardFceuBatch = {
-	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .writesFollowPpu = fceuWritesFollowPpu, .read = fceuRead, .ppuBus = fceuPpuBus, .ppuRead = fceuPpuRead, .busShownBlank = true, .busRepeatsIgnored = fceuBusRepeatsIgnored,
+	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .writesFollowPpu = fceuWritesFollowPpu, .registerWrite = fceuRegisterWrite, .read = fceuRead, .ppuBus = fceuPpuBus, .ppuRead = fceuPpuRead, .busShownBlank = true, .busRepeatsIgnored = fceuBusRepeatsIgnored,
 	.cpuCycles = fceuCycles, .cpuQuiet = fceuQuiet, .irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline,
 	.sync = fceuSync, .readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
 	.saveExtra = fceuSaveExtra, .loadExtra = fceuLoadExtra,

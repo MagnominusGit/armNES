@@ -675,7 +675,9 @@ static void kaiser7030Write(struct NES* nes, uint16_t address, uint8_t value) {
 		kaiser7030Sync(nes);
 		return;
 	}
-	if (address >= 0x6000 && (address < 0x8000 || (address >= 0xB800 && address < 0xD800))) {
+	// Only the RAM takes writes ($6000-$6BFF, $B800-$BFFF, $CC00-$D7FF): the ROM between stays as it is
+	if ((address >= 0x6000 && address < 0x6C00) || (address >= 0xB800 && address < 0xC000) ||
+		(address >= 0xCC00 && address < 0xD800)) {
 		*kaiser7030Byte(nes, address) = value;
 	}
 }
@@ -684,7 +686,7 @@ static void kaiser7030Sync(struct NES* nes) {
 	nesMapPrg(nes, 0x8000, 0x8000, 3);
 	nesUnmapPrg(nes, 0x6000, 0x1000);
 	nesUnmapPrg(nes, 0xB000, 0x3000);
-	// $7000-$7FFF is one 4 KB ROM bank, read as a page (writes still go to it, through here)
+	// $7000-$7FFF is one 4 KB ROM bank, read as a page
 	nesMapPrg(nes, 0x7000, 0x1000, 16 + (STATE(Kaiser7030)->regs[0] & 7));
 	nes->readHooks = 1 << 6 | 1 << 0xB | 1 << 0xC | 1 << 0xD;
 	chr8(nes, 0);

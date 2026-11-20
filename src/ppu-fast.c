@@ -1223,8 +1223,6 @@ static void drawTile(uint16_t* out, uint64_t pixels, const uint8_t* sprites, con
 #define drawTile drawTileScalar
 #endif
 
-// Up to a tile's end on a visible line, dot by dot but with only what such a dot does: the sprite 0
-// flag coming due, the pixel, the fetch, the shift, and at the end the next tile and the X step
 uint8_t nesHiddenLayers;
 
 // The background's pixel as drawn (0, the backdrop, with the layer hidden)
@@ -1256,6 +1254,8 @@ static inline void drawTileShown(uint16_t* out, uint64_t pixels, const uint8_t* 
 	drawTile(out, pixels, sprites, palette, grayMask, emphasis);
 }
 
+// Up to a tile's end on a visible line, dot by dot but with only what such a dot does: the sprite 0
+// flag coming due, the pixel, the fetch, the shift, and at the end the next tile and the X step
 static void renderSpan(struct NES* nes, int n) {
 	struct Ppu* ppu = &nes->ppu;
 	for (int i = 0; i < n; i++) {

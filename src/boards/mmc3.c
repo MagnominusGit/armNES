@@ -170,7 +170,9 @@ int mmc3IrqQuietDots(struct NES* nes) {
 		int line = ppu->scanline, dot = ppu->dot, pre = nes->region == REGION_NTSC ? 261 : 311;
 		int ahead;
 		if ((line < 240 || line == pre) && dot <= 320) {
-			ahead = dot < 256 ? 256 - dot : 0;
+			// Partway through the sprite fetches the next clock may be now, and the lines after can clock
+			// from their dot 257, earlier in the line than this
+			ahead = 256 - dot;
 		} else {
 			ahead = (line < 239 || line == pre ? 1 : pre - line) * 341 - dot + 256;
 		}
@@ -230,15 +232,16 @@ bool boardWritesFrom8000(struct NES* nes, uint16_t address, uint8_t value) {
 	return address >= 0x8000;
 }
 
-// mmc3Write's registers that change what the PPU fetches or the IRQ: $8000 (its CHR inversion; kept
-// catching the PPU up whatever it writes, as a PAL game's timing came to depend on those catch-ups),
-// the CHR banks, mirroring and the IRQ's. Not the work RAM, the PRG banks or the RAM's protection.
+// mmc3Write's registers that change what the PPU fetches or the IRQ: $8000 when it flips the CHR
+// inversion, the CHR banks, mirroring and the IRQ's. Not the work RAM, the PRG banks or their mode, or
+// the RAM's protection.
 static bool mmc3WritesFollowPpu(struct NES* nes, uint16_t address, uint8_t value) {
 	const struct Mmc3* m = STATE(Mmc3);
-	(void) value;
 	switch (address < 0x8000 ? 0 : address & 0xE001) {
 	case 0:
 		return false;
+	case 0x8000:
+		return ((value ^ m->select) & 0x80) != 0;
 	case 0x8001:
 		return (m->select & 7) < 6;
 	case 0xA001:

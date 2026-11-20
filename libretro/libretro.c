@@ -626,7 +626,6 @@ static void readSpeedOptions(void) {
 	nes.noSpriteLimit = optionChoice(environ_cb, "armnes_sprite_limit", spriteChoices, 2, 0);
 }
 
-// A side's gain falls as the channel moves to the other side
 // Under Channel Selection, whether a channel or voice (its key) is switched off
 static bool muted(const char* key) {
 	char option[48];
@@ -634,6 +633,7 @@ static bool muted(const char* key) {
 	return optionIs(environ_cb, "armnes_channel_selection", "On") && optionIs(environ_cb, option, "Off");
 }
 
+// A side's gain falls as the channel moves to the other side
 static void readSoundOptions(void) {
 	static const char* keys[MIX_CHANNELS] = { "pulse1", "pulse2", "triangle", "noise", "dmc", "cart" };
 	nes.mixer.custom = false;
