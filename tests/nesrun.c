@@ -11,6 +11,7 @@
 #include <string.h>
 #include <math.h>
 #include <zlib.h>
+#include <time.h>
 
 // nesrun <rom> [frames]: runs a test ROM headless. ROMs that report through $6000 (blargg's
 // protocol) print their result; others print a hash of the last frame.
@@ -138,6 +139,11 @@ int main(int argc, char** argv) {
 	if (wav) {
 		fwrite("RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x02\0\x80\xbb\0\0\0\xee\x02\0\x04\0\x10\0data\0\0\0\0", 1, 44, wav);
 	}
+	// NESRUN_TIME: on stderr at the end, the frames' time (nesRunFrame only), the board, and how many
+	// frames ended on the per-cycle slow path
+	bool const timing = getenv("NESRUN_TIME") != NULL;
+	double frameNs = 0;
+	int slowFrames = 0;
 	for (int frame = 0; frame < frames; frame++) {
 		nes.pads[0] = 0;
 		for (const char* p = press; p && *p;) {
@@ -174,7 +180,16 @@ int main(int argc, char** argv) {
 		}
 		// NESRUN_SKIP: every frame but the last run as one that won't be shown
 		nes.skipPixels = getenv("NESRUN_SKIP") && frame < frames - 1;
+		struct timespec t0, t1;
+		if (timing) {
+			clock_gettime(CLOCK_MONOTONIC, &t0);
+		}
 		nesRunFrame(&nes);
+		if (timing) {
+			clock_gettime(CLOCK_MONOTONIC, &t1);
+			frameNs += (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+			slowFrames += nes.slowCycles;
+		}
 		if (wav) {
 			wavBytes += fwrite(nes.audioOut, 2, nes.audioCount, wav) * 2;
 		}
@@ -197,6 +212,11 @@ int main(int argc, char** argv) {
 			printf("%s %d: %s\n", status ? "FAIL" : "PASS", status, (char*) w + 4);
 			return status ? 1 : 0;
 		}
+	}
+	if (timing) {
+		fprintf(stderr, "TIME %.4f ms board=%s slow=%d/%d bg=%d spr=%d tall=%d watch=%d\n", frameNs / 1e6 / (frames ? frames : 1),
+			nes.board && nes.board->name ? nes.board->name : "?", slowFrames, frames, nes.ppu.bgTable, nes.ppu.spriteTable,
+			nes.ppu.tall, nes.watchPpuBus);
 	}
 	const char* ppm = getenv("NESRUN_PPM");
 	if (ppm) {
