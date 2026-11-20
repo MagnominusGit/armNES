@@ -932,6 +932,7 @@ void Mapper165_Init(CartInfo *info) {
 	GenMMC3_Init(info, 512, 128, 8, info->battery);
 	cwrap = M165CWM;
 	PPU_hook = M165PPU;
+	FCEU_PPUHookNoIRQ();
 	info->Power = M165Power;
 	CHRRAMSIZE = 4096;
 	CHRRAM = (uint8_t*)FCEU_gmalloc(CHRRAMSIZE);

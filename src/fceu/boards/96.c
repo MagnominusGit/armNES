@@ -65,6 +65,7 @@ static void StateRestore(int version) {
 void Mapper96_Init(CartInfo *info) {
 	info->Power = M96Power;
 	PPU_hook = M96Hook;
+	FCEU_PPUHookNoIRQ();
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

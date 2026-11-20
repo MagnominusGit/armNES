@@ -599,6 +599,42 @@ static size_t fceuSaveExtra(struct NES* n, uint8_t* out) {
 	return size + PAGE_COUNT * 2 * sizeof(uint32_t) + sizeof(PRGIsRAM) + 2;
 }
 
+// Read handlers that read the ROM as CartBR does on some pages, as the board's state says
+static struct {
+	readfunc func;
+	int (*plain)(int page);
+} plainReads[8];
+static int plainReadCount;
+// The board's PPU_hook raises no IRQ (FCEU_PPUHookNoIRQ())
+static bool ppuHookNoIrq;
+
+void FCEU_PPUHookNoIRQ(void) {
+	ppuHookNoIrq = true;
+}
+
+void FCEU_SetPlainRead(readfunc func, int (*plain)(int page)) {
+	for (int i = 0; i < plainReadCount; i++) {
+		if (plainReads[i].func == func) {
+			plainReads[i].plain = plain;
+			return;
+		}
+	}
+	if (plainReadCount < (int) (sizeof(plainReads) / sizeof(plainReads[0]))) {
+		plainReads[plainReadCount].func = func;
+		plainReads[plainReadCount].plain = plain;
+		plainReadCount++;
+	}
+}
+
+static bool plainRead(readfunc f, int page) {
+	for (int i = 0; i < plainReadCount; i++) {
+		if (plainReads[i].func == f) {
+			return plainReads[i].plain(page) != 0;
+		}
+	}
+	return false;
+}
+
 // Copies the banks from FCEUmm's tables into the NES's
 static void syncPages(void) {
 	static readfunc pageRead[16];
@@ -626,7 +662,7 @@ static void syncPages(void) {
 		uint8_t* page = Page[p * 2];
 		nes->prgPages[p] = NULL;
 		nes->prgWritable[p] = false;
-		if ((f == CartBR || f == CartBROB) && page == Page[p * 2 + 1]) {
+		if ((f == CartBR || f == CartBROB || (f && plainRead(f, p))) && page == Page[p * 2 + 1]) {
 			nes->prgPages[p] = page ? page + (p << 12) : NULL;
 		} else if (f != ANull) {
 			hooks |= 1 << p;
@@ -708,6 +744,10 @@ static void fceuWrite(struct NES* n, uint16_t address, uint8_t value) {
 	enter(n);
 	X.DB = value;
 	BWrite[address](address, value);
+	// The board's state may have changed which pages read plainly
+	if (plainReadCount) {
+		dirty = true;
+	}
 	leave();
 }
 
@@ -767,13 +807,26 @@ static void fceuScanline(struct NES* n, int line) {
 }
 
 static int fceuIrqQuietDots(struct NES* n) {
-	if (PPU_hook) {
+	if (PPU_hook && !ppuHookNoIrq) {
 		return 8;
 	}
 	if (GameHBIRQHook || GameHBIRQHook2) {
 		return n->ppu.dot < 340 ? 341 - n->ppu.dot : 1;
 	}
 	return 1 << 20;
+}
+
+// FCEUmm boards follow the PPU only through their PPU and scanline hooks: without them a read can't
+// depend on where the PPU is (multicarts reading the whole ROM through their own handler)
+static bool fceuReadsFollowPpu(struct NES* n) {
+	(void) n;
+	return (PPU_hook && !ppuHookNoIrq) || GameHBIRQHook || GameHBIRQHook2;
+}
+
+// Whole tiles may show the board their fetches (renderTiles()): its PPU_hook only switches banks
+static bool fceuTilesShowBus(struct NES* n) {
+	(void) n;
+	return ppuHookNoIrq && !GameHBIRQHook && !GameHBIRQHook2;
 }
 
 static void fceuSync(struct NES* n) {
@@ -867,6 +920,8 @@ static void power(struct NES* n) {
 
 	ResetCartMapping();
 	ResetExState(NULL, NULL);
+	plainReadCount = 0;
+	ppuHookNoIrq = false;
 	SetReadHandler(0, 0xFFFF, NULL);
 	SetWriteHandler(0, 0xFFFF, NULL);
 	SetReadHandler(0, 0x1FFF, ARAM);
@@ -974,12 +1029,14 @@ static void fceuReset(struct NES* n, bool hard) {
 const struct Board boardFceu = {
 	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .read = fceuRead, .ppuBus = fceuPpuBus,
 	.irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline, .sync = fceuSync, .saveExtra = fceuSaveExtra,
+	.readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
 	.loadExtra = fceuLoadExtra,
 };
 
 const struct Board boardFceuCycle = {
 	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .read = fceuRead, .ppuBus = fceuPpuBus,
 	.cpuCycle = fceuCycle, .irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline, .sync = fceuSync,
+	.readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
 	.saveExtra = fceuSaveExtra, .loadExtra = fceuLoadExtra,
 };
 

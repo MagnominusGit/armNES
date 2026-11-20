@@ -66,6 +66,10 @@ static DECLFR(M235Read) {
 	else
 		return CartBR(A);
 }
+static int M235ReadPlain(int page) {
+	(void) page;
+	return !openbus;
+}
 
 static DECLFW(M235Write) {
 	cmdreg = A;
@@ -84,6 +88,7 @@ static void M235Reset(void) {
 static void M235Power(void) {
 	SetWriteHandler(0x8000, 0xFFFF, M235Write);
 	SetReadHandler(0x8000, 0xFFFF, M235Read);
+	FCEU_SetPlainRead(M235Read, M235ReadPlain);
 	cmdreg = 0;
 	reg = 0;
 	Sync();

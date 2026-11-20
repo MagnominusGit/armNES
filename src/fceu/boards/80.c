@@ -180,6 +180,7 @@ void Mapper95_Init(CartInfo *info) {
 	isExMirr = 1;
 	info->Power = M95Power;
 	PPU_hook = MExMirrPPU;
+	FCEU_PPUHookNoIRQ();
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs95, ~0, 0, 0);
 }
@@ -188,6 +189,7 @@ void Mapper207_Init(CartInfo *info) {
 	isExMirr = 1;
 	info->Power = M207Power;
 	PPU_hook = MExMirrPPU;
+	FCEU_PPUHookNoIRQ();
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs207, ~0, 0, 0);
 }

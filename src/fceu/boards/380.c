@@ -57,6 +57,10 @@ static DECLFR(M380Read)
       return CartBR(A &~0x0F | dipswitch);
    return CartBR(A);
 }
+static int M380ReadPlain(int page) {
+	(void) page;
+	return !(latche & 0x100 && !isKN35A);
+}
 
 static DECLFW(M380Write)
 {
@@ -77,6 +81,7 @@ static void M380Power(void)
    Sync();
    setchr8(0);
    SetReadHandler(0x8000, 0xFFFF, M380Read);
+   FCEU_SetPlainRead(M380Read, M380ReadPlain);
    SetWriteHandler(0x8000, 0xFFFF, M380Write);
 }
 

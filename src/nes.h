@@ -229,6 +229,12 @@ struct Board {
 	void (*write)(struct NES*, uint16_t address, uint8_t value);
 	// Reads from pages set in readHooks (4 KB each)
 	uint8_t (*read)(struct NES*, uint16_t address);
+	// Whether those reads can depend on the PPU (its state, or an IRQ it drives), so the PPU is caught
+	// up first and the IRQ's quiet stretch worked out again after; NULL for always
+	bool (*readsFollowPpu)(struct NES*);
+	// For a board watching every PPU address (not an MMC3's A12 filter) whose watch can't raise its IRQ:
+	// whether whole tiles may show it their fetches, in step()'s order, instead of dot by dot
+	bool (*tilesShowBus)(struct NES*);
 	// Every PPU bus address the PPU puts out, for boards set to watch it; busA12 for those that only
 	// act on A12 rising, so stretches with A12 low can go unwatched
 	void (*ppuBus)(struct NES*, uint16_t address);

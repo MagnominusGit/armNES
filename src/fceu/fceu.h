@@ -25,6 +25,14 @@ void FCEU_MemoryRand(uint8_t *ptr, uint32_t size);
 uint8_t FCEU_Jumper(void);
 void FCEU_MemoryRand_Reseed(uint32_t seed);
 void FASTAPASS(3) SetReadHandler(int32_t start, int32_t end, readfunc func);
+/* armNES: a read handler that reads the ROM as CartBR does on some pages, for as long as the board's state
+ * says (plain(page), page the 4 KB page $8000 >> 12 and so on): those pages are mapped straight for the
+ * CPU. plain() reads the board's state only; it's asked again after every write. */
+void FCEU_SetPlainRead(readfunc func, int (*plain)(int page));
+/* armNES: the board's PPU_hook only switches banks or mirroring and never raises an IRQ, so the PPU
+ * needn't be caught up for it before the CPU looks at the IRQ line, and whole tiles can show it their
+ * fetches */
+void FCEU_PPUHookNoIRQ(void);
 void FASTAPASS(3) SetWriteHandler(int32_t start, int32_t end, writefunc func);
 writefunc FASTAPASS(1) GetWriteHandler(int32_t a);
 readfunc FASTAPASS(1) GetReadHandler(int32_t a);

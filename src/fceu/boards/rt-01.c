@@ -45,6 +45,10 @@ static DECLFR(UNLRT01Read) {
 	} else
 		return CartBR(A);
 }
+static int UNLRT01ReadPlain(int page) {
+	/* protection bytes at $CE80 and $FE80 */
+	return page != 0xC && page != 0xF;
+}
 
 static void UNLRT01Power(void) {
 	weakbits_state = 0x13371337;
@@ -55,6 +59,7 @@ static void UNLRT01Power(void) {
 	setchr2(0x1000,0);
 	setchr2(0x1800,0);
 	SetReadHandler(0x8000, 0xFFFF, UNLRT01Read);
+	FCEU_SetPlainRead(UNLRT01Read, UNLRT01ReadPlain);
 }
 
 void UNLRT01_Init(CartInfo *info) {

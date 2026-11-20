@@ -139,11 +139,16 @@ static DECLFR(UNROM512LatchRead) {
 	}
 	return Page[A >> 11][A];
 }
+static int UNROM512LatchReadPlain(int page) {
+	(void) page;
+	return !software_id && !flash_save;
+}
 
 static void UNROM512LatchPower(void) {
 	latche = latcheinit;
 	WHSync();
 	SetReadHandler(0x8000, 0xFFFF, UNROM512LatchRead);
+	FCEU_SetPlainRead(UNROM512LatchRead, UNROM512LatchReadPlain);
 	if (submapper == 0 && !flash_save || submapper == 2)
 		SetWriteHandler(0x8000, 0xFFFF, UNROM512HLatchWrite);
 	else

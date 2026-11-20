@@ -1303,6 +1303,124 @@ static int renderTiles(struct NES* nes, int count) {
 	return done;
 }
 
+// renderTiles() for a board watching every address that lets whole tiles show it the fetches
+// (Board.tilesShowBus): it's shown them as step() shows them, on each dot the address the last one
+// left, before that dot's fetch. Kept apart so renderTiles() stays as small as it was.
+static __attribute__((noinline)) int renderTilesShown(struct NES* nes, int count) {
+	struct Ppu* ppu = &nes->ppu;
+	int x = ppu->dot;
+	uint16_t* out = &nes->frameBuffer[ppu->scanline * NES_WIDTH];
+	uint16_t emphasis = (ppu->emphRed ? 0x40 : 0) | (ppu->emphGreen ? 0x80 : 0) | (ppu->emphBlue ? 0x100 : 0);
+	uint8_t grayMask = ppu->gray ? 0x30 : 0x3F;
+	uint16_t table = ppu->bgTable ? 0x1000 : 0;
+	int s = 8 - ppu->fineX;
+	bool spritesOn = ppu->showSprites && ppu->lineHasSprites;
+	uint16_t bgL = ppu->bgL, bgH = ppu->bgH, atL = ppu->atL, atH = ppu->atH, v = ppu->v;
+	bool const skip = nes->skipPixels;
+	bool const zeroTest = spritesOn && ppu->lineHasZero && !ppu->hit && !ppu->pendingHit && ppu->showBg;
+	bool const hooked = true;
+	bool const fetchAll = !skip || zeroTest || nes->ppuReadHook || hooked;
+	int const end = x + 8 * count < 256 ? x + 8 * count : 256;
+	int done = 0;
+	while (done < count) {
+		uint64_t pixels = 0;
+		if ((!skip || zeroTest) && ppu->showBg && (x >= 8 || ppu->showBgLeft)) {
+			uint64_t color = spread[(uint8_t) (bgL >> s)] | spread[(uint8_t) (bgH >> s)] << 1;
+			uint64_t palette = (spread[(uint8_t) (atL >> s)] | spread[(uint8_t) (atH >> s)] << 1) << 2;
+			uint64_t opaque = ((color | color >> 1) & 0x0101010101010101ull) * 0xFF;
+			pixels = color | (palette & opaque);
+		}
+		const uint8_t* sprites = NULL;
+		if (spritesOn && (x >= 8 || ppu->showSpritesLeft)) {
+			sprites = &ppu->lineSprites[x];
+			if (ppu->lineHasZero && !ppu->hit && !ppu->pendingHit && ppu->showBg) {
+				for (int i = 0; i < 8; i++) {
+					if ((sprites[i] & SPRITE_ZERO) && ((pixels >> (i * 8)) & 3) && x + i != 255) {
+						// The flag shows three dots after the pixel's; this tile has run 7 - i of them
+						int delay = 3 - (7 - i);
+						if (delay <= 0) {
+							ppu->hit = true;
+						} else {
+							ppu->pendingHit = true;
+							ppu->hitDelay = delay;
+						}
+						break;
+					}
+				}
+			}
+		}
+		if (!skip) {
+			drawTile(out + x, pixels, sprites, ppu->palette, grayMask, emphasis);
+		}
+		bgL <<= 8;
+		bgH <<= 8;
+		atL <<= 8;
+		atH <<= 8;
+		// A board's read hook may look at where the PPU is
+		ppu->dot = x, ppu->v = v;
+		bool const fetch = fetchAll || x >= end - 16;
+		uint8_t nt, at, lo, hi;
+		if (hooked) {
+			uint16_t const ntAddress = 0x2000 | (v & 0xFFF);
+			uint16_t const atAddress = 0x23C0 | (v & 0xC00) | ((v >> 4) & 0x38) | ((v >> 2) & 7);
+			int const period = nes->ppuPeriod;
+			// Dot k shows the bus with ppu->dot still k - 1, as step() does
+#define SHOW(k) (ppu->dotTick += period, ppu->dot = x + (k) - 1, showBus(nes))
+			SHOW(1);
+			ppu->addressBus = ntAddress;
+			SHOW(2);
+			nt = chrRead(nes, ntAddress);
+			SHOW(3);
+			ppu->addressBus = atAddress;
+			SHOW(4);
+			at = chrRead(nes, atAddress);
+			uint16_t const loAddress = table | (nt << 4) | (v >> 12);
+			SHOW(5);
+			ppu->addressBus = loAddress;
+			SHOW(6);
+			lo = chrRead(nes, loAddress);
+			SHOW(7);
+			ppu->addressBus = loAddress | 8;
+			SHOW(8);
+			hi = chrRead(nes, loAddress | 8);
+#undef SHOW
+		} else {
+			nt = fetch ? chrRead(nes, 0x2000 | (v & 0xFFF)) : 0;
+			at = fetch ? chrRead(nes, 0x23C0 | (v & 0xC00) | ((v >> 4) & 0x38) | ((v >> 2) & 7)) : 0;
+			lo = fetch ? chrRead(nes, table | (nt << 4) | (v >> 12)) : 0;
+			hi = fetch ? chrRead(nes, table | (nt << 4) | (v >> 12) | 8) : 0;
+		}
+		uint8_t atLatch = (at >> (((v >> 4) & 4) | (v & 2))) & 3;
+		ppu->ntLatch = nt;
+		ppu->atLatch = atLatch;
+		ppu->loLatch = lo;
+		ppu->hiLatch = hi;
+		bgL |= lo;
+		bgH |= hi;
+		atL |= (atLatch & 1) ? 0xFF : 0;
+		atH |= (atLatch & 2) ? 0xFF : 0;
+		// The bus as the last fetch left it; with A12 low throughout, a board watching it saw nothing
+		ppu->addressBus = table | (nt << 4) | ((v >> 12) & 7) | 8;
+		v = (v & 0x1F) == 31 ? (v & ~0x1F) ^ 0x400 : v + 1;
+		x += 8;
+		done++;
+		if (x == 256 || ppu->pendingHit) {
+			break;
+		}
+	}
+	ppu->bgL = bgL, ppu->bgH = bgH, ppu->atL = atL, ppu->atH = atH, ppu->v = v;
+	ppu->dot = x;
+	ppu->dots += 8 * done;
+	if (!hooked) {
+		ppu->dotTick += (uint64_t) (8 * done) * nes->ppuPeriod;
+	}
+	if (x == 256) {
+		incrementY(ppu);
+		evaluateSprites(nes);
+	}
+	return done;
+}
+
 // Dots 257-340 of a visible line, for boards that don't watch the bus
 static void renderHblank(struct NES* nes) {
 	struct Ppu* ppu = &nes->ppu;
@@ -1545,9 +1663,13 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 	memcpy(&hi, ppu->spriteH, 8);
 	// Nothing to look at the tile's dots one by one: no hit on its way, no board reading the fetches,
 	// and an MMC3 watching A12 that stays low through them
+	// (or, with the background at $1000, A12 high but low for only 4 dots a tile after the first,
+	// too short for the MMC3's filter: see fastRun())
 	bool const quick = !ppu->pendingHit && !nes->ppuReadHook && (!watch ||
 		(nes->board->ppuBus == mmc3PpuBus && nes->busShown && !nes->busA12Shown && !ppu->bgTable &&
-		!(ppu->addressBus & 0x1000)));
+		!(ppu->addressBus & 0x1000)) ||
+		(nes->board->ppuBus == mmc3PpuBus && nes->busShown && nes->busA12Shown && ppu->bgTable && base >= 8 &&
+		(ppu->addressBus & 0x1000)));
 	uint64_t pixels = 0;
 	if (visible && ppu->showBg && (base >= 8 || ppu->showBgLeft)) {
 		int const sh = 8 - ppu->fineX;
@@ -1997,9 +2119,19 @@ void fastRun(struct NES* nes, int dots) {
 				continue;
 			} else if (line < 240 && rendering(ppu) && !(line == 0 && ppu->skippedDot)) {
 				// dot is the last one done, so tiles start on dots 1, 9, ... 249
+				// An MMC3's A12 filter with the background at $1000: each tile's name table and
+				// attribute fetches hold A12 low for 4 dots, two M2 rises at most, and it takes three
+				// to clock the counter, so after the first tile (whose low stretch runs on from dot
+				// 337) the fetches can go unwatched; the bus ends high, as it was shown
 				if (dot < 256 && (dot & 7) == 0 && dots >= 8 &&
-					(!nes->watchPpuBus || (!ppu->bgTable && !(ppu->addressBus & 0x1000)))) {
+					(!nes->watchPpuBus || (!ppu->bgTable && !(ppu->addressBus & 0x1000)) ||
+					(nes->board->ppuBus == mmc3PpuBus && ppu->bgTable && dot >= 8 && (ppu->addressBus & 0x1000) &&
+					nes->busShown && nes->busA12Shown))) {
 					dots -= 8 * renderTiles(nes, dots / 8);
+					continue;
+				}
+				if (dot < 256 && (dot & 7) == 0 && dots >= 8 && nes->board->tilesShowBus && nes->board->tilesShowBus(nes)) {
+					dots -= 8 * renderTilesShown(nes, dots / 8);
 					continue;
 				}
 				if (dot == 256 && dots >= 84 && nes->board->ppuBus == mmc3PpuBus) {

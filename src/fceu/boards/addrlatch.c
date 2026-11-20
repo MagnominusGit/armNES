@@ -25,6 +25,8 @@ static uint16_t addrreg0, addrreg1;
 static uint8_t dipswitch;
 static void (*WSync)(void);
 static readfunc defread;
+/* armNES: when defread reads the ROM as CartBR does, for FCEU_SetPlainRead() */
+static int (*defplain)(int page);
 static uint8_t *WRAM = NULL;
 static uint32_t WRAMSIZE;
 static uint32_t hasBattery;
@@ -47,8 +49,11 @@ static void LatchPower(void) {
 		SetReadHandler(0x6000, 0xFFFF, CartBR);
 		SetWriteHandler(0x6000, 0x7FFF, CartBW);
 		FCEU_CheatAddRAM(WRAMSIZE >> 10, 0x6000, WRAM);
-	} else
+	} else {
 		SetReadHandler(0x6000, 0xFFFF, defread);
+		if (defplain)
+			FCEU_SetPlainRead(defread, defplain);
+	}
 	SetWriteHandler(addrreg0, addrreg1, LatchWrite);
 }
 
@@ -72,6 +77,7 @@ static void Latch_Init(CartInfo *info, void (*proc)(void), readfunc func, uint16
 		defread = func;
 	else
 		defread = CartBROB;
+	defplain = NULL;
 	info->Power = LatchPower;
 	info->Reset = LatchReset;
 	info->Close = LatchClose;
@@ -106,6 +112,10 @@ static DECLFR(BMCD1038Read) {
 	else
 		return CartBR(A);
 }
+static int BMCD1038ReadPlain(int page) {
+	(void) page;
+	return !(latche & 0x100);
+}
 
 static DECLFW(BMCD1038Write) {
 
@@ -128,6 +138,7 @@ static void BMCD1038Power(void) {
 
 void BMCD1038_Init(CartInfo *info) {
 	Latch_Init(info, BMCD1038Sync, BMCD1038Read, 0x0000, 0x8000, 0xFFFF, 0);
+	defplain = BMCD1038ReadPlain;
 	info->Reset = BMCD1038Reset;
 	info->Power = BMCD1038Power;
 	AddExState(&dipswitch, 1, 0, "DIPSW");
@@ -180,6 +191,10 @@ static DECLFR(M63Read) {
 		return X.DB;
 	return CartBR(A);
 }
+static int M63ReadPlain(int page) {
+	(void) page;
+	return !openBus;
+}
 
 static void M63Sync(void) {
 	uint16_t prg =latche >>2 &(submapper ==1? 0x7F: 0xFF);
@@ -198,6 +213,7 @@ static void M63Sync(void) {
 void Mapper63_Init(CartInfo *info) {
 	submapper = info->submapper;
 	Latch_Init(info, M63Sync, M63Read, 0x0000, 0x8000, 0xFFFF, 0);
+	defplain = M63ReadPlain;
 }
 
 static void M92Sync(void) {
@@ -326,6 +342,10 @@ static DECLFR(M212Read) {
 		ret |= 0x80;
 	return ret;
 }
+static int M212ReadPlain(int page) {
+	/* $6000-$7FFF read with bit 7 set */
+	return page >= 8;
+}
 
 static void M212Sync(void) {
 	if (latche & 0x4000) {
@@ -340,6 +360,7 @@ static void M212Sync(void) {
 
 void Mapper212_Init(CartInfo *info) {
 	Latch_Init(info, M212Sync, M212Read, 0x0000, 0x8000, 0xFFFF, 0);
+	defplain = M212ReadPlain;
 }
 
 static void M214Sync(void) {
@@ -409,6 +430,10 @@ static DECLFR(M227Read) {
 	else
 		return CartBR(A);
 }
+static int M227ReadPlain(int page) {
+	(void) page;
+	return !(latche & 0x0400 && submapper == 1);
+}
 
 static void Mapper227_Reset(void) {
 	latche = 0;
@@ -419,6 +444,7 @@ void Mapper227_Init(CartInfo *info) {
 	dipswitch = FCEU_Jumper() & 15;
 	submapper =info->submapper;
 	Latch_Init(info, M227Sync, M227Read, 0x0000, 0x8000, 0xFFFF, info->iNES2 && (info->PRGRamSize || info->PRGRamSaveSize) || info->battery);
+	defplain = M227ReadPlain;
 	info->Reset = Mapper227_Reset;
 	AddExState(&dipswitch, 1, 0, "DIPSW");
 }
@@ -464,6 +490,10 @@ static DECLFR(M288Read) {
 		A |= dipswitch;
 	return CartBR(A);
 }
+static int M288ReadPlain(int page) {
+	(void) page;
+	return !(latche & 0x120 && ~latche & 0x10);
+}
 
 static void M288Reset(void) {
 	latche =0;
@@ -473,6 +503,7 @@ static void M288Reset(void) {
 void Mapper288_Init(CartInfo *info) {
 	dipswitch = FCEU_Jumper() & 15;
 	Latch_Init(info, M288Sync, M288Read, 0x0000, 0x8000, 0xFFFF, 0);
+	defplain = M288ReadPlain;
 	info->Reset = M288Reset;
 	AddExState(&dipswitch, 1, 0, "DIPSW");
 }
@@ -737,6 +768,10 @@ static DECLFR(M488Read) {
 		A =A &~0x0F | dipswitch &0xF;
 	return CartBR(A);
 }
+static int M488ReadPlain(int page) {
+	(void) page;
+	return !(latche & 0x100);
+}
 
 static void M488Reset(void) {
 	latche =0;
@@ -746,6 +781,7 @@ static void M488Reset(void) {
 void Mapper488_Init(CartInfo *info) {
 	dipswitch = FCEU_Jumper();
 	Latch_Init(info, M488Sync, M488Read, 0x0000, 0x8000, 0xFFFF, 0);
+	defplain = M488ReadPlain;
 	info->Reset = M488Reset;
 	AddExState(&dipswitch, 1, 0, "DIPSW");
 }

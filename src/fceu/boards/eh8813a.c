@@ -58,11 +58,16 @@ static DECLFR(EH8813ARead) {
 		A= (A & 0xFFF0) + hw_mode;
 	return CartBR(A);
 }
+static int EH8813AReadPlain(int page) {
+	(void) page;
+	return !(addrlatch & 0x40);
+}
 
 static void EH8813APower(void) {
 	addrlatch = datalatch = hw_mode = lock = 0;
 	Sync();
 	SetReadHandler(0x8000, 0xFFFF, EH8813ARead);
+	FCEU_SetPlainRead(EH8813ARead, EH8813AReadPlain);
 	SetWriteHandler(0x8000, 0xFFFF, EH8813AWrite);
 }
 

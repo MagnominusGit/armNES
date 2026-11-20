@@ -30,11 +30,14 @@ uint8_t busRead(struct NES* nes, uint16_t address) {
 		if (nes->vsShared && (address & 0xE000) == 0x6000) {
 			value = nes->vsRamAccess ? nes->vsShared[address & 0x7FF] : cpu->openBus;
 			driven = nes->vsRamAccess;
-		} else {
+		} else if (!nes->board->readsFollowPpu || nes->board->readsFollowPpu(nes)) {
 			nesPpuSync(nes);
 			value = nes->board->read(nes, address);
 			// The read may have acknowledged the board's IRQ
 			nes->mapperQuietTicks = 0;
+		} else {
+			// A board whose reads don't look at the PPU (an IRQ they acknowledge is set at once)
+			value = nes->board->read(nes, address);
 		}
 	} else {
 		uint8_t* page = address >= 0x4020 ? nes->prgPages[address >> 12] : NULL;

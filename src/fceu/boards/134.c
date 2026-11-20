@@ -52,6 +52,10 @@ static void Mapper134_CHRWrap(uint32_t A, uint8_t V) {
 static DECLFR(Mapper134_Read) {
 	return EXPREGS[0] &0x40? dip: CartBR(A);
 }
+static int Mapper134_ReadPlain(int page) {
+	(void) page;
+	return !(EXPREGS[0] & 0x40);
+}
 
 static DECLFW(Mapper134_Write) {
 	if (~EXPREGS[0] &0x80) {
@@ -79,6 +83,7 @@ static void Mapper134_Power(void) {
 	GenMMC3Power();
 	SetWriteHandler(0x6000, 0x7FFF, Mapper134_Write);
 	SetReadHandler(0x8000, 0xFFFF, Mapper134_Read);
+	FCEU_SetPlainRead(Mapper134_Read, Mapper134_ReadPlain);
 }
 
 void Mapper134_Init(CartInfo *info) {

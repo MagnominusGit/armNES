@@ -37,11 +37,16 @@ static void sync () {
 static DECLFR (interceptPRGRead) {
 	return Latch_address &pad &0x60? X.DB: CartBR(A);
 }
+static int interceptPRGReadPlain(int page) {
+	(void) page;
+	return !(Latch_address & pad & 0x60);
+}
 
 static void power () {
 	pad = (FCEU_Jumper() & 3) << 5;
 	Latch_power();
 	SetReadHandler(0x8000, 0xFFFF, interceptPRGRead);
+	FCEU_SetPlainRead(interceptPRGRead, interceptPRGReadPlain);
 }
 
 static void reset () {

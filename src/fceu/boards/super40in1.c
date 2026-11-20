@@ -52,6 +52,10 @@ static DECLFR(BMCWSRead) {
 		return X.DB;
 	return CartBR(A);
 }
+static int BMCWSReadPlain(int page) {
+	(void) page;
+	return !((creg >> 6) & (dipSwitch & 3));
+}
 
 static DECLFW(BMCWSWrite) {
 	if (preg & 0x20)
@@ -72,6 +76,7 @@ static void MBMCWSPower(void) {
 	dipSwitch =0;
 	Sync();
 	SetReadHandler(0x8000, 0xFFFF, BMCWSRead);
+	FCEU_SetPlainRead(BMCWSRead, BMCWSReadPlain);
 	SetWriteHandler(0x6000, 0x7FFF, BMCWSWrite);
 	SetWriteHandler(0x8000, 0xFFFF, LatchWrite);
 }

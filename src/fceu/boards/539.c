@@ -58,6 +58,10 @@ static DECLFR(M539Read) {
 		return CartBR(A);
 	}
 }
+static int M539ReadPlain(int page) {
+	/* work RAM windows over parts of pages 6, 8, $C and $D */
+	return page != 0x6 && page != 0x8 && page != 0xC && page != 0xD;
+}
 
 static DECLFW(M539Write) {
 	switch (A >> 8) {
@@ -89,6 +93,7 @@ static void M539Power(void) {
 	mirr = 0;
 	Sync();
 	SetReadHandler(0x6000, 0xFFFF, M539Read);
+	FCEU_SetPlainRead(M539Read, M539ReadPlain);
 	SetWriteHandler(0x6000, 0xFFFF, M539Write);
 }
 

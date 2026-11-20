@@ -56,10 +56,15 @@ static DECLFR(M554Read) {
     }
     return CartBR(A);
 }
+static int M554ReadPlain(int page) {
+	/* reads in pages $C, $E and $F switch banks */
+	return page != 0xC && page != 0xE && page != 0xF;
+}
 
 static void M554Power(void) {
 	Sync();
     SetReadHandler(0x6000, 0xFFFF, M554Read);
+    FCEU_SetPlainRead(M554Read, M554ReadPlain);
 }
 
 static void StateRestore(int version) {

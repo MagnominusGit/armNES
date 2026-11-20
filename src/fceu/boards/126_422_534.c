@@ -159,6 +159,10 @@ static DECLFR (readPRG) {
 	if (EXPREGS[1] &1) A = A &~1 | SL0 &1;
 	return CartBR(A);
 }
+static int readPRGPlain(int page) {
+	(void) page;
+	return !(EXPREGS[1] & 1);
+}
 
 static void reset (void) {
 	SL0++;
@@ -173,6 +177,7 @@ static void power (void) {
 	SetWriteHandler(0x6000, 0x7FFF, writeWRAM);
 	SetWriteHandler(0x8000, 0xFFFF, writeCart);
 	SetReadHandler(0x8000, 0xFFFF, readPRG);
+	FCEU_SetPlainRead(readPRG, readPRGPlain);
 }
 
 static void init (CartInfo *info) {
