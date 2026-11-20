@@ -26,7 +26,8 @@
 
 static struct NES* nes;
 static CartInfo info;
-static bool loaded, dirty, handlersDirty;
+// dirty: the PRG pages (and the rest) to copy again; chrDirty: only the CHR and name table pages
+static bool loaded, dirty, chrDirty, handlersDirty;
 static uint16_t handlerPages;
 
 uint8_t* fceuRam;
@@ -56,7 +57,7 @@ EXPSOUND GameExpSound;
 iNES_HEADER head;
 
 void FCEUPPU_LineUpdate(void) {
-	dirty = true;
+	chrDirty = true;
 }
 
 // From FCEUmm's cart.c
@@ -92,14 +93,19 @@ static INLINE void setpageptr(int s, uint32_t A, uint8_t *p, int ram) {
 	uint32_t AB = A >> 11;
 	int x;
 
-	dirty = true;
+	/* armNES: only a change needs the pages copied again (boards set their banks again on every
+	 * PPU_hook call) */
 	if (p)
 		for (x = (s >> 1) - 1; x >= 0; x--) {
+			if (PRGIsRAM[AB + x] != ram || Page[AB + x] != p - A)
+				dirty = true;
 			PRGIsRAM[AB + x] = ram;
 			Page[AB + x] = p - A;
 		}
 	else
 		for (x = (s >> 1) - 1; x >= 0; x--) {
+			if (PRGIsRAM[AB + x] || Page[AB + x])
+				dirty = true;
 			PRGIsRAM[AB + x] = 0;
 			Page[AB + x] = 0;
 		}
@@ -612,6 +618,45 @@ void FCEU_PPUHookNoIRQ(void) {
 	ppuHookNoIrq = true;
 }
 
+// The addresses the board's PPU_hook acts on (FCEU_PPUHookWatch()), none for all
+static struct {
+	uint32_t mask, value;
+} hookWatch[4];
+static int hookWatchCount;
+
+void FCEU_PPUHookWatch(uint32_t mask, uint32_t value) {
+	if (hookWatchCount < 4) {
+		hookWatch[hookWatchCount].mask = mask;
+		hookWatch[hookWatchCount].value = value;
+		hookWatchCount++;
+	}
+}
+
+// The hook is called from pattern reads, not shown the bus (FCEU_PPUHookOnFetch())
+static bool hookOnFetch;
+// The hook ignores being given the same address again (FCEU_PPUHookIgnoresRepeats())
+static bool hookIgnoresRepeats;
+
+void FCEU_PPUHookIgnoresRepeats(void) {
+	hookIgnoresRepeats = true;
+}
+
+void FCEU_PPUHookOnFetch(void) {
+	hookOnFetch = true;
+}
+
+static inline bool hookWatches(uint32_t address) {
+	if (!hookWatchCount) {
+		return true;
+	}
+	for (int i = 0; i < hookWatchCount; i++) {
+		if ((address & hookWatch[i].mask) == hookWatch[i].value) {
+			return true;
+		}
+	}
+	return false;
+}
+
 // How many CPU cycles and PPU dots the board's hooks can pass before changing the IRQ, if it says,
 // for the hook that was set when it said (boards switching chips switch hooks)
 static int (*cpuHookQuietFn)(void);
@@ -629,6 +674,15 @@ void FCEU_SetCPUHookQuiet(int (*cycles)(void)) {
 void FCEU_SetPPUHookQuiet(int (*dots)(void)) {
 	ppuHookQuietFn = dots;
 	ppuHookQuietFor = PPU_hook;
+}
+
+static int (*hbQuietFn)(void);
+static void (*hbQuietFor)(void);
+#define hbQuiet (GameHBIRQHook && GameHBIRQHook == hbQuietFor ? hbQuietFn : NULL)
+
+void FCEU_SetHBIRQQuiet(int (*clocks)(void)) {
+	hbQuietFn = clocks;
+	hbQuietFor = GameHBIRQHook;
 }
 
 void FCEU_SetPlainRead(readfunc func, int (*plain)(int page)) {
@@ -653,6 +707,17 @@ static bool plainRead(readfunc f, int page) {
 	}
 	return false;
 }
+
+static void syncChr(void);
+static void setWatch(struct NES* n);
+
+// 4 KB pages made of two 2 KB ROM banks that aren't next to each other, copied whole so the CPU reads
+// them as it does any page (shadowSrc: where each half came from). A flash board writes its ROM, so
+// after a board write they're copied again.
+static uint8_t shadow[16][0x1000];
+static const uint8_t* shadowSrc[16][2];
+static uint16_t shadowed;
+static bool shadowStale;
 
 // Copies the banks from FCEUmm's tables into the NES's
 static void syncPages(void) {
@@ -681,13 +746,36 @@ static void syncPages(void) {
 		uint8_t* page = Page[p * 2];
 		nes->prgPages[p] = NULL;
 		nes->prgWritable[p] = false;
-		if ((f == CartBR || f == CartBROB || (f && plainRead(f, p))) && page == Page[p * 2 + 1]) {
+		bool const plain = f == CartBR || f == CartBROB || (f && plainRead(f, p));
+		if (plain && page == Page[p * 2 + 1]) {
 			nes->prgPages[p] = page ? page + (p << 12) : NULL;
-		} else if (f != ANull) {
-			hooks |= 1 << p;
+			shadowed &= ~(1 << p);
+		} else if (plain && page && Page[p * 2 + 1] && !PRGIsRAM[p * 2] && !PRGIsRAM[p * 2 + 1]) {
+			const uint8_t* lo = page + (p << 12);
+			const uint8_t* hi = Page[p * 2 + 1] + (p << 12) + 0x800;
+			if (shadowStale || !(shadowed & (1 << p)) || shadowSrc[p][0] != lo || shadowSrc[p][1] != hi) {
+				memcpy(shadow[p], lo, 0x800);
+				memcpy(shadow[p] + 0x800, hi, 0x800);
+				shadowSrc[p][0] = lo;
+				shadowSrc[p][1] = hi;
+			}
+			shadowed |= 1 << p;
+			nes->prgPages[p] = shadow[p];
+		} else {
+			shadowed &= ~(1 << p);
+			if (f != ANull) {
+				hooks |= 1 << p;
+			}
 		}
 	}
+	shadowStale = false;
 	nes->readHooks = hooks;
+	syncChr();
+}
+
+// Copies only the CHR and name table banks
+static void syncChr(void) {
+	chrDirty = false;
 	for (int i = 0; i < 8; i++) {
 		nes->chrPages[i] = VPage[i] + (i << 10);
 		nes->chrWritable[i] = (PPUCHRRAM >> i) & 1;
@@ -730,7 +818,10 @@ static void fceuLoadExtra(struct NES* n, const uint8_t* in) {
 	memcpy(PRGIsRAM, in + size + sizeof(tags), sizeof(PRGIsRAM));
 	PPUCHRRAM = in[size + sizeof(tags) + sizeof(PRGIsRAM)];
 	PPUNTARAM = in[size + sizeof(tags) + sizeof(PRGIsRAM) + 1];
+	shadowStale = true;
 	syncPages();
+	// A state from before FCEU_PPUHookOnFetch() had the hook shown the bus
+	setWatch(n);
 }
 
 static inline void enter(struct NES* n) {
@@ -740,6 +831,22 @@ static inline void enter(struct NES* n) {
 	RefreshAddr = n->ppu.v;
 }
 
+// A PPU_hook is shown the bus, or called from the fast PPU's pattern fetches (FCEU_PPUHookOnFetch())
+static inline bool onFetch(const struct NES* n) {
+	return PPU_hook && hookOnFetch && !n->exactPpu;
+}
+
+// The hook (and PPU) setWatch() last set the NES up for, so leave() can tell cheaply when to again
+static void (FP_FASTAPASS(1) *watchedHook)(uint32_t);
+static bool watchedExact;
+
+static void setWatch(struct NES* n) {
+	n->watchPpuBus = PPU_hook && !onFetch(n);
+	n->ppuReadHook = onFetch(n);
+	watchedHook = PPU_hook;
+	watchedExact = n->exactPpu;
+}
+
 // Boards that switch between chips switch hooks too
 static const struct Board* hookBoard(void) {
 	return !MapIRQHook ? &boardFceu : cpuHookQuiet ? &boardFceuBatch : &boardFceuCycle;
@@ -747,7 +854,7 @@ static const struct Board* hookBoard(void) {
 
 static void syncHooks(void) {
 	const struct Board* board = hookBoard();
-	nes->watchPpuBus = PPU_hook != NULL;
+	setWatch(nes);
 	if (nes->board != board) {
 		nes->board = board;
 		nes->slowCycles = nes->ppuEveryCycle || board->cpuCycle || nes->exactTiming;
@@ -758,20 +865,48 @@ static void syncHooks(void) {
 }
 
 static inline void leave(void) {
-	if (dirty) {
-		syncPages();
+	if (__builtin_expect(dirty | chrDirty, 0)) {
+		if (dirty) {
+			syncPages();
+		} else {
+			syncChr();
+		}
 	}
-	if (nes->board != hookBoard() || nes->watchPpuBus != (PPU_hook != NULL)) {
+	if (nes->board != hookBoard() || PPU_hook != watchedHook || (hookOnFetch && nes->exactPpu != watchedExact)) {
 		syncHooks();
 	}
 }
 
+// The rendering's fetches go to the hook before their reads, as the bus showed them; the CPU's $2007
+// reads don't (the bus shows v while rendering is off, Board.busShownBlank, and not in vblank)
+static uint8_t fceuPpuRead(struct NES* n, uint16_t address) {
+	const struct Ppu* ppu = &n->ppu;
+	bool const fetch = (ppu->showBg || ppu->showSprites) && (ppu->scanline < 240 || ppu->scanline == (n->region == REGION_NTSC ? 261 : 311));
+	if (fetch && address < 0x2000 && PPU_hook && hookWatches(address)) {
+		enter(n);
+		PPU_hook(address);
+		leave();
+	}
+	uint8_t* page = n->chrPages[address >> 10];
+	return page ? page[address & 0x3FF] : 0;
+}
+
 static void fceuWrite(struct NES* n, uint16_t address, uint8_t value) {
+	// Plain RAM, or nothing there: nothing for the board's hooks to see (fceuWritesFollowPpu())
+	if (BWrite[address] == CartBW || BWrite[address] == BNull) {
+		X.DB = value;
+		BWrite[address](address, value);
+		return;
+	}
 	// A batched CPU-cycle hook as it is at this write, its quiet stretch worked out again after
 	nesBoardWriteSync(n);
 	enter(n);
 	X.DB = value;
 	BWrite[address](address, value);
+	// It may have written a flash ROM's banks
+	if (shadowed) {
+		shadowStale = dirty = true;
+	}
 	// The write may have changed what the PPU-side IRQ bound depends on (its enable, its counter)
 	n->mapperQuietTicks = 0;
 	// The board's state may have changed which pages read plainly
@@ -779,6 +914,13 @@ static void fceuWrite(struct NES* n, uint16_t address, uint8_t value) {
 		dirty = true;
 	}
 	leave();
+}
+
+// A write to plain PRG RAM, or to nothing, leaves the PPU and the board's IRQ alone
+static bool fceuWritesFollowPpu(struct NES* n, uint16_t address, uint8_t value) {
+	(void) n;
+	(void) value;
+	return BWrite[address] != CartBW && BWrite[address] != BNull;
 }
 
 static uint8_t fceuRead(struct NES* n, uint16_t address) {
@@ -824,6 +966,12 @@ static int fceuQuiet(struct NES* n) {
 // A13 rises
 static bool busA13;
 
+// A PPU_hook that raises no IRQ latches banks from the address: the same address again does nothing
+static bool fceuBusRepeatsIgnored(struct NES* n) {
+	(void) n;
+	return ppuHookNoIrq || hookIgnoresRepeats;
+}
+
 static void fceuPpuBus(struct NES* n, uint16_t address) {
 	bool a13 = (address & 0x3000) == 0x2000;
 	bool was = busA13;
@@ -831,7 +979,7 @@ static void fceuPpuBus(struct NES* n, uint16_t address) {
 	if (a13 && was) {
 		return;
 	}
-	if (PPU_hook) {
+	if (PPU_hook && hookWatches(address)) {
 		enter(n);
 		PPU_hook(address);
 		leave();
@@ -855,6 +1003,38 @@ static void fceuScanline(struct NES* n, int line) {
 	leave();
 }
 
+// Dots before the scanline hooks can change the IRQ: they run at dot 0 of lines 0-240 while rendering
+// (fceuScanline()), and GameHBIRQHook may say how many of its calls pass first (FCEU_SetHBIRQQuiet())
+static int hbQuietDots(struct NES* n) {
+	if (!GameHBIRQHook && !GameHBIRQHook2) {
+		return 1 << 20;
+	}
+	int (*const fn)(void) = hbQuiet;
+	int const clocks = GameHBIRQHook2 || !fn ? 0 : fn();
+	if (clocks >= 0xFFFF) {
+		return 1 << 20;
+	}
+	int const pre = n->region == REGION_NTSC ? 261 : 311;
+	int line = n->ppu.scanline, dot = n->ppu.dot, passed = 0, points = clocks + 1;
+	for (int guard = 0; guard < 3 * (pre + 1); guard++) {
+		passed += 341 - dot;
+		dot = 0;
+		if (line == pre) {
+			// The pre-render line may skip its last dot
+			line = 0;
+			passed--;
+		} else {
+			line++;
+		}
+		if (line <= 240 && --points == 0) {
+			// The last call's line, and its dot 0, as the one-line bound had it: the PPU catches up on
+			// whole dots, so a bound reaching further ahead keeps a dot's margin
+			return clocks ? passed - 1 : passed > 1 ? passed : 1;
+		}
+	}
+	return 1 << 20;
+}
+
 static int fceuIrqQuietDots(struct NES* n) {
 	if (PPU_hook && !ppuHookNoIrq) {
 		if (!ppuHookQuiet) {
@@ -867,13 +1047,10 @@ static int fceuIrqQuietDots(struct NES* n) {
 			return 0;
 		}
 		int const dots = ppuHookQuietFn();
-		int const line = (GameHBIRQHook || GameHBIRQHook2) ? (n->ppu.dot < 340 ? 341 - n->ppu.dot : 1) : 1 << 20;
+		int const line = hbQuietDots(n);
 		return dots < 0 ? 0 : dots < line ? dots : line;
 	}
-	if (GameHBIRQHook || GameHBIRQHook2) {
-		return n->ppu.dot < 340 ? 341 - n->ppu.dot : 1;
-	}
-	return 1 << 20;
+	return hbQuietDots(n);
 }
 
 // FCEUmm boards follow the PPU only through their PPU and scanline hooks: without them a read can't
@@ -982,9 +1159,16 @@ static void power(struct NES* n) {
 	ResetCartMapping();
 	ResetExState(NULL, NULL);
 	plainReadCount = 0;
+	shadowed = 0;
+	shadowStale = true;
 	ppuHookNoIrq = false;
+	hookWatchCount = 0;
+	hookOnFetch = false;
+	hookIgnoresRepeats = false;
 	cpuHookQuietFn = NULL;
 	cpuHookQuietFor = NULL;
+	hbQuietFn = NULL;
+	hbQuietFor = NULL;
 	ppuHookQuietFn = NULL;
 	ppuHookQuietFor = NULL;
 	SetReadHandler(0, 0xFFFF, NULL);
@@ -1085,28 +1269,28 @@ static void fceuReset(struct NES* n, bool hard) {
 		info.Reset();
 	}
 	n->board = hookBoard();
-	n->watchPpuBus = PPU_hook != NULL;
+	setWatch(n);
 	handlerPages = 0xFFF0;
 	handlersDirty = true;
 	syncPages();
 }
 
 const struct Board boardFceu = {
-	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .read = fceuRead, .ppuBus = fceuPpuBus,
+	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .writesFollowPpu = fceuWritesFollowPpu, .read = fceuRead, .ppuBus = fceuPpuBus, .ppuRead = fceuPpuRead, .busShownBlank = true, .busRepeatsIgnored = fceuBusRepeatsIgnored,
 	.irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline, .sync = fceuSync, .saveExtra = fceuSaveExtra,
 	.readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
 	.loadExtra = fceuLoadExtra,
 };
 
 const struct Board boardFceuCycle = {
-	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .read = fceuRead, .ppuBus = fceuPpuBus,
+	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .writesFollowPpu = fceuWritesFollowPpu, .read = fceuRead, .ppuBus = fceuPpuBus, .ppuRead = fceuPpuRead, .busShownBlank = true, .busRepeatsIgnored = fceuBusRepeatsIgnored,
 	.cpuCycle = fceuCycle, .irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline, .sync = fceuSync,
 	.readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
 	.saveExtra = fceuSaveExtra, .loadExtra = fceuLoadExtra,
 };
 
 const struct Board boardFceuBatch = {
-	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .read = fceuRead, .ppuBus = fceuPpuBus,
+	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .writesFollowPpu = fceuWritesFollowPpu, .read = fceuRead, .ppuBus = fceuPpuBus, .ppuRead = fceuPpuRead, .busShownBlank = true, .busRepeatsIgnored = fceuBusRepeatsIgnored,
 	.cpuCycles = fceuCycles, .cpuQuiet = fceuQuiet, .irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline,
 	.sync = fceuSync, .readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
 	.saveExtra = fceuSaveExtra, .loadExtra = fceuLoadExtra,

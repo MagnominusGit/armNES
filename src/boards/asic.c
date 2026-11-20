@@ -932,8 +932,22 @@ static uint8_t* namco163BatteryRam(struct NES* nes, size_t* size) {
 	return STATE(Namco163)->sound.ram;
 }
 
+// Its sound, its CPU-clocked counter, its PRG banks and the 175's RAM don't touch the PPU: only the CHR
+// and name table registers at $8000-$DFFF, and the top bits of $E000 (the 340's mirroring) and $E800
+// (the 163's CHR RAM) changing
+static bool namco163WritesFollowPpu(struct NES* nes, uint16_t address, uint8_t value) {
+	if (address >= 0x8000 && address < 0xE000) {
+		return true;
+	}
+	if (address >= 0xE000 && address < 0xF000) {
+		return ((value ^ STATE(Namco163)->prg[(address >> 11) & 1]) & 0xC0) != 0;
+	}
+	return false;
+}
+
 const struct Board boardNamco163 = {
-	.name = "Namco 163", .reset = namco163Reset, .write = namco163Write, .read = namco163Read,
+	.name = "Namco 163", .reset = namco163Reset, .write = namco163Write, .writesFollowPpu = namco163WritesFollowPpu,
+	.read = namco163Read,
 	.cpuCycles = namco163Cycles, .cpuQuiet = namco163Quiet, .audioSum = boardAudioSum, .voices = namco163Voices, .sync = namco163Sync, .stateSize = sizeof(struct Namco163),
 	.batteryRam = namco163BatteryRam,
 };

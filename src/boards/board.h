@@ -117,6 +117,9 @@ BOARD(boardJy);
 
 // bandai.c
 BOARD(boardBandai);
+// Board.writesFollowPpu for a board whose registers are all at $8000-$FFFF
+bool boardWritesFrom8000(struct NES*, uint16_t address, uint8_t value);
+
 bool datachSwipe(struct NES*, const char* digits);
 
 // mmc5.c

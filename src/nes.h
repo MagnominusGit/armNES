@@ -232,6 +232,10 @@ struct Board {
 	// Whether those reads can depend on the PPU (its state, or an IRQ it drives), so the PPU is caught
 	// up first and the IRQ's quiet stretch worked out again after; NULL for always
 	bool (*readsFollowPpu)(struct NES*);
+	// The same for writes: whether a write to address can change what the PPU fetches or the board's
+	// IRQ, so the PPU is caught up first and the IRQ's quiet stretch worked out again after; NULL for
+	// always (writes to the board's work RAM, its keyboard, its sound or its PRG banks needn't)
+	bool (*writesFollowPpu)(struct NES*, uint16_t address, uint8_t value);
 	// For a board watching every PPU address (not an MMC3's A12 filter) whose watch can't raise its IRQ:
 	// whether whole tiles may show it their fetches, in step()'s order, instead of dot by dot
 	bool (*tilesShowBus)(struct NES*);
@@ -239,6 +243,12 @@ struct Board {
 	// act on A12 rising, so stretches with A12 low can go unwatched
 	void (*ppuBus)(struct NES*, uint16_t address);
 	bool busA12;
+	// Whether the board ignores being shown again the address it was just shown (a watch that only
+	// latches banks from the address), so a stretch where the bus holds still can show it once
+	bool (*busRepeatsIgnored)(struct NES*);
+	// With ppuReadHook set and watchPpuBus not: the board reads the PPU's fetches through ppuRead, and
+	// while rendering is off is shown the bus (v, as the CPU moves it) as a watching board is
+	bool busShownBlank;
 	// Reads of the PPU's pattern and name tables, for boards that change data as it's fetched
 	uint8_t (*ppuRead)(struct NES*, uint16_t address);
 	void (*cpuCycle)(struct NES*);

@@ -101,7 +101,8 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		if (__builtin_expect(genieMenuWrites, 0) && genieWrite(nes, address, value)) {
 			return;
 		}
-		if (nes->board->write) {
+		bool const follows = nes->board->write && (!nes->board->writesFollowPpu || nes->board->writesFollowPpu(nes, address, value));
+		if (follows) {
 			nesPpuSync(nes);
 		}
 		if (nes->prgWritable[page] && nes->prgPages[page]) {
@@ -112,7 +113,9 @@ void busWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		if (nes->board->write) {
 			nes->board->write(nes, address, value);
 			// The write may have armed the board's IRQ
-			nes->mapperQuietTicks = 0;
+			if (follows) {
+				nes->mapperQuietTicks = 0;
+			}
 		}
 	}
 }

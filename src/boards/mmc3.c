@@ -146,6 +146,11 @@ int mmc3IrqQuietDots(struct NES* nes) {
 	if (!m->irqEnabled) {
 		return 1 << 20;
 	}
+	// Raised, the IRQ stays so until a $E000 write (which catches the PPU up first) whatever the counter
+	// does: games that leave it enabled with a latch of 0, under SEI, never lower it
+	if (nes->cpu.irqLine & IRQ_MAPPER) {
+		return 1 << 20;
+	}
 	// Rendering off, the bus holds v: only the CPU's accesses to the PPU move it, and each of those
 	// asks again (the exact PPU's fetches follow $2001 a dot or two later)
 	const struct Ppu* ppu = &nes->ppu;
@@ -219,11 +224,40 @@ void mmc3Reset(struct NES* nes, bool hard) {
 	mmc3Sync(nes);
 }
 
+bool boardWritesFrom8000(struct NES* nes, uint16_t address, uint8_t value) {
+	(void) nes;
+	(void) value;
+	return address >= 0x8000;
+}
+
+// mmc3Write's registers that change what the PPU fetches or the IRQ: $8000 (its CHR inversion; kept
+// catching the PPU up whatever it writes, as a PAL game's timing came to depend on those catch-ups),
+// the CHR banks, mirroring and the IRQ's. Not the work RAM, the PRG banks or the RAM's protection.
+static bool mmc3WritesFollowPpu(struct NES* nes, uint16_t address, uint8_t value) {
+	const struct Mmc3* m = STATE(Mmc3);
+	(void) value;
+	switch (address < 0x8000 ? 0 : address & 0xE001) {
+	case 0:
+		return false;
+	case 0x8001:
+		return (m->select & 7) < 6;
+	case 0xA001:
+		return false;
+	}
+	return true;
+}
+
+// A board on mmc3Write as it is
+#define MMC3_BOARD_RAM(var, label, variantData) \
+	const struct Board var = { .name = label, .reset = mmc3Reset, .write = mmc3Write, .writesFollowPpu = mmc3WritesFollowPpu, \
+		.ppuBus = mmc3PpuBus, .busA12 = true, .irqQuietDots = mmc3IrqQuietDots, .sync = mmc3Sync, .stateSize = sizeof(struct Mmc3), \
+		.data = variantData }
+
 #define MMC3_BOARD(var, label, variantData, writer) \
 	const struct Board var = { .name = label, .reset = mmc3Reset, .write = writer, .ppuBus = mmc3PpuBus, .busA12 = true, \
 		.irqQuietDots = mmc3IrqQuietDots, .sync = mmc3Sync, .stateSize = sizeof(struct Mmc3), .data = variantData }
 
-MMC3_BOARD(boardMmc3, "MMC3", NULL, mmc3Write);
+MMC3_BOARD_RAM(boardMmc3, "MMC3", NULL);
 
 // MMC6 (4.1): 1 KB of RAM in the chip at $7000-$7FFF (mirrored), the save. $A001 lets each 512-byte
 // half be read, and written when it can also be read; it takes writes once $8000 bit 5 has enabled
@@ -283,7 +317,7 @@ static void noMirroring(struct NES* nes) {
 }
 
 static const struct Mmc3Variant txsrom = { NULL, txsromChr, noMirroring, NULL };
-MMC3_BOARD(boardTxsrom, "TxSROM", &txsrom, mmc3Write);
+MMC3_BOARD_RAM(boardTxsrom, "TxSROM", &txsrom);
 
 // TQROM (119): CHR banks with bit 6 set are 8 KB of CHR RAM
 static void tqromChr(struct NES* nes, uint16_t address, int bank) {
@@ -295,7 +329,7 @@ static void tqromChr(struct NES* nes, uint16_t address, int bank) {
 }
 
 static const struct Mmc3Variant tqrom = { NULL, tqromChr, NULL, NULL };
-MMC3_BOARD(boardTqrom, "TQROM", &tqrom, mmc3Write);
+MMC3_BOARD_RAM(boardTqrom, "TQROM", &tqrom);
 
 // Namco 108 (206) and its relatives: MMC3's bank registers only, PRG mode 0, no CHR inversion,
 // IRQ or work RAM, mirroring from the board

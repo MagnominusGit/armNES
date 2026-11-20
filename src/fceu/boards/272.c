@@ -175,6 +175,7 @@ void Mapper272_Init(CartInfo *info) {
 	info->Reset = M272Reset;
 	PPU_hook = M272Hook;
 	FCEU_SetPPUHookQuiet(M272HookQuiet);
+	FCEU_PPUHookIgnoresRepeats(); /* armNES: it acts on A13 changing */
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

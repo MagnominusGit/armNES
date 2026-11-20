@@ -478,6 +478,7 @@ static void JYASIC_init (CartInfo *info)
    info->Close = JYASIC_close;
    PPU_hook = trapPPUAddressChange;
    FCEU_SetPPUHookQuiet(trapPPUAddressChangeQuiet);
+   FCEU_PPUHookIgnoresRepeats(); /* armNES: it counts address changes and latches from the address */
    MapIRQHook = cpuCycle;
    FCEU_SetCPUHookQuiet(cpuCycleQuiet);
    GameHBIRQHook2 = ppuScanline;

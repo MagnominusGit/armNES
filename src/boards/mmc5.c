@@ -382,17 +382,28 @@ static int mmc5IrqQuietDots(struct NES* nes) {
 	if (!m->irqEnabled || m->irqPending) {
 		return 1 << 20;
 	}
-	int line = nes->ppu.scanline;
+	// The count steps at dot 0 of each line that renders (mmc5Scanline()), and only then can the IRQ
+	// come: these are the dots before the soonest such dot it could, less a margin as the other bounds
+	// keep (a $2001 write asks again)
+	int line = nes->ppu.scanline, dot = nes->ppu.dot;
 	if (line >= 240 || !m->inFrame) {
-		return m->irqTarget ? 341 : 1 << 20;
+		if (!m->irqTarget) {
+			return 1 << 20;
+		}
+		// The frame starts on the next line that renders (line 0, its pre-render line maybe a dot short),
+		// and counts from the one after
+		int const pre = nes->region == REGION_NTSC ? 261 : 311;
+		int const start = line >= 240 ? (pre - line) * 341 + 341 - dot - 1 : 341 - dot;
+		return start + 341 - 2;
 	}
 	int lines = m->irqTarget - m->lineCounter;
 	if (lines <= 0) {
 		// The count has passed the target, which it only meets going up: nothing until line 240
 		// ends the frame
-		return (240 - line) * 341 - nes->ppu.dot;
+		return (240 - line) * 341 - dot;
 	}
-	return lines > 1 ? (lines - 1) * 341 : 0;
+	int const quiet = (lines - 1) * 341 + 341 - dot - 2;
+	return quiet > 0 ? quiet : 0;
 }
 
 // The pulses' timers run every other CPU cycle; envelopes and lengths at about 240 Hz

@@ -45,7 +45,8 @@ static DECLFW(M96Write) {
 }
 
 static void FP_FASTAPASS(1) M96Hook(uint32_t A) {
-	if ((A & 0x3000) == 0x2000) {
+	/* armNES: Sync() only when the latch changes (it's the same bank for 256 bytes of name table) */
+	if ((A & 0x3000) == 0x2000 && ppulatch != ((A >> 8) & 3)) {
 		ppulatch = (A >> 8) & 3;
 		Sync();
 	}
@@ -66,6 +67,7 @@ void Mapper96_Init(CartInfo *info) {
 	info->Power = M96Power;
 	PPU_hook = M96Hook;
 	FCEU_PPUHookNoIRQ();
+	FCEU_PPUHookWatch(0x3000, 0x2000); /* armNES: name table addresses only */
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

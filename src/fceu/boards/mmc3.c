@@ -196,6 +196,25 @@ static void MMC3_hb(void) {
 	ClockMMC3Counter();
 }
 
+/* armNES: MMC3_hb calls before the IRQ can change (FCEU_SetHBIRQQuiet()): none while it's disabled or
+ * already raised (only a write lowers it), else the count to the clock that raises it */
+static int MMC3_hbQuiet(void) {
+	int count = IRQCount, reload = IRQReload, n;
+	if (!IRQa || (X.IRQlow & FCEU_IQEXT))
+		return 0xFFFF;
+	for (n = 0; n < 512; n++) {
+		int was = count;
+		if (!count || reload) {
+			count = IRQLatch;
+			reload = 0;
+		} else
+			count--;
+		if ((was | isRevB) && !count)
+			return n;
+	}
+	return 0xFFFF;
+}
+
 void GenMMC3Restore(int version) {
 	FixMMC3PRG(MMC3_cmd);
 	FixMMC3CHR(MMC3_cmd);
@@ -294,6 +313,7 @@ void GenMMC3_Init(CartInfo *info, int prg, int chr, int wram, int battery) {
 	info->Close = GenMMC3Close;
 
 	GameHBIRQHook = MMC3_hb;
+	FCEU_SetHBIRQQuiet(MMC3_hbQuiet);
 	GameStateRestore = GenMMC3Restore;
 }
 
@@ -933,6 +953,10 @@ void Mapper165_Init(CartInfo *info) {
 	cwrap = M165CWM;
 	PPU_hook = M165PPU;
 	FCEU_PPUHookNoIRQ();
+	/* armNES: tiles $FD and $FE of $1000 only */
+	FCEU_PPUHookWatch(0x1FF0, 0x1FD0);
+	FCEU_PPUHookWatch(0x1FF0, 0x1FE0);
+	FCEU_PPUHookOnFetch();
 	info->Power = M165Power;
 	CHRRAMSIZE = 4096;
 	CHRRAM = (uint8_t*)FCEU_gmalloc(CHRRAMSIZE);

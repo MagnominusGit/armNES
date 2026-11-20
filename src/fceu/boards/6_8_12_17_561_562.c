@@ -586,6 +586,10 @@ void FFE_Init(CartInfo *info) {
 	GameHBIRQHook =pseudoScanlineFFE;
 	PPU_hook =trapPPUAddressChangeFFE;
 	FCEU_PPUHookNoIRQ(); /* armNES: it only latches CHR banks */
+	/* armNES: from tiles $FD and $FE of either pattern table */
+	FCEU_PPUHookWatch(0x2FF0, 0x0FD0);
+	FCEU_PPUHookWatch(0x2FF0, 0x0FE0);
+	FCEU_PPUHookOnFetch();
 }
 
 static void StateRestore(int version) {

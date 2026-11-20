@@ -567,8 +567,22 @@ static void yuxingReset(struct NES* nes, bool hard) {
 	yuxingSync(nes);
 }
 
+// Only its bank registers change what the PPU fetches (the keyboard's don't), and its reads don't
+// look at the PPU
+static bool yuxingWritesFollowPpu(struct NES* nes, uint16_t address, uint8_t value) {
+	(void) nes;
+	(void) value;
+	return address >= 0x8000 || address == 0x4800 || address == 0x5500 || address == 0x5501;
+}
+
+static bool yuxingReadsFollowPpu(struct NES* nes) {
+	(void) nes;
+	return false;
+}
+
 const struct Board boardYuxing = {
-	.name = "Yuxing", .reset = yuxingReset, .write = yuxingWrite, .read = yuxingRead, .ppuRead = yuxingPpuRead,
+	.name = "Yuxing", .reset = yuxingReset, .write = yuxingWrite, .writesFollowPpu = yuxingWritesFollowPpu,
+	.read = yuxingRead, .readsFollowPpu = yuxingReadsFollowPpu, .ppuRead = yuxingPpuRead,
 	.ppuBus = yuxingPpuBus, .busA12 = true, .irqQuietDots = yuxingIrqQuietDots, .scanline = yuxingScanline, .sync = yuxingSync,
 	.stateSize = sizeof(struct Mmc3), .data = &yuxingVariant,
 };
@@ -653,10 +667,12 @@ static bool kaiser7030ReadsFollowPpu(struct NES* nes) {
 	return false;
 }
 
+static void kaiser7030Sync(struct NES* nes);
+
 static void kaiser7030Write(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address >= 0x8000 && address < 0xA000) {
 		STATE(Kaiser7030)->regs[(address >> 12) & 1] = address & 0x0F;
-		nesSetMirroring(nes, (STATE(Kaiser7030)->regs[0] & 8) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
+		kaiser7030Sync(nes);
 		return;
 	}
 	if (address >= 0x6000 && (address < 0x8000 || (address >= 0xB800 && address < 0xD800))) {
@@ -666,9 +682,11 @@ static void kaiser7030Write(struct NES* nes, uint16_t address, uint8_t value) {
 
 static void kaiser7030Sync(struct NES* nes) {
 	nesMapPrg(nes, 0x8000, 0x8000, 3);
-	nesUnmapPrg(nes, 0x6000, 0x2000);
+	nesUnmapPrg(nes, 0x6000, 0x1000);
 	nesUnmapPrg(nes, 0xB000, 0x3000);
-	nes->readHooks = 1 << 6 | 1 << 7 | 1 << 0xB | 1 << 0xC | 1 << 0xD;
+	// $7000-$7FFF is one 4 KB ROM bank, read as a page (writes still go to it, through here)
+	nesMapPrg(nes, 0x7000, 0x1000, 16 + (STATE(Kaiser7030)->regs[0] & 7));
+	nes->readHooks = 1 << 6 | 1 << 0xB | 1 << 0xC | 1 << 0xD;
 	chr8(nes, 0);
 	nesSetMirroring(nes, (STATE(Kaiser7030)->regs[0] & 8) ? MIRROR_HORIZONTAL : MIRROR_VERTICAL);
 }

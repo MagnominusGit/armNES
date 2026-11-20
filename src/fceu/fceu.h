@@ -33,12 +33,25 @@ void FCEU_SetPlainRead(readfunc func, int (*plain)(int page));
  * needn't be caught up for it before the CPU looks at the IRQ line, and whole tiles can show it their
  * fetches */
 void FCEU_PPUHookNoIRQ(void);
+/* armNES: the board's PPU_hook does nothing with an address A unless (A & mask) == value for one of
+ * the pairs given (up to four), so the others needn't call it */
+void FCEU_PPUHookWatch(uint32_t mask, uint32_t value);
+/* armNES: the board's PPU_hook (no IRQ, its addresses given with FCEU_PPUHookWatch()) only latches banks
+ * from pattern table fetches, as an MMC2 does: it's called from the PPU's pattern reads, each before
+ * its read, instead of being shown the bus, and the background renders whole tiles as without one */
+void FCEU_PPUHookOnFetch(void);
+/* armNES: the board's PPU_hook does nothing when given the address it was given last (it acts on
+ * changes, or only latches from the address), so a stretch the bus holds still can show it once */
+void FCEU_PPUHookIgnoresRepeats(void);
 /* armNES: how many CPU cycles can pass, from the state the board is in, before its MapIRQHook can change
  * the IRQ line (or anything else the CPU or PPU sees without a read or write); 0xFFFE or more for none.
  * The hook then runs a batch of cycles at once (still a cycle at a time), not every CPU cycle. */
 void FCEU_SetCPUHookQuiet(int (*cycles)(void));
 /* armNES: the same in PPU dots for PPU_hook, which then is shown whole tiles' fetches in order */
 void FCEU_SetPPUHookQuiet(int (*dots)(void));
+/* armNES: the same in GameHBIRQHook calls (one each line that renders) for GameHBIRQHook, as it is when
+ * this is called; 0xFFFF or more for none */
+void FCEU_SetHBIRQQuiet(int (*clocks)(void));
 void FASTAPASS(3) SetWriteHandler(int32_t start, int32_t end, writefunc func);
 writefunc FASTAPASS(1) GetWriteHandler(int32_t a);
 readfunc FASTAPASS(1) GetReadHandler(int32_t a);

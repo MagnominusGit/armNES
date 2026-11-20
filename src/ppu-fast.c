@@ -57,6 +57,36 @@ static inline void showBus(struct NES* nes) {
 	nes->board->ppuBus(nes, address);
 }
 
+// A board shown the bus only while rendering is off (Board.busShownBlank)
+static inline bool blankShown(const struct NES* nes) {
+	return nes->ppuReadHook && !nes->watchPpuBus && nes->board->busShownBlank && !rendering(&nes->ppu);
+}
+
+// Whether the board is shown the bus now
+static inline bool busWatched(const struct NES* nes) {
+	return nes->watchPpuBus || blankShown(nes);
+}
+
+// Showing the board the bus once covers a stretch it holds still (an MMC3 acts only on A12 changing)
+static inline bool busRepeatsIgnored(struct NES* nes) {
+	return nes->board->ppuBus == mmc3PpuBus || (nes->board->busRepeatsIgnored && nes->board->busRepeatsIgnored(nes));
+}
+
+// Runs n dots (n >= 1) over which nothing changes but the dot: a board watching the bus is shown it
+// once, on the first, as step() would
+static inline void idleDots(struct NES* nes, int n) {
+	struct Ppu* ppu = &nes->ppu;
+	if (busWatched(nes)) {
+		ppu->dotTick += nes->ppuPeriod;
+		showBus(nes);
+		ppu->dotTick += (uint64_t) (n - 1) * nes->ppuPeriod;
+	} else {
+		ppu->dotTick += (uint64_t) n * nes->ppuPeriod;
+	}
+	ppu->dot += n;
+	ppu->dots += n;
+}
+
 static inline uint8_t paletteRead(const struct Ppu* ppu, int index) {
 	index &= 0x1F;
 	if (!(index & 3)) {
@@ -986,7 +1016,7 @@ static inline void step(struct NES* nes) {
 	int pre = preLine(nes);
 	ppu->dotTick += nes->ppuPeriod;
 	// Boards see the bus as the last dot left it
-	if (nes->watchPpuBus) {
+	if (busWatched(nes)) {
 		showBus(nes);
 	}
 	bool const off = !rendering(ppu);
@@ -1068,7 +1098,7 @@ static inline void step(struct NES* nes) {
 		nes->frameDone = true;
 		nesOverclockPoint(nes, false);
 	}
-	if (!rendering(ppu) && nes->watchPpuBus) {
+	if (!rendering(ppu) && (nes->watchPpuBus || (nes->ppuReadHook && nes->board->busShownBlank))) {
 		busAddress(nes, ppu->v & 0x3FFF);
 	}
 }
@@ -1319,6 +1349,7 @@ static __attribute__((noinline)) int renderTilesShown(struct NES* nes, int count
 	bool const skip = nes->skipPixels;
 	bool const zeroTest = spritesOn && ppu->lineHasZero && !ppu->hit && !ppu->pendingHit && ppu->showBg;
 	bool const hooked = true;
+	bool const repeats = busRepeatsIgnored(nes);
 	bool const fetchAll = !skip || zeroTest || nes->ppuReadHook || hooked;
 	int const end = x + 8 * count < 256 ? x + 8 * count : 256;
 	int done = 0;
@@ -1364,25 +1395,33 @@ static __attribute__((noinline)) int renderTilesShown(struct NES* nes, int count
 			uint16_t const ntAddress = 0x2000 | (v & 0xFFF);
 			uint16_t const atAddress = 0x23C0 | (v & 0xC00) | ((v >> 4) & 0x38) | ((v >> 2) & 7);
 			int const period = nes->ppuPeriod;
-			// Dot k shows the bus with ppu->dot still k - 1, as step() does
+			// Dot k shows the bus with ppu->dot still k - 1, as step() does. Each address is shown on
+			// two dots running: a board that ignores repeats needs the first only (and the last tile's
+			// address, on dot 1, it was already shown unless this is the first tile here)
 #define SHOW(k) (ppu->dotTick += period, ppu->dot = x + (k) - 1, showBus(nes))
-			SHOW(1);
+#define AGAIN(k) (repeats ? (void) (ppu->dotTick += period) : (void) SHOW(k))
+			if (repeats && done) {
+				ppu->dotTick += period;
+			} else {
+				SHOW(1);
+			}
 			ppu->addressBus = ntAddress;
 			SHOW(2);
 			nt = chrRead(nes, ntAddress);
-			SHOW(3);
+			AGAIN(3);
 			ppu->addressBus = atAddress;
 			SHOW(4);
 			at = chrRead(nes, atAddress);
 			uint16_t const loAddress = table | (nt << 4) | (v >> 12);
-			SHOW(5);
+			AGAIN(5);
 			ppu->addressBus = loAddress;
 			SHOW(6);
 			lo = chrRead(nes, loAddress);
-			SHOW(7);
+			AGAIN(7);
 			ppu->addressBus = loAddress | 8;
 			SHOW(8);
 			hi = chrRead(nes, loAddress | 8);
+#undef AGAIN
 #undef SHOW
 		} else {
 			nt = fetch ? chrRead(nes, 0x2000 | (v & 0xFFF)) : 0;
@@ -1447,9 +1486,15 @@ static void renderHblank(struct NES* nes) {
 // each dot shows it the address the last one left
 static void renderHblankWatched(struct NES* nes, int n) {
 	struct Ppu* ppu = &nes->ppu;
+	// A board that ignores repeats is shown each address once, not on both of its dots
+	bool const repeats = busRepeatsIgnored(nes);
+	int shown = -1;
 	for (int dot = ppu->dot + 1, end = ppu->dot + n; dot <= end; dot++) {
 		ppu->dotTick += nes->ppuPeriod;
-		showBus(nes);
+		if (!repeats || ppu->addressBus != shown) {
+			shown = ppu->addressBus;
+			showBus(nes);
+		}
 		ppu->dot = dot;
 		if (dot <= 320) {
 			if (dot == 257) {
@@ -2064,6 +2109,15 @@ void fastRun(struct NES* nes, int dots) {
 					dots -= n;
 					continue;
 				}
+			} else if (line >= 240 && line < vbl && dot < 340 && !nes->overclockRepeat &&
+				(!busWatched(nes) || (busRepeatsIgnored(nes) && (rendering(ppu) || ppu->addressBus == (ppu->v & 0x3FFF))))) {
+				// The idle lines after the picture (a Dendy's 51), each to its last dot. The bus holds still
+				// (v, with rendering off)
+				int n = 340 - dot;
+				n = dots < n ? dots : n;
+				idleDots(nes, n);
+				dots -= n;
+				continue;
 			} else if (nes->dotPpu) {
 				// Balanced: render lines' dots in a run, the rest one at a time
 				bool const preLine_ = line == pre;
@@ -2077,7 +2131,7 @@ void fastRun(struct NES* nes, int dots) {
 						continue;
 					}
 				}
-			} else if (line == 240 && dot < 340 && (!nes->watchPpuBus || (nes->overclockRepeat && nes->overclockPostRender))) {
+			} else if (line == 240 && dot < 340 && (!busWatched(nes) || (nes->overclockRepeat && nes->overclockPostRender))) {
 				// The line after the picture (or an overclocked frame's held one): idle to its last dot
 				int n = 340 - dot;
 				n = dots < n ? dots : n;
@@ -2098,10 +2152,9 @@ void fastRun(struct NES* nes, int dots) {
 				dots -= n;
 				continue;
 			} else if (line < 240 && dot < 340 && !rendering(ppu) && !(line == 0 && ppu->skippedDot) &&
-				(!nes->watchPpuBus || (nes->board->ppuBus == mmc3PpuBus && ppu->addressBus == (ppu->v & 0x3FFF) &&
-				nes->busShown && nes->busA12Shown == ((ppu->v & 0x1000) != 0)))) {
+				(!busWatched(nes) || (busRepeatsIgnored(nes) && ppu->addressBus == (ppu->v & 0x3FFF)))) {
 				// Rendering off: the backdrop (or the palette entry v points at) to the end of the line. The
-				// bus holds v, so an MMC3, shown only A12's changes, already shown v's sees nothing new
+				// bus holds v, so a board that ignores being shown it again sees it once
 				int n = dots < 340 - dot ? dots : 340 - dot;
 				int end = dot + n < 256 ? dot + n : 256;
 				if (dot < end) {
@@ -2115,9 +2168,7 @@ void fastRun(struct NES* nes, int dots) {
 						out[x] = pixel;
 					}
 				}
-				ppu->dot += n;
-				ppu->dots += n;
-				ppu->dotTick += (uint64_t) n * nes->ppuPeriod;
+				idleDots(nes, n);
 				dots -= n;
 				continue;
 			} else if (line < 240 && rendering(ppu) && !(line == 0 && ppu->skippedDot)) {
@@ -2132,6 +2183,11 @@ void fastRun(struct NES* nes, int dots) {
 					(nes->board->ppuBus == mmc3PpuBus && ppu->bgTable && dot >= 8 && (ppu->addressBus & 0x1000) &&
 					nes->busShown && nes->busA12Shown))) {
 					dots -= 8 * renderTiles(nes, dots / 8);
+					continue;
+				}
+				// The first tile there, its A12 low since dot 337, shown fetch by fetch as step() would
+				if (dot == 0 && dots >= 8 && nes->board->ppuBus == mmc3PpuBus && ppu->bgTable) {
+					dots -= 8 * renderTilesShown(nes, 1);
 					continue;
 				}
 				if (dot < 256 && (dot & 7) == 0 && dots >= 8 && nes->board->tilesShowBus && nes->board->tilesShowBus(nes)) {

@@ -191,7 +191,8 @@ static void mmc1Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardMmc1 = {
-	.name = "MMC1", .reset = mmc1Reset, .write = mmc1Write, .sync = mmc1Sync, .stateSize = sizeof(struct Mmc1),
+	.name = "MMC1", .reset = mmc1Reset, .write = mmc1Write, .writesFollowPpu = boardWritesFrom8000, .sync = mmc1Sync,
+	.stateSize = sizeof(struct Mmc1),
 };
 
 // MMC1's registers written whole, not serially, with more CHR bank bits: an old 111 board, used for

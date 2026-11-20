@@ -38,7 +38,8 @@ static void sync () {
 }
 
 static void FP_FASTAPASS(1) trapPPUAddressChange (uint32_t A) {
-	if (A &0x2000 && (A &0x23C0) < 0x23C0) {
+	/* armNES: the bank set again only when the latch changes */
+	if (A &0x2000 && (A &0x23C0) < 0x23C0 && chr != (A >>(10 +(reg[1] &0x01? 1: 0)) &1)) {
 		chr = A >>(10 +(reg[1] &0x01? 1: 0)) &1;
 		setchr4(0x0000, reg[1] &0x02? chr: 0);
 	}
@@ -93,6 +94,7 @@ void Mapper518_Init (CartInfo *info) {
 	GameStateRestore = restore;
 	PPU_hook = trapPPUAddressChange;
 	FCEU_PPUHookNoIRQ();
+	FCEU_PPUHookWatch(0x2000, 0x2000); /* armNES: name table addresses only */
 	AddExState(reg, 2, 0, "REGS");
 	AddExState(&chr, 1, 0, "CHRB");
 }
