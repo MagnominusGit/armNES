@@ -387,6 +387,11 @@ static int mmc5IrqQuietDots(struct NES* nes) {
 		return m->irqTarget ? 341 : 1 << 20;
 	}
 	int lines = m->irqTarget - m->lineCounter;
+	if (lines <= 0) {
+		// The count has passed the target, which it only meets going up: nothing until line 240
+		// ends the frame
+		return (240 - line) * 341 - nes->ppu.dot;
+	}
 	return lines > 1 ? (lines - 1) * 341 : 0;
 }
 

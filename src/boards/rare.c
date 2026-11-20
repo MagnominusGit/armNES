@@ -412,6 +412,8 @@ static const struct Mmc3Variant yuxingVariant = { yuxingPrg, NULL, NULL, yuxingW
 static void yuxingSync(struct NES* nes) {
 	struct Yuxing* y = YX;
 	nes->ppuReadHook = false;
+	// Only as an MMC3 does the board look at the PPU's bus
+	nes->watchPpuBus = yuxingMmc3(nes);
 	if (yuxingMmc3(nes)) {
 		mmc3Sync(nes);
 		return;
@@ -645,6 +647,12 @@ static uint8_t kaiser7030Read(struct NES* nes, uint16_t address) {
 	return *kaiser7030Byte(nes, address);
 }
 
+// Its reads are RAM and ROM only: the PPU needn't be caught up first
+static bool kaiser7030ReadsFollowPpu(struct NES* nes) {
+	(void) nes;
+	return false;
+}
+
 static void kaiser7030Write(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address >= 0x8000 && address < 0xA000) {
 		STATE(Kaiser7030)->regs[(address >> 12) & 1] = address & 0x0F;
@@ -674,5 +682,5 @@ static void kaiser7030Reset(struct NES* nes, bool hard) {
 
 const struct Board boardKaiser7030 = {
 	.name = "Kaiser KS-7030", .reset = kaiser7030Reset, .write = kaiser7030Write, .read = kaiser7030Read,
-	.sync = kaiser7030Sync, .stateSize = sizeof(struct Kaiser7030),
+	.readsFollowPpu = kaiser7030ReadsFollowPpu, .sync = kaiser7030Sync, .stateSize = sizeof(struct Kaiser7030),
 };

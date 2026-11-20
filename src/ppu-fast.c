@@ -2097,8 +2097,11 @@ void fastRun(struct NES* nes, int dots) {
 				ppu->oamAddr = 0;
 				dots -= n;
 				continue;
-			} else if (line < 240 && dot < 340 && !rendering(ppu) && !nes->watchPpuBus && !(line == 0 && ppu->skippedDot)) {
-				// Rendering off: the backdrop (or the palette entry v points at) to the end of the line
+			} else if (line < 240 && dot < 340 && !rendering(ppu) && !(line == 0 && ppu->skippedDot) &&
+				(!nes->watchPpuBus || (nes->board->ppuBus == mmc3PpuBus && ppu->addressBus == (ppu->v & 0x3FFF) &&
+				nes->busShown && nes->busA12Shown == ((ppu->v & 0x1000) != 0)))) {
+				// Rendering off: the backdrop (or the palette entry v points at) to the end of the line. The
+				// bus holds v, so an MMC3, shown only A12's changes, already shown v's sees nothing new
 				int n = dots < 340 - dot ? dots : 340 - dot;
 				int end = dot + n < 256 ? dot + n : 256;
 				if (dot < end) {

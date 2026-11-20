@@ -146,13 +146,20 @@ int mmc3IrqQuietDots(struct NES* nes) {
 	if (!m->irqEnabled) {
 		return 1 << 20;
 	}
+	// Rendering off, the bus holds v: only the CPU's accesses to the PPU move it, and each of those
+	// asks again (the exact PPU's fetches follow $2001 a dot or two later)
+	const struct Ppu* ppu = &nes->ppu;
+	bool const shown = ppu->showBg | ppu->showSprites | (nes->exactPpu &&
+		(ppu->showBgDelayed | ppu->showSpritesDelayed | ppu->showBgInstant | ppu->showSpritesInstant));
+	if (!shown && !(ppu->delay2001 | ppu->delay2006 | ppu->vramReadStep | ppu->vramWriteStep)) {
+		return 1 << 20;
+	}
 	int safe = (m->reload || m->counter == 0) ? m->latch : m->counter - 1;
 	// With 8x8 sprites A12 stays low long enough to count at most once a line; 8x16 sprites can
 	// switch tables from slot to slot
 	int dots = nes->ppu.tall || safe < 2 ? safe * 8 : (safe - 1) * 341;
 	// With the background at $0000 and the sprites at $1000 that's only in the sprite fetches (dots
 	// 257-320 of a line that renders), unless a register access still on its way moves the bus
-	const struct Ppu* ppu = &nes->ppu;
 	if (!ppu->bgTable && (ppu->tall || ppu->spriteTable) && (ppu->showBg || ppu->showSprites) &&
 		!(ppu->delay2001 | ppu->delay2006 | ppu->vramReadStep | ppu->vramWriteStep)) {
 		int line = ppu->scanline, dot = ppu->dot, pre = nes->region == REGION_NTSC ? 261 : 311;
