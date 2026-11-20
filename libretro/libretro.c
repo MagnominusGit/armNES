@@ -307,11 +307,11 @@ static const char* const voiceKeys[VOICE_FDS] = {
 	"mmc5_pcm",
 };
 
-// A cart sound chip voice's switch under Layer Toggles, shown only for its chip
-#define MUTE_OPTION(key, name) \
-	{ "armnes_mute_" key, name, NULL, NULL, NULL, "layers", MUTE_VALUES, "On" }
+// A cart sound chip voice's switch under Channel Selection, shown only for its chip
+#define CHANNEL_OPTION(key, name) \
+	{ "armnes_channel_" key, name, NULL, NULL, NULL, "audio", CHANNEL_VALUES, "On" }
 #define SHOWN_VALUES { { "Shown", NULL }, { "Hidden", NULL }, { NULL, NULL } }
-#define MUTE_VALUES { { "On", NULL }, { "Muted", NULL }, { NULL, NULL } }
+#define CHANNEL_VALUES { { "On", NULL }, { "Off", NULL }, { NULL, NULL } }
 
 #define VOLUME_VALUES { { "0%", NULL }, { "10%", NULL }, { "20%", NULL }, { "30%", NULL }, { "40%", NULL }, { "50%", NULL }, \
 	{ "60%", NULL }, { "70%", NULL }, { "80%", NULL }, { "90%", NULL }, { "100%", NULL }, { NULL, NULL } }
@@ -424,6 +424,18 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_crop_horizontal", "Crop Sides", NULL,
 		"Pixels hidden at the left and right edges.",
 		NULL, "video", { { "0", NULL }, { "4", NULL }, { "8", NULL }, { "12", NULL }, { "16", NULL }, { NULL, NULL } }, "0" },
+	{ "armnes_layer_selection", "Layer Selection", NULL,
+		"Shows switches below that hide the background or sprites, to see one on its own: for ripping "
+		"graphics or a closer look. Only the picture changes; the game plays on the same, so netplay, "
+		"run-ahead and states aren't affected. Off shows everything.",
+		NULL, "video", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_layer_background", "Background", NULL,
+		"The scrolling background. Hidden, the backdrop color shows, and sprites drawn behind the "
+		"background come to the front.", NULL, "video", SHOWN_VALUES, "Shown" },
+	{ "armnes_layer_sprites_front", "Sprites in Front", NULL,
+		"Sprites drawn over the background: characters, enemies, shots.", NULL, "video", SHOWN_VALUES, "Shown" },
+	{ "armnes_layer_sprites_behind", "Sprites Behind the Background", NULL,
+		"Sprites a game puts behind the background, showing only where it's empty.", NULL, "video", SHOWN_VALUES, "Shown" },
 	{ "armnes_volume_pulse1", "Pulse 1 Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
 	{ "armnes_pan_pulse1", "Pulse 1 Position", NULL, NULL, NULL, "audio", PAN_VALUES, "Center" },
 	{ "armnes_volume_pulse2", "Pulse 2 Volume", NULL, NULL, NULL, "audio", VOLUME_VALUES, "100%" },
@@ -461,48 +473,42 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	VOICE_OPTION("mmc5_pulse1", "MMC5 Pulse 1"),
 	VOICE_OPTION("mmc5_pulse2", "MMC5 Pulse 2"),
 	VOICE_OPTION("mmc5_pcm", "MMC5 PCM (Samples)"),
-	{ "armnes_layers", "Layer Toggles", NULL,
-		"Shows switches that hide parts of the picture or mute sound channels, to see or hear one on its "
-		"own: for ripping graphics or music, or a closer look. Only what's shown and heard changes; the game "
-		"plays on the same, so netplay, run-ahead and states aren't affected. Off shows and plays everything.",
-		NULL, "layers", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_layer_background", "Background", NULL,
-		"The scrolling background. Hidden, the backdrop color shows, and sprites drawn behind the "
-		"background come to the front.", NULL, "layers", SHOWN_VALUES, "Shown" },
-	{ "armnes_layer_sprites_front", "Sprites in Front", NULL,
-		"Sprites drawn over the background: characters, enemies, shots.", NULL, "layers", SHOWN_VALUES, "Shown" },
-	{ "armnes_layer_sprites_behind", "Sprites Behind the Background", NULL,
-		"Sprites a game puts behind the background, showing only where it's empty.", NULL, "layers", SHOWN_VALUES, "Shown" },
-	{ "armnes_mute_pulse1", "Pulse 1", NULL, NULL, NULL, "layers", MUTE_VALUES, "On" },
-	{ "armnes_mute_pulse2", "Pulse 2", NULL, NULL, NULL, "layers", MUTE_VALUES, "On" },
-	{ "armnes_mute_triangle", "Triangle", NULL, NULL, NULL, "layers", MUTE_VALUES, "On" },
-	{ "armnes_mute_noise", "Noise", NULL, NULL, NULL, "layers", MUTE_VALUES, "On" },
-	{ "armnes_mute_dmc", "DMC (Samples)", NULL, NULL, NULL, "layers", MUTE_VALUES, "On" },
-	{ "armnes_mute_cart", "Cart Sound", NULL, "The sound chip in the cart or the Disk System, all of it.",
-		NULL, "layers", MUTE_VALUES, "On" },
-	MUTE_OPTION("vrc6_pulse1", "VRC6 Pulse 1"),
-	MUTE_OPTION("vrc6_pulse2", "VRC6 Pulse 2"),
-	MUTE_OPTION("vrc6_saw", "VRC6 Sawtooth"),
-	MUTE_OPTION("vrc7_1", "VRC7 FM 1"),
-	MUTE_OPTION("vrc7_2", "VRC7 FM 2"),
-	MUTE_OPTION("vrc7_3", "VRC7 FM 3"),
-	MUTE_OPTION("vrc7_4", "VRC7 FM 4"),
-	MUTE_OPTION("vrc7_5", "VRC7 FM 5"),
-	MUTE_OPTION("vrc7_6", "VRC7 FM 6"),
-	MUTE_OPTION("5b_a", "Sunsoft 5B Square A"),
-	MUTE_OPTION("5b_b", "Sunsoft 5B Square B"),
-	MUTE_OPTION("5b_c", "Sunsoft 5B Square C"),
-	MUTE_OPTION("n163_1", "Namco 163 Wave 1"),
-	MUTE_OPTION("n163_2", "Namco 163 Wave 2"),
-	MUTE_OPTION("n163_3", "Namco 163 Wave 3"),
-	MUTE_OPTION("n163_4", "Namco 163 Wave 4"),
-	MUTE_OPTION("n163_5", "Namco 163 Wave 5"),
-	MUTE_OPTION("n163_6", "Namco 163 Wave 6"),
-	MUTE_OPTION("n163_7", "Namco 163 Wave 7"),
-	MUTE_OPTION("n163_8", "Namco 163 Wave 8"),
-	MUTE_OPTION("mmc5_pulse1", "MMC5 Pulse 1"),
-	MUTE_OPTION("mmc5_pulse2", "MMC5 Pulse 2"),
-	MUTE_OPTION("mmc5_pcm", "MMC5 PCM (Samples)"),
+	{ "armnes_channel_selection", "Channel Selection", NULL,
+		"Shows a switch below for each channel, to hear one or a few on their own: for ripping music or "
+		"a closer listen. A channel switched off keeps its volume for when it's back on. Only the sound "
+		"changes; the game plays on the same, so netplay, run-ahead and states aren't affected. Off plays "
+		"everything.",
+		NULL, "audio", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_channel_pulse1", "Pulse 1", NULL, NULL, NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_pulse2", "Pulse 2", NULL, NULL, NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_triangle", "Triangle", NULL, NULL, NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_noise", "Noise", NULL, NULL, NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_dmc", "DMC (Samples)", NULL, NULL, NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_cart", "Cart Sound", NULL, "The sound chip in the cart or the Disk System, all of it.",
+		NULL, "audio", CHANNEL_VALUES, "On" },
+	CHANNEL_OPTION("vrc6_pulse1", "VRC6 Pulse 1"),
+	CHANNEL_OPTION("vrc6_pulse2", "VRC6 Pulse 2"),
+	CHANNEL_OPTION("vrc6_saw", "VRC6 Sawtooth"),
+	CHANNEL_OPTION("vrc7_1", "VRC7 FM 1"),
+	CHANNEL_OPTION("vrc7_2", "VRC7 FM 2"),
+	CHANNEL_OPTION("vrc7_3", "VRC7 FM 3"),
+	CHANNEL_OPTION("vrc7_4", "VRC7 FM 4"),
+	CHANNEL_OPTION("vrc7_5", "VRC7 FM 5"),
+	CHANNEL_OPTION("vrc7_6", "VRC7 FM 6"),
+	CHANNEL_OPTION("5b_a", "Sunsoft 5B Square A"),
+	CHANNEL_OPTION("5b_b", "Sunsoft 5B Square B"),
+	CHANNEL_OPTION("5b_c", "Sunsoft 5B Square C"),
+	CHANNEL_OPTION("n163_1", "Namco 163 Wave 1"),
+	CHANNEL_OPTION("n163_2", "Namco 163 Wave 2"),
+	CHANNEL_OPTION("n163_3", "Namco 163 Wave 3"),
+	CHANNEL_OPTION("n163_4", "Namco 163 Wave 4"),
+	CHANNEL_OPTION("n163_5", "Namco 163 Wave 5"),
+	CHANNEL_OPTION("n163_6", "Namco 163 Wave 6"),
+	CHANNEL_OPTION("n163_7", "Namco 163 Wave 7"),
+	CHANNEL_OPTION("n163_8", "Namco 163 Wave 8"),
+	CHANNEL_OPTION("mmc5_pulse1", "MMC5 Pulse 1"),
+	CHANNEL_OPTION("mmc5_pulse2", "MMC5 Pulse 2"),
+	CHANNEL_OPTION("mmc5_pcm", "MMC5 PCM (Samples)"),
 	{ "armnes_turbo_period", "Turbo Button Period", NULL,
 		"Frames per press while a turbo button is held: X for A, Y for B.",
 		NULL, "input", { { NULL, NULL } }, "4" },
@@ -585,9 +591,8 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 
 static struct retro_core_option_v2_category categories[] = {
 	{ "system", "System", "The console's region and speed, the Disk System, cart settings and cheat cartridges." },
-	{ "video", "Video", "Colors, the TV filter, sprites and the picture's shape and edges." },
-	{ "audio", "Audio", "Each channel's volume and where it sits between the speakers. The console mixes in mono." },
-	{ "layers", "Layers", "Hide the background or sprites, or mute sound channels, to see or hear one part on its own. Turn on Layer Toggles for the switches." },
+	{ "video", "Video", "Colors, the TV filter, sprites, the picture's shape and edges, and which layers it shows." },
+	{ "audio", "Audio", "Each channel's volume and where it sits between the speakers (the console mixes in mono), and which channels play." },
 	{ "input", "Input", "Turbo, the D-pad, extra players and the expansion port." },
 	{ "zapper", "Zapper", "How the light gun aims: the stick, a light gun, the mouse or the device's motion. Shown when a Zapper is plugged in." },
 	{ "vs", "VS. System", "The arcade board's PPU, controller wiring and DIP switches (what each game's switches do is in its manual or MAME's notes). Select puts in a coin, controller 1's L3 is the service button. A DualSystem's second board takes controllers 3 and 4 (controller 3's L3 for its service button)." },
@@ -622,11 +627,11 @@ static void readSpeedOptions(void) {
 }
 
 // A side's gain falls as the channel moves to the other side
-// Under Layer Toggles, whether a channel or voice (its key) is muted
+// Under Channel Selection, whether a channel or voice (its key) is switched off
 static bool muted(const char* key) {
 	char option[48];
-	snprintf(option, sizeof(option), "armnes_mute_%s", key);
-	return optionIs(environ_cb, "armnes_layers", "On") && optionIs(environ_cb, option, "Muted");
+	snprintf(option, sizeof(option), "armnes_channel_%s", key);
+	return optionIs(environ_cb, "armnes_channel_selection", "On") && optionIs(environ_cb, option, "Off");
 }
 
 static void readSoundOptions(void) {
@@ -671,7 +676,7 @@ static void readVideoOptions(void) {
 	filter = nes.cart.vs || nes.cart.playchoice ? COMPOSITE_OFF : optionChoice(environ_cb, "armnes_filter", filterChoices, 3, COMPOSITE_OFF);
 	scanlines = optionChoice(environ_cb, "armnes_scanlines", scanlineChoices, 4, 256);
 	screens = optionChoice(environ_cb, "armnes_vs_screens", screenChoices, 3, SCREENS_BOTH);
-	bool const layers = optionIs(environ_cb, "armnes_layers", "On");
+	bool const layers = optionIs(environ_cb, "armnes_layer_selection", "On");
 	nesHiddenLayers = !layers ? 0 :
 		(optionIs(environ_cb, "armnes_layer_background", "Hidden") ? LAYER_BACKGROUND : 0) |
 		(optionIs(environ_cb, "armnes_layer_sprites_front", "Hidden") ? LAYER_SPRITES_FRONT : 0) |
@@ -1012,7 +1017,8 @@ static bool showOptions(void) {
 	bool const motion = zapper && (optionIs(environ_cb, "armnes_zapper_aim", "Right stick (absolute)") ||
 		optionIs(environ_cb, "armnes_zapper_aim", "Right stick (pan)"));
 	bool const motionOn = motion && !optionIs(environ_cb, "armnes_motion_sensor", "Off");
-	bool const layers = optionIs(environ_cb, "armnes_layers", "On");
+	bool const layers = optionIs(environ_cb, "armnes_layer_selection", "On");
+	bool const channels = optionIs(environ_cb, "armnes_channel_selection", "On");
 	struct { const char* key; bool show; } const shown[] = {
 		{ "armnes_fds_fast", !loaded || nes.cart.disk },
 		{ "armnes_game_genie", !loaded || genieOver || genieOverFits() },
@@ -1041,12 +1047,12 @@ static bool showOptions(void) {
 		{ "armnes_layer_background", layers },
 		{ "armnes_layer_sprites_front", layers },
 		{ "armnes_layer_sprites_behind", layers },
-		{ "armnes_mute_pulse1", layers },
-		{ "armnes_mute_pulse2", layers },
-		{ "armnes_mute_triangle", layers },
-		{ "armnes_mute_noise", layers },
-		{ "armnes_mute_dmc", layers },
-		{ "armnes_mute_cart", layers && (!loaded || cartSound()) },
+		{ "armnes_channel_pulse1", channels },
+		{ "armnes_channel_pulse2", channels },
+		{ "armnes_channel_triangle", channels },
+		{ "armnes_channel_noise", channels },
+		{ "armnes_channel_dmc", channels },
+		{ "armnes_channel_cart", channels && (!loaded || cartSound()) },
 	};
 	for (size_t i = 0; i < sizeof(shown) / sizeof(*shown); i++) {
 		struct retro_core_option_display display = { shown[i].key, shown[i].show };
@@ -1070,8 +1076,8 @@ static bool showOptions(void) {
 			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
 		}
 		char key[48];
-		snprintf(key, sizeof(key), "armnes_mute_%s", voiceKeys[v]);
-		struct retro_core_option_display display = { key, layers && chips[chip] };
+		snprintf(key, sizeof(key), "armnes_channel_%s", voiceKeys[v]);
+		struct retro_core_option_display display = { key, channels && chips[chip] };
 		environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
 	}
 	for (int i = 1; i <= 16; i++) {
