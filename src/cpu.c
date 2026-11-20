@@ -2,6 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "nes.h"
+#include "boards/board.h"
 #include "par.h"
 
 // The 2A03's 6502: every access is a CPU cycle, split around the moment the bus is sampled so the PPU
@@ -888,6 +889,44 @@ uint8_t cpuPeek(struct NES* nes, uint16_t address) {
 // while the flags it reads can't change and nothing else can happen, the passes it would make leave
 // nothing behind but time, as the next read rewrites A, the flags and the PPU's open bus. Called at
 // the read, three cycles into a pass.
+// A JMP to itself, waiting for an interrupt: whole passes (3 cycles each) are skipped while nothing can
+// interrupt, as statusPoll() does, when the jump's bytes read alike on every pass (RAM, a ROM page no
+// board or cheat watches, or the NSF player's own code)
+static void idleJump(struct NES* nes, uint16_t at, uint64_t startClock, int startBudget) {
+	// Not once the frame is over (the PPU has caught up past VBL in this jump), nor for a DualSystem's
+	// two consoles, which run a few cycles apart
+	if (nes->frameDone || nes->dual || nes->vsSub || nes->exactPpu || nes->slowCycles || nes->overclockLines ||
+		(at >> 12) != ((at + 2) >> 12)) {
+		return;
+	}
+	int const page = at >> 12;
+	bool const ram = at + 2 < 0x2000 && !(nes->cheatPages & 1);
+	bool const rom = at >= 0x6000 && nes->prgPages[page] && !((nes->readHooks | nes->cheatPages) & (1 << page));
+	bool const driver = nes->board == &boardNsf && nsfDriverCode(at) && nsfDriverCode(at + 2) && !(nes->cheatPages & (1 << page));
+	if (!ram && !rom && !driver) {
+		return;
+	}
+	// The clocks count the instructions before this one (unless this one has already settled them)
+	if (nes->masterClock == startClock) {
+		quietSettleTo(nes, startBudget);
+	}
+	quietEnd(nes);
+	quietAhead(nes);
+	int const passes = (nes->quietBudget - 16) / 3;
+	if (passes > 0) {
+		int skipped = passes * 3, period = nes->cpuPeriod;
+		nes->slotTick = nes->masterClock + (uint64_t) (skipped - 1) * period;
+		nes->masterClock += (uint64_t) skipped * period;
+		nes->ppuLag += skipped * period;
+		nes->apuPending += skipped;
+		if (nes->board->cpuCycles) {
+			nes->boardPending += skipped;
+		}
+		nes->cpu.cycles += skipped;
+	}
+	nes->quietBudget = nes->quietGranted = 0;
+}
+
 static uint16_t statusPoll(struct NES* nes, uint16_t address, uint64_t startClock, int startBudget) {
 	struct Cpu* cpu = &nes->cpu;
 	struct Ppu* ppu = &nes->ppu;
@@ -1208,7 +1247,14 @@ void cpuStep(struct NES* nes) {
 		break;
 
 	// Jumps and returns
-	case 0x4C: cpu->pc = fetch16(nes); break;
+	case 0x4C: {
+		uint16_t const at = cpu->pc - 1;
+		cpu->pc = fetch16(nes);
+		if (cpu->pc == at) {
+			idleJump(nes, at, startClock, startBudget);
+		}
+		break;
+	}
 	case 0x6C: {
 		uint16_t pointer = fetch16(nes);
 		uint8_t lo = readCycle(nes, pointer);
