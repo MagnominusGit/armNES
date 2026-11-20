@@ -52,6 +52,9 @@ void FCEU_SetPPUHookQuiet(int (*dots)(void));
 /* armNES: the same in GameHBIRQHook calls (one each line that renders) for GameHBIRQHook, as it is when
  * this is called; 0xFFFF or more for none */
 void FCEU_SetHBIRQQuiet(int (*clocks)(void));
+/* armNES: the address the CPU drives on its bus this cycle (RAM, registers and dummy reads included), for
+ * a chip on the board that watches the bus from MapIRQHook */
+uint16_t FCEU_CPUAddressBus(void);
 void FASTAPASS(3) SetWriteHandler(int32_t start, int32_t end, writefunc func);
 writefunc FASTAPASS(1) GetWriteHandler(int32_t a);
 readfunc FASTAPASS(1) GetReadHandler(int32_t a);

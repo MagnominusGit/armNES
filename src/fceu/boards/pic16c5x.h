@@ -30,6 +30,8 @@ void pic16c5x_set_input(int line, int state);
 void pic16c5x_set_config(uint16_t data);
 void pic16c5x_reset(uint8_t hard);
 void pic16c5x_run(void);
+/* armNES: CPU cycles before the PIC next reads or writes a port, for batches (pic16c5x.c) */
+int pic16c5x_quiet(void);
 void pic16c5x_add_statesinfo(void);
 
 void pic16c54_init(uint8_t* rom, pic16c5x_readfunc _rd, pic16c5x_writefunc _wr);

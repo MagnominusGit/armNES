@@ -67,7 +67,8 @@ static void PIC16C5x(int program_width, int data_width, int picmodel, uint8_t *r
 	m_clock2cycle = 0;
 }
 
-void pic16c54_init(uint8_t *rom, pic16c5x_readfunc _rd, pic16c5x_writefunc _wr) { PIC16C5x( 9, 5, 0x16C54, rom, _rd, _wr); }
+static void quietTables(void);
+void pic16c54_init(uint8_t *rom, pic16c5x_readfunc _rd, pic16c5x_writefunc _wr) { PIC16C5x( 9, 5, 0x16C54, rom, _rd, _wr); quietTables(); }
 void pic16c55_init(uint8_t *rom, pic16c5x_readfunc _rd, pic16c5x_writefunc _wr) { PIC16C5x( 9, 5, 0x16C55, rom, _rd, _wr); }
 void pic16c56_init(uint8_t *rom, pic16c5x_readfunc _rd, pic16c5x_writefunc _wr) { PIC16C5x(10, 5, 0x16C56, rom, _rd, _wr); }
 void pic16c57_init(uint8_t *rom, pic16c5x_readfunc _rd, pic16c5x_writefunc _wr) { PIC16C5x(11, 7, 0x16C57, rom, _rd, _wr); }
@@ -821,6 +822,136 @@ void pic16c5x_run(void)
 
 		m_icount -= m_inst_cycles;
 	}
+}
+
+/* armNES: how many CPU cycles can pass, from the state the PIC is in, before it runs an instruction that
+ * reads or writes a port (or might: through INDF, after a computed jump, or asleep), for a board that
+ * calls pic16c5x_run() once a CPU cycle and catches it up in batches (FCEU_SetCPUHookQuiet()): the
+ * board's sync then falls on the cycle of that instruction, with that cycle's address on the bus.
+ * From the program, each instruction's fewest PIC cycles to such an instruction (every branch taken
+ * both ways) and to its subroutine's return; at run time the return addresses on the stack join
+ * them. Only for the PIC16C54 (512 words, no pages); the others give 0. */
+enum { QUIET_FAR = 0x7FFF };
+static uint16_t quietToPort[512], quietToReturn[512];
+static uint8_t quietReady;
+
+static int quietOp(int pc) {
+	return (m_rom[pc << 1] | m_rom[pc << 1 | 1] << 8) & 0xFFF;
+}
+
+static int quietPortAccess(int op) {
+	if (op < 0x010) {
+		/* SLEEP, or TRIS on a port */
+		return op == 0x003 || (op >= 0x005 && op <= 0x007);
+	}
+	if (op < 0x020 || (op >= 0x040 && op < 0x060) || op >= 0x800) {
+		return 0;
+	}
+	op &= 0x1F;
+	return op == 0 || (op >= 5 && op <= 7);
+}
+
+static int quietWritesPcl(int op) {
+	if (op < 0x020 || op >= 0x600 || (op & 0x1F) != 2) {
+		return 0;
+	}
+	/* MOVWF, CLRF, BCF and BSF write their register; the others when their d bit is set */
+	return op < 0x040 || (op >= 0x060 && op < 0x080) || op >= 0x400 || (op & 0x20);
+}
+
+static int quietSkips(int op) {
+	return (op >= 0x2C0 && op < 0x300) || (op >= 0x3C0 && op < 0x400) || (op >= 0x600 && op < 0x800);
+}
+
+static int quietAdd(int a, int b) {
+	return a + b < QUIET_FAR ? a + b : QUIET_FAR;
+}
+
+static int quietMin(int a, int b) {
+	return a < b ? a : b;
+}
+
+static void quietTables(void) {
+	int pc, changed = 1;
+	quietReady = 0;
+	if (!m_rom || m_picROMmask != 0x1FF) {
+		return;
+	}
+	for (pc = 0; pc < 512; pc++) {
+		quietToPort[pc] = quietToReturn[pc] = QUIET_FAR;
+	}
+	while (changed) {
+		int jumpPort = QUIET_FAR, jumpReturn = QUIET_FAR;
+		changed = 0;
+		/* A computed jump lands in the first 256 words */
+		for (pc = 0; pc < 256; pc++) {
+			jumpPort = quietMin(jumpPort, quietToPort[pc]);
+			jumpReturn = quietMin(jumpReturn, quietToReturn[pc]);
+		}
+		for (pc = 0; pc < 512; pc++) {
+			int op = quietOp(pc), next = (pc + 1) & 0x1FF, port, ret;
+			if (quietPortAccess(op)) {
+				port = 0;
+				ret = QUIET_FAR;
+			} else if ((op >> 8) == 0x8) {
+				/* RETLW */
+				port = QUIET_FAR;
+				ret = 2;
+			} else if ((op >> 8) == 0x9) {
+				/* CALL: into the subroutine, and on after it returns */
+				int to = op & 0xFF;
+				port = quietAdd(2, quietMin(quietToPort[to], quietAdd(quietToReturn[to], quietToPort[next])));
+				ret = quietAdd(2, quietAdd(quietToReturn[to], quietToReturn[next]));
+			} else if ((op >> 9) == 0x5) {
+				/* GOTO */
+				port = quietAdd(2, quietToPort[op & 0x1FF]);
+				ret = quietAdd(2, quietToReturn[op & 0x1FF]);
+			} else if (quietWritesPcl(op)) {
+				port = quietAdd(1, jumpPort);
+				ret = quietAdd(1, jumpReturn);
+			} else if (quietSkips(op)) {
+				int over = (pc + 2) & 0x1FF;
+				port = quietMin(quietAdd(1, quietToPort[next]), quietAdd(2, quietToPort[over]));
+				ret = quietMin(quietAdd(1, quietToReturn[next]), quietAdd(2, quietToReturn[over]));
+			} else {
+				port = quietAdd(op >= 0x800 && op < 0xC00 ? 2 : 1, quietToPort[next]);
+				ret = quietAdd(op >= 0x800 && op < 0xC00 ? 2 : 1, quietToReturn[next]);
+			}
+			if (port < quietToPort[pc]) {
+				quietToPort[pc] = port;
+				changed = 1;
+			}
+			if (ret < quietToReturn[pc]) {
+				quietToReturn[pc] = ret;
+				changed = 1;
+			}
+		}
+	}
+	quietReady = 1;
+}
+
+int pic16c5x_quiet(void) {
+	int pc, best, toReturn, i, next;
+	if (!quietReady || PD == 0 || WDTE || m_icount > 0) {
+		return 0;
+	}
+	pc = m_PC & 0x1FF;
+	best = quietToPort[pc];
+	toReturn = quietToReturn[pc];
+	/* Returns pop STACK[1], then STACK[0] from then on */
+	for (i = 0; i < 3 && toReturn < QUIET_FAR; i++) {
+		int to = (i ? m_STACK[0] : m_STACK[1]) & 0x1FF;
+		best = quietMin(best, quietAdd(toReturn, quietToPort[to]));
+		toReturn = quietAdd(toReturn, quietToReturn[to]);
+	}
+	best = quietMin(best, toReturn);
+	if (best >= QUIET_FAR) {
+		return 0xFFFE;
+	}
+	/* The next instruction runs on the CPU cycle m_icount reaches 1, counted up every fourth; each PIC
+	 * cycle after it is four more */
+	next = 4 - (m_clock2cycle & 3) + 4 * -m_icount;
+	return next + 4 * best - 1;
 }
 
 void AddExState(void *v, uint32_t s, int type, char *desc);

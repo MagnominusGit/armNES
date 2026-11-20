@@ -26,6 +26,10 @@ static uint32_t address;
 static uint8_t *picrom = NULL;
 
 static uint8_t pci16c5x_read(int port) {
+	/* armNES: the PIC reads the address on the CPU's bus that cycle (FCEU_CPUAddressBus()), RAM and
+	 * registers included, not the last access the board's handlers saw (only those from $4020 here);
+	 * address is kept for states */
+	address = FCEU_CPUAddressBus();
 	if (port == 0) {
 		return (1 |
 			(address & 0x0040 ? 0x02 : 0) |
@@ -61,41 +65,20 @@ static void M355CPUIRQHook(int a) {
 	}
 }
 
-static readfunc cpuRead[0x10000];
-static writefunc cpuWrite[0x10000];
-
-static DECLFR(M355Read) {
-	address = A;
-	if (A >= 0x8000) {
-		return CartBR(A);
-	}
-	return cpuRead[A](A);
-}
-
-static DECLFW(M355Write) {
-	address = A;
-	if (cpuWrite[A]) {
-		cpuWrite[A](A, V);
-	}
+/* armNES: the PIC only meets the CPU at its ports, so it runs in batches up to its next port access
+ * (FCEU_SetCPUHookQuiet()) */
+static int M355Quiet(void) {
+	return picrom ? pic16c5x_quiet() : 0xFFFE;
 }
 
 static void M355Power(void) {
-	int x;
-
 	address = 0;
 
 	pic16c5x_reset(1);
 
 	setprg32(0x8000, 0);
 	setchr8(0);
-
-	for (x = 0; x < 0x10000; x++) {
-		cpuRead[x] = GetReadHandler(x);
-		cpuWrite[x] = GetWriteHandler(x);
-	}
-
-	SetReadHandler(0, 0xFFFF, M355Read);
-	SetWriteHandler(0, 0xFFFF, M355Write);
+	SetReadHandler(0x8000, 0xFFFF, CartBR);
 }
 
 static void M355Reset(void) {
@@ -117,5 +100,6 @@ void UNL3DBlock_Init(CartInfo *info) {
 	info->Reset = M355Reset;
 	info->Close = M355Close;
 	MapIRQHook = M355CPUIRQHook;
+	FCEU_SetCPUHookQuiet(M355Quiet);
 	AddExState(&address, sizeof(address), 1, "ADDR");
 }

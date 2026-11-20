@@ -671,6 +671,10 @@ void FCEU_SetCPUHookQuiet(int (*cycles)(void)) {
 	cpuHookQuietFor = MapIRQHook;
 }
 
+uint16_t FCEU_CPUAddressBus(void) {
+	return nes->cpu.addressBus;
+}
+
 void FCEU_SetPPUHookQuiet(int (*dots)(void)) {
 	ppuHookQuietFn = dots;
 	ppuHookQuietFor = PPU_hook;
