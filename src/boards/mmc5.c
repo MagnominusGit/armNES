@@ -488,15 +488,28 @@ static void mmc5Cycles(struct NES* nes, int cycles) {
 	cartLevelsStart(nes, cycles);
 	while (cycles > 0) {
 		// The step on the cycle that takes frameTimer to 7457; a timer at t reloads on its t+1th odd cycle
+		// A pulse with its length counter at 0 is silent whatever its step, so its reloads don't stop
+		// the run: its timer and step are worked out after
 		int hold = 7457 - m->frameTimer - 1;
 		hold = hold < 0 ? 0 : hold < cycles ? hold : cycles;
 		for (int i = 0; i < 2; i++) {
-			int const wrap = 2 * (m->pulse[i].timer + 1) - (m->odd ? 0 : 1);
-			hold = wrap - 1 < hold ? wrap - 1 : hold;
+			if (m->pulse[i].length) {
+				int const wrap = 2 * (m->pulse[i].timer + 1) - (m->odd ? 0 : 1);
+				hold = wrap - 1 < hold ? wrap - 1 : hold;
+			}
 		}
 		int const ticks = m->odd ? hold / 2 : (hold + 1) / 2;
 		for (int i = 0; i < 2; i++) {
-			m->pulse[i].timer = (uint16_t) (m->pulse[i].timer - ticks);
+			struct Mmc5Pulse* p = &m->pulse[i];
+			if (ticks <= p->timer) {
+				p->timer = (uint16_t) (p->timer - ticks);
+			} else {
+				// Only a silent pulse gets here: ticks past its reload, the step back one each time
+				int const rest = ticks - p->timer - 1;
+				int const wraps = 1 + rest / (p->period + 1);
+				p->timer = (uint16_t) (p->period - rest % (p->period + 1));
+				p->step = (uint8_t) ((p->step - wraps) & 7);
+			}
 		}
 		m->odd ^= hold & 1;
 		m->frameTimer = (uint16_t) (m->frameTimer + hold);
