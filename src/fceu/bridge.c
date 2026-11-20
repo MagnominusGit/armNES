@@ -710,6 +710,7 @@ static bool plainRead(readfunc f, int page) {
 
 static void syncChr(void);
 static void setWatch(struct NES* n);
+static void syncHooks(void);
 
 // 4 KB pages made of two 2 KB ROM banks that aren't next to each other, copied whole so the CPU reads
 // them as it does any page (shadowSrc: where each half came from). A flash board writes its ROM, so
@@ -820,8 +821,9 @@ static void fceuLoadExtra(struct NES* n, const uint8_t* in) {
 	PPUNTARAM = in[size + sizeof(tags) + sizeof(PRGIsRAM) + 1];
 	shadowStale = true;
 	syncPages();
-	// A state from before FCEU_PPUHookOnFetch() had the hook shown the bus
-	setWatch(n);
+	// The hooks as the state's board state has them (a board switching chips switches hooks, and the
+	// run before the load may have left others), shown the bus or not as this build does
+	syncHooks();
 }
 
 static inline void enter(struct NES* n) {

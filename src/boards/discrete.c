@@ -667,6 +667,19 @@ static void discreteReset(struct NES* nes, bool hard) {
 
 static struct Board instances[sizeof(boards) / sizeof(boards[0])];
 
+// 185's disabled CHR reads a buffer of its own, which a state can't name: after a load the pages are
+// set again from the register (saving nothing more)
+static size_t noExtra(struct NES* nes, uint8_t* out) {
+	(void) nes;
+	(void) out;
+	return 0;
+}
+
+static void syncAfterLoad(struct NES* nes, const uint8_t* in) {
+	(void) in;
+	discreteSync(nes);
+}
+
 const struct Board* discreteFind(int mapper, int submapper) {
 	for (size_t i = 0; i < sizeof(boards) / sizeof(boards[0]); i++) {
 		// 108's other submappers are FCEUmm's
@@ -679,6 +692,10 @@ const struct Board* discreteFind(int mapper, int submapper) {
 			b->stateSize = sizeof(struct Discrete);
 			b->read = (boards[i].flags & JUMPER) ? jumperRead : NULL;
 			b->data = &boards[i];
+			if (mapper == 185) {
+				b->saveExtra = noExtra;
+				b->loadExtra = syncAfterLoad;
+			}
 			return b;
 		}
 	}

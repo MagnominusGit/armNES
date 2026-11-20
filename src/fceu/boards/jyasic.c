@@ -799,6 +799,11 @@ static void Mapper394_restore (int version)
 	}
 	else
 	{
+		/* armNES: $5000-$7FFF as Mapper394_power() leaves them, not the ASIC's: a state saved in MMC3
+		 * mode may be loaded over the ASIC's (run-ahead going past the switch) */
+		SetReadHandler(0x5000, 0x7FFF, NULL);
+		SetWriteHandler(0x5000, 0x7FFF, NULL);
+		SetWriteHandler(0x5000, 0x5FFF, Mapper394_Write);
 		SetWriteHandler(0x8000, 0xBFFF, MMC3_CMDWrite);
 		SetWriteHandler(0xC000, 0xFFFF, MMC3_IRQWrite);
 		SetReadHandler(0x8000, 0xFFFF, CartBR);
