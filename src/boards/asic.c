@@ -94,10 +94,12 @@ struct Fme7 {
 };
 
 // The 5B's logarithmic DAC, NESdev's Sunsoft 5B audio: a 5-bit level, 1.5 dB a step, 0 and 1 silent.
-// The volume register gives the odd levels (volume v is level 2v + 1); the envelope all 32. NESdev
-// only says the chip is very loud next to the 2A03 and other expansion audio: a channel at full volume
-// is about 3.6 times one 2A03 square at volume 15 (11 dB louder), as Mesen mixes it.
-static const uint16_t dacLevel[32] = { 0, 0, 142, 169, 201, 239, 284, 337, 401, 476, 566, 673, 799, 950, 1129, 1342, 1595, 1896, 2253, 2677, 3182, 3782, 4495, 5342, 6349, 7546, 8969, 10659, 12669, 15057, 17895, 21268 };
+// The volume register gives the odd levels (volume v is level 2v + 1); the envelope all 32. A channel
+// at full volume is about 8 dB louder than one 2A03 square at volume 15, by rainwarrior's recordings
+// of a real 5B (NESdev forum, "VRC7 and 5B amplifier investigation"); Nestopia mixes it at 7.9 dB
+// (16383 * 94 / 85 against its 7315 for the square, on the same curve as ours), used here. Above
+// about volume 14 on one channel the 5B's amplifier compresses; that isn't modelled.
+static const uint16_t dacLevel[32] = { 0, 0, 99, 117, 139, 165, 197, 234, 278, 330, 392, 466, 554, 659, 783, 930, 1106, 1314, 1562, 1856, 2206, 2622, 3116, 3703, 4401, 5231, 6217, 7389, 8782, 10437, 12405, 14743 };
 
 void sunsoft5bWrite(struct Sunsoft5b* a, uint8_t value) {
 	// A register select with its high nibble set disables writes, as on the YM2149F
