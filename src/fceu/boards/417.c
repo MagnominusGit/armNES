@@ -75,6 +75,18 @@ static void M417IRQHook(int a) {
     if (IRQa && IRQCount > (submapper ==1? 4096: 1024))
         X6502_IRQBegin(FCEU_IQEXT);
 }
+/* armNES: CPU cycles before M417IRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M417IRQHookQuiet(void) {
+	uint16_t const threshold = submapper == 1 ? 4096 : 1024;
+	if (!IRQa)
+		return 0xFFFE;
+	if (IRQCount < threshold)
+		return threshold - IRQCount;
+	/* past it the line is set every cycle: quiet once it is */
+	if (IRQCount < 0xFFFF && (X.IRQlow & FCEU_IQEXT))
+		return 0xFFFF - IRQCount - 1;
+	return 0;
+}
 
 static void StateRestore(int version) {
 	Sync();
@@ -84,6 +96,7 @@ void Mapper417_Init(CartInfo *info) {
 	submapper =info->submapper;
 	info->Power = M417Power;
 	MapIRQHook = M417IRQHook;
+	FCEU_SetCPUHookQuiet(M417IRQHookQuiet);
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

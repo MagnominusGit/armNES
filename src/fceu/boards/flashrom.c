@@ -68,3 +68,8 @@ void FP_FASTAPASS(1) flashrom_cpuCycle(int a) {
 		if (flashrom_timeOut && !--flashrom_timeOut) flashrom_state =0;
 	}
 }
+/* armNES: CPU cycles before flashrom_cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+int flashrom_cpuCycleQuiet(void) {
+	/* it only times out a command, which a read of the flash brings up to date */
+	return 0xFFFE;
+}

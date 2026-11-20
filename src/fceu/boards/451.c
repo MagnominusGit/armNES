@@ -66,4 +66,5 @@ void Mapper451_Init(CartInfo *info) {
 	info->SaveGame[0] =PRGptr[0];
 	info->SaveGameLen[0] =PRGsize[0];
 	MapIRQHook =flashrom_cpuCycle;
+	FCEU_SetCPUHookQuiet(flashrom_cpuCycleQuiet);
 }

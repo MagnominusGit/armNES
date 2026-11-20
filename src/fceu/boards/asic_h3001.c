@@ -113,6 +113,12 @@ static void FP_FASTAPASS(1) H3001_cpuCycle (int a) {
 		H3001_irq = 0;
 	}
 }
+/* armNES: CPU cycles before H3001_cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int H3001_cpuCycleQuiet(void) {
+	if (!(H3001_irq & 0x80))
+		return 0xFFFE;
+	return (H3001_count ? H3001_count : 0x10000) - 1;
+}
 
 void H3001_clear(void) {
 	int i;
@@ -127,6 +133,7 @@ static void H3001_setHandlers () {
 	SetReadHandler (0x8000, 0xFFFF, CartBR);
 	SetWriteHandler(0x8000, 0xBFFF, H3001_write);
 	MapIRQHook =H3001_cpuCycle;
+	FCEU_SetCPUHookQuiet(H3001_cpuCycleQuiet);
 }
 
 static void H3001_configure (void (*sync)()) {

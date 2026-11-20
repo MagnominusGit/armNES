@@ -82,6 +82,12 @@ static void FP_FASTAPASS(1) UNL7017IRQ(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before UNL7017IRQ can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int UNL7017IRQQuiet(void) {
+	if (!IRQa)
+		return 0xFFFE;
+	return IRQCount > 0 ? IRQCount - 1 : 0;
+}
 
 static void UNLKS7017Power(void) {
 	FDSSoundPower();
@@ -110,6 +116,7 @@ void UNLKS7017_Init(CartInfo *info) {
 	info->Power = UNLKS7017Power;
 	info->Close = UNLKS7017Close;
 	MapIRQHook = UNL7017IRQ;
+	FCEU_SetCPUHookQuiet(UNL7017IRQQuiet);
 
 	WRAMSIZE = 8192;
 	WRAM = (uint8_t*)FCEU_gmalloc(WRAMSIZE);

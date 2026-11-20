@@ -193,6 +193,18 @@ void FP_FASTAPASS(1) VRC4_cpuCycle (int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before VRC4_cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int VRC4_cpuCycleQuiet(void) {
+	int first, clocks;
+	if (!(VRC4_mode & 0x02))
+		return 0xFFFE;
+	/* the IRQ comes on the clock that wraps the counter, a clock every cycle or every 341/3 */
+	clocks = 256 - VRC4_count;
+	if (VRC4_mode & 0x04)
+		return clocks - 1;
+	first = VRC4_cycles > 0 ? (VRC4_cycles + 2) / 3 : 1;
+	return first - 1 + (clocks - 1) * 113;
+}
 
 void VRC24_clear(void) {
 	VRC24_prg[0] = 0; VRC24_prg[1] = 0;
@@ -212,7 +224,10 @@ static void VRC24_setHandlers () {
 	}
 	SetReadHandler(0x8000, 0xFFFF, CartBR);
 	SetWriteHandler(0x8000, 0xFFFF, VRC24_writeReg);
-	if (VRC24_isVRC4) MapIRQHook = VRC4_cpuCycle;
+	if (VRC24_isVRC4) {
+		MapIRQHook = VRC4_cpuCycle;
+		FCEU_SetCPUHookQuiet(VRC4_cpuCycleQuiet);
+	}
 }
 
 static void VRC2_configure (void (*sync)(), int A0, int A1, int (*prg)(uint8_t), int (*chr)(uint8_t), DECLFR((*read)), DECLFW((*write))) {

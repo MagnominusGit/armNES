@@ -612,6 +612,25 @@ void FCEU_PPUHookNoIRQ(void) {
 	ppuHookNoIrq = true;
 }
 
+// How many CPU cycles and PPU dots the board's hooks can pass before changing the IRQ, if it says,
+// for the hook that was set when it said (boards switching chips switch hooks)
+static int (*cpuHookQuietFn)(void);
+static void (FP_FASTAPASS(1) *cpuHookQuietFor)(int);
+static int (*ppuHookQuietFn)(void);
+static void (FP_FASTAPASS(1) *ppuHookQuietFor)(uint32_t);
+#define cpuHookQuiet (MapIRQHook && MapIRQHook == cpuHookQuietFor ? cpuHookQuietFn : NULL)
+#define ppuHookQuiet (PPU_hook && PPU_hook == ppuHookQuietFor ? ppuHookQuietFn : NULL)
+
+void FCEU_SetCPUHookQuiet(int (*cycles)(void)) {
+	cpuHookQuietFn = cycles;
+	cpuHookQuietFor = MapIRQHook;
+}
+
+void FCEU_SetPPUHookQuiet(int (*dots)(void)) {
+	ppuHookQuietFn = dots;
+	ppuHookQuietFor = PPU_hook;
+}
+
 void FCEU_SetPlainRead(readfunc func, int (*plain)(int page)) {
 	for (int i = 0; i < plainReadCount; i++) {
 		if (plainReads[i].func == func) {
@@ -722,12 +741,19 @@ static inline void enter(struct NES* n) {
 }
 
 // Boards that switch between chips switch hooks too
+static const struct Board* hookBoard(void) {
+	return !MapIRQHook ? &boardFceu : cpuHookQuiet ? &boardFceuBatch : &boardFceuCycle;
+}
+
 static void syncHooks(void) {
-	const struct Board* board = MapIRQHook ? &boardFceuCycle : &boardFceu;
+	const struct Board* board = hookBoard();
 	nes->watchPpuBus = PPU_hook != NULL;
 	if (nes->board != board) {
 		nes->board = board;
 		nes->slowCycles = nes->ppuEveryCycle || board->cpuCycle || nes->exactTiming;
+		// A batched hook starts from the cycle it's switched to; the others run each cycle or not at all
+		nes->boardPending = 0;
+		nes->boardQuiet = board->cpuCycles ? 0 : 0xFFFF;
 	}
 }
 
@@ -735,15 +761,19 @@ static inline void leave(void) {
 	if (dirty) {
 		syncPages();
 	}
-	if ((nes->board == &boardFceuCycle) != (MapIRQHook != NULL) || nes->watchPpuBus != (PPU_hook != NULL)) {
+	if (nes->board != hookBoard() || nes->watchPpuBus != (PPU_hook != NULL)) {
 		syncHooks();
 	}
 }
 
 static void fceuWrite(struct NES* n, uint16_t address, uint8_t value) {
+	// A batched CPU-cycle hook as it is at this write, its quiet stretch worked out again after
+	nesBoardWriteSync(n);
 	enter(n);
 	X.DB = value;
 	BWrite[address](address, value);
+	// The write may have changed what the PPU-side IRQ bound depends on (its enable, its counter)
+	n->mapperQuietTicks = 0;
 	// The board's state may have changed which pages read plainly
 	if (plainReadCount) {
 		dirty = true;
@@ -754,6 +784,9 @@ static void fceuWrite(struct NES* n, uint16_t address, uint8_t value) {
 static uint8_t fceuRead(struct NES* n, uint16_t address) {
 	if (address < 0x4020) {
 		return n->cpu.openBus;
+	}
+	if (n->board->cpuCycles) {
+		nesBoardSync(n);
 	}
 	enter(n);
 	X.DB = n->cpu.openBus;
@@ -768,6 +801,22 @@ static void fceuCycle(struct NES* n) {
 		MapIRQHook(1);
 	}
 	leave();
+}
+
+// A CPU-cycle hook whose board says how long it stays quiet: run a cycle at a time, a batch at once
+static void fceuCycles(struct NES* n, int cycles) {
+	enter(n);
+	for (int i = 0; i < cycles && MapIRQHook; i++) {
+		MapIRQHook(1);
+	}
+	leave();
+}
+
+static int fceuQuiet(struct NES* n) {
+	(void) n;
+	int (*const fn)(void) = cpuHookQuiet;
+	int const quiet = fn ? fn() : 0;
+	return quiet < 0 ? 0 : quiet < 0xFFFE ? quiet : 0xFFFE;
 }
 
 // FCEUmm's renderer shows its boards the name table and pattern fetches, not the attribute ones,
@@ -808,7 +857,18 @@ static void fceuScanline(struct NES* n, int line) {
 
 static int fceuIrqQuietDots(struct NES* n) {
 	if (PPU_hook && !ppuHookNoIrq) {
-		return 8;
+		if (!ppuHookQuiet) {
+			return 8;
+		}
+		// The board's own bound, and the scanline hooks' if it has them; a register access still on
+		// its way moves the bus sooner
+		const struct Ppu* ppu = &n->ppu;
+		if (ppu->delay2001 | ppu->delay2006 | ppu->vramReadStep | ppu->vramWriteStep) {
+			return 0;
+		}
+		int const dots = ppuHookQuietFn();
+		int const line = (GameHBIRQHook || GameHBIRQHook2) ? (n->ppu.dot < 340 ? 341 - n->ppu.dot : 1) : 1 << 20;
+		return dots < 0 ? 0 : dots < line ? dots : line;
 	}
 	if (GameHBIRQHook || GameHBIRQHook2) {
 		return n->ppu.dot < 340 ? 341 - n->ppu.dot : 1;
@@ -823,10 +883,11 @@ static bool fceuReadsFollowPpu(struct NES* n) {
 	return (PPU_hook && !ppuHookNoIrq) || GameHBIRQHook || GameHBIRQHook2;
 }
 
-// Whole tiles may show the board their fetches (renderTiles()): its PPU_hook only switches banks
+// Whole tiles may show the board their fetches (renderTilesShown()): its PPU_hook only switches banks
+// (scanline hooks run at the start of each line, whatever the fetches do)
 static bool fceuTilesShowBus(struct NES* n) {
 	(void) n;
-	return ppuHookNoIrq && !GameHBIRQHook && !GameHBIRQHook2;
+	return ppuHookNoIrq || ppuHookQuiet;
 }
 
 static void fceuSync(struct NES* n) {
@@ -922,6 +983,10 @@ static void power(struct NES* n) {
 	ResetExState(NULL, NULL);
 	plainReadCount = 0;
 	ppuHookNoIrq = false;
+	cpuHookQuietFn = NULL;
+	cpuHookQuietFor = NULL;
+	ppuHookQuietFn = NULL;
+	ppuHookQuietFor = NULL;
 	SetReadHandler(0, 0xFFFF, NULL);
 	SetWriteHandler(0, 0xFFFF, NULL);
 	SetReadHandler(0, 0x1FFF, ARAM);
@@ -1019,7 +1084,7 @@ static void fceuReset(struct NES* n, bool hard) {
 	} else if (info.Reset) {
 		info.Reset();
 	}
-	n->board = MapIRQHook ? &boardFceuCycle : &boardFceu;
+	n->board = hookBoard();
 	n->watchPpuBus = PPU_hook != NULL;
 	handlerPages = 0xFFF0;
 	handlersDirty = true;
@@ -1037,6 +1102,13 @@ const struct Board boardFceuCycle = {
 	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .read = fceuRead, .ppuBus = fceuPpuBus,
 	.cpuCycle = fceuCycle, .irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline, .sync = fceuSync,
 	.readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
+	.saveExtra = fceuSaveExtra, .loadExtra = fceuLoadExtra,
+};
+
+const struct Board boardFceuBatch = {
+	.name = "FCEUmm", .reset = fceuReset, .write = fceuWrite, .read = fceuRead, .ppuBus = fceuPpuBus,
+	.cpuCycles = fceuCycles, .cpuQuiet = fceuQuiet, .irqQuietDots = fceuIrqQuietDots, .scanline = fceuScanline,
+	.sync = fceuSync, .readsFollowPpu = fceuReadsFollowPpu, .tilesShowBus = fceuTilesShowBus,
 	.saveExtra = fceuSaveExtra, .loadExtra = fceuLoadExtra,
 };
 

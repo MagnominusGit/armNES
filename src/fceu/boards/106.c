@@ -87,6 +87,12 @@ static void FP_FASTAPASS(1) M106CpuHook(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before M106CpuHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M106CpuHookQuiet(void) {
+	if (!IRQa)
+		return 0xFFFE;
+	return IRQCount <= 0x10000 ? (int)(0x10000 - IRQCount) : 0;
+}
 
 static void StateRestore(int version) {
 	Sync();
@@ -97,6 +103,7 @@ void Mapper106_Init(CartInfo *info) {
 	info->Power = M106Power;
 	info->Close = M106Close;
 	MapIRQHook = M106CpuHook;
+	FCEU_SetCPUHookQuiet(M106CpuHookQuiet);
 	GameStateRestore = StateRestore;
 
 	WRAMSIZE = 8192;

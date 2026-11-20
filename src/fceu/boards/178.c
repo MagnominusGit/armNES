@@ -211,6 +211,11 @@ static void M178SndClk(int a)
 		}
 	}
 }
+/* armNES: CPU cycles before M178SndClk can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M178SndClkQuiet(void) {
+	/* it only clocks the PCM latch, which a read brings up to date */
+	return 0xFFFE;
+}
 
 static void M178Close(void) {
 	if (WRAM)
@@ -233,6 +238,7 @@ void Mapper178_Init(CartInfo *info) {
 	info->Close = M178Close;
 	GameStateRestore = M178StateRestore;
 	MapIRQHook = M178SndClk;
+	FCEU_SetCPUHookQuiet(M178SndClkQuiet);
 
 	jedi_table_init();
 

@@ -234,6 +234,13 @@ static void FP_FASTAPASS(1) trapPPUAddressChange (uint32_t A)
    lastPPUAddress =A;
 }
 
+/* armNES: PPU dots before trapPPUAddressChange can raise the IRQ (FCEU_SetPPUHookQuiet()): only
+ * while the IRQ counts PPU address changes; otherwise it only latches CHR banks */
+static int trapPPUAddressChangeQuiet(void)
+{
+   return (irqControl &0x03) ==0x02? 8: 1 <<20;
+}
+
 static void ppuScanline(void)
 {
 	if ((irqControl &0x03) ==0x01)
@@ -249,6 +256,30 @@ static void FP_FASTAPASS(1) cpuCycle(int a)
    if ((irqControl &0x03) ==0x00)
       while (a--)
          clockIRQ();
+}
+/* armNES: CPU cycles before cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int cpuCycleQuiet(void) {
+	uint8_t const mask = irqControl & 0x04 ? 0x07 : 0xFF;
+	uint8_t p = irqPrescaler, c = irqCounter;
+	int n;
+	/* it clocks the counter only in CPU-cycle mode, enabled, counting up or down */
+	if ((irqControl & 0x03) || !irqEnabled || !(irqControl & 0xC0) || (irqControl & 0xC0) == 0xC0)
+		return 0xFFFE;
+	/* the cycles before a clock sets the line, run on copies */
+	for (n = 0; n < 0xFFFE; n++) {
+		if ((irqControl & 0xC0) == 0x40) {
+			uint8_t const newp = (p + 1) & mask;
+			p = (p & ~mask) | newp;
+			if (newp == 0x00 && (irqControl & 0x08 ? c : ++c) == 0x00)
+				return n;
+		} else {
+			uint8_t const newp = (p - 1) & mask;
+			p = (p & ~mask) | newp;
+			if (newp == mask && (irqControl & 0x08 ? c : --c) == 0xFF)
+				return n;
+		}
+	}
+	return 0xFFFE;
 }
 
 static DECLFR(readALU_DIP)
@@ -446,7 +477,9 @@ static void JYASIC_init (CartInfo *info)
    info->Power = JYASIC_power;
    info->Close = JYASIC_close;
    PPU_hook = trapPPUAddressChange;
+   FCEU_SetPPUHookQuiet(trapPPUAddressChangeQuiet);
    MapIRQHook = cpuCycle;
+   FCEU_SetCPUHookQuiet(cpuCycleQuiet);
    GameHBIRQHook2 = ppuScanline;
    AddExState(JYASIC_stateRegs, ~0, 0, 0);
    GameStateRestore = JYASIC_restore;

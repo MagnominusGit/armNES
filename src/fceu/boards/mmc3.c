@@ -1383,6 +1383,11 @@ static void M555CPUIRQHook(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before M555CPUIRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M555CPUIRQHookQuiet(void) {
+	/* it only sets a flag a read of $5xxx shows, and a read brings it up to date */
+	return 0xFFFE;
+}
 
 void Mapper555_Init(CartInfo *info) {
 	GenMMC3_Init(info, 0, 0, 0, info->battery);
@@ -1391,6 +1396,7 @@ void Mapper555_Init(CartInfo *info) {
 	info->Power = M555Power;
 	info->Reset = M555Reset;
 	MapIRQHook  = M555CPUIRQHook;
+	FCEU_SetCPUHookQuiet(M555CPUIRQHookQuiet);
 	AddExState(M555StateRegs, ~0, 0, NULL);
 
 	WRAMSIZE = 16 * 1024;

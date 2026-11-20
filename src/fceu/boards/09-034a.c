@@ -73,6 +73,12 @@ static void FP_FASTAPASS(1) UNLSMB2JIRQHook(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before UNLSMB2JIRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int UNLSMB2JIRQHookQuiet(void) {
+	if (!IRQa)
+		return 0xFFFE;
+	return IRQCount < 5750 ? (int)(5750 - IRQCount) : 0;
+}
 
 static void StateRestore(int version) {
 	Sync();
@@ -81,6 +87,7 @@ static void StateRestore(int version) {
 void UNLSMB2J_Init(CartInfo *info) {
 	info->Power = UNLSMB2JPower;
 	MapIRQHook = UNLSMB2JIRQHook;
+	FCEU_SetCPUHookQuiet(UNLSMB2JIRQHookQuiet);
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

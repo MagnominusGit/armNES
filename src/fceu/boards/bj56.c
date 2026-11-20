@@ -71,6 +71,13 @@ static void FP_FASTAPASS(1) UNLBJ56IRQHook(int a) {
 	if (IRQCount & 4096)
 		X6502_IRQBegin(FCEU_IQEXT);
 }
+/* armNES: CPU cycles before UNLBJ56IRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int UNLBJ56IRQHookQuiet(void) {
+	/* once bit 12 sets the line it stays */
+	if ((IRQCount + 1) & 4096)
+		return (X.IRQlow & FCEU_IQEXT) ? 0xFFFE : 0;
+	return (int)(4096 - (IRQCount & 4095)) - 1;
+}
 
 static void UNLBJ56Close(void) {
 	if (WRAM)
@@ -98,6 +105,7 @@ void UNLBJ56_Init(CartInfo *info) {
 	info->Power = UNLBJ56Power;
 	info->Close = UNLBJ56Close;
 	MapIRQHook = UNLBJ56IRQHook;
+	FCEU_SetCPUHookQuiet(UNLBJ56IRQHookQuiet);
 	GameStateRestore = StateRestore;
 	WRAMSIZE = 8192;
 	WRAM = (uint8_t*)FCEU_gmalloc(WRAMSIZE);

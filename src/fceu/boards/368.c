@@ -91,6 +91,12 @@ static void FP_FASTAPASS(1) M368IRQHook(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before M368IRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M368IRQHookQuiet(void) {
+	if (!IRQa)
+		return 0xFFFE;
+	return IRQCount < 4096 ? 4096 - IRQCount : 0;
+}
 
 static void StateRestore(int version) {
 	preg &= 7;
@@ -101,6 +107,7 @@ void Mapper368_Init(CartInfo *info) {
 	info->Reset = M368Reset;
 	info->Power = M368Power;
 	MapIRQHook = M368IRQHook;
+	FCEU_SetCPUHookQuiet(M368IRQHookQuiet);
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

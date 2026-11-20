@@ -70,6 +70,17 @@ static void FP_FASTAPASS(1) cpuCycle (int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int cpuCycleQuiet(void) {
+	/* the line goes up as the counter passes 23680 and down at 24320 */
+	if (!counting)
+		return 0xFFFE;
+	if (counter <= 23680)
+		return 23680 - counter;
+	if (counter <= 24320)
+		return 24320 - counter;
+	return 0xFFFF - counter;
+}
 
 static void reset () {
 	FDSSoundReset();
@@ -100,6 +111,7 @@ void Mapper548_Init (CartInfo *info) {
 	info->Power = power;
 	info->Reset = reset;
 	MapIRQHook = cpuCycle;
+	FCEU_SetCPUHookQuiet(cpuCycleQuiet);
 	GameStateRestore = stateRestore;
 	AddExState(stateRegs, ~0, 0, 0);
 }

@@ -436,12 +436,38 @@ static void FP_FASTAPASS(1) cpuCycleFFE(int a) {
 		if (~extMode &0x08) clockSMCCounter();
 	}
 }
+/* armNES: CPU cycles before cpuCycleFFE can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int cpuCycleFFEQuiet(void) {
+	int quiet = 0xFFFE;
+	/* the FDS-style timer: 3 a cycle, the IRQ at 448 while enabled */
+	if (fdsIO & 0x80)
+		quiet = fdsCounter >= 448 ? 0 : (448 - fdsCounter + 2) / 3 - 1;
+	if (~extMode & 0x08 && smcIRQ) {
+		/* counting up to -1 */
+		int const smc = irqCounter < 0 ? -irqCounter - 1 : 0xFFFF - irqCounter;
+		quiet = smc < quiet ? smc : quiet;
+	}
+	return quiet;
+}
 
 static void FP_FASTAPASS(1) cpuCycleBung(int a) {
 	while (a--) {
 		clockFDSCounter();
 		if (irqCounter <0 && !++irqCounter) X6502_IRQBegin(FCEU_IQEXT);
 	}
+}
+/* armNES: CPU cycles before cpuCycleBung can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int cpuCycleBungQuiet(void) {
+	int quiet = 0xFFFE;
+	/* the FDS-style timer: 3 a cycle, the IRQ at 448 while enabled */
+	if (fdsIO & 0x80)
+		quiet = fdsCounter >= 448 ? 0 : (448 - fdsCounter + 2) / 3 - 1;
+	if (irqCounter < 0) {
+		/* counting up to 0 */
+		int const bung = -irqCounter - 1;
+		quiet = bung < quiet ? bung : quiet;
+	}
+	return quiet;
 }
 
 static void FP_FASTAPASS(1) cpuCycleVenus(int a) {
@@ -454,6 +480,19 @@ static void FP_FASTAPASS(1) cpuCycleVenus(int a) {
 				tgdCounter++;
 		}
 	}
+}
+/* armNES: CPU cycles before cpuCycleVenus can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int cpuCycleVenusQuiet(void) {
+	int quiet = 0xFFFE;
+	/* the FDS-style timer: 3 a cycle, the IRQ at 448 while enabled */
+	if (fdsIO & 0x80)
+		quiet = fdsCounter >= 448 ? 0 : (448 - fdsCounter + 2) / 3 - 1;
+	if (tgdTarget & 0x8000 && tgdTarget != 0xFFFF) {
+		/* the counter stops at the target and sets the line every cycle there */
+		int const tgd = tgdCounter == tgdTarget ? ((X.IRQlow & FCEU_IQEXT) ? 0xFFFE : 0) : (uint16_t)(tgdTarget - tgdCounter);
+		quiet = tgd < quiet ? tgd : quiet;
+	}
+	return quiet;
 }
 
 static void pseudoScanlineFFE () {
@@ -543,8 +582,10 @@ void FFE_Init(CartInfo *info) {
 	info->Power =power;
 	info->Close =close;
 	MapIRQHook =cpuCycleFFE;
+	FCEU_SetCPUHookQuiet(cpuCycleFFEQuiet);
 	GameHBIRQHook =pseudoScanlineFFE;
 	PPU_hook =trapPPUAddressChangeFFE;
+	FCEU_PPUHookNoIRQ(); /* armNES: it only latches CHR banks */
 }
 
 static void StateRestore(int version) {
@@ -606,7 +647,10 @@ void Mapper561_562_Init(CartInfo *info) {
 	info->Close =close;
 	if (maker ==VENUS) {
 		MapIRQHook =cpuCycleVenus;
+		FCEU_SetCPUHookQuiet(cpuCycleVenusQuiet);
 		PPU_hook =trapPPUAddressChangeVenus;
-	} else
+	} else {
 		MapIRQHook =cpuCycleBung;
+		FCEU_SetCPUHookQuiet(cpuCycleBungQuiet);
+	}
 }

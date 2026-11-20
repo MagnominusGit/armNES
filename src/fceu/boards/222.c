@@ -82,6 +82,28 @@ static void FP_FASTAPASS(1) cpuCycle (int a) {
 			X6502_IRQEnd(FCEU_IQEXT);
 	}
 }
+/* armNES: CPU cycles before cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int cpuCycleQuiet(void) {
+	uint8_t pre = prescaler, c1 = counter1, c2 = counter2, pend = pending;
+	int n;
+	/* the line follows pending: set while it is, cleared while it isn't */
+	if (!!pend != !!(X.IRQlow & FCEU_IQEXT))
+		return 0;
+	if (pend)
+		return 0xFFFE;
+	/* the cycles before pending sets, run on copies */
+	for (n = 0; n < 0xFFFE; n++) {
+		uint8_t const previous = pre;
+		pre++;
+		if (clockMode && ~previous & 0x40 && pre & 0x40) {
+			if (++c1 == 0xF && ++c2 == 0xF)
+				return n;
+			c1 &= 0xF;
+			c2 &= 0xF;
+		}
+	}
+	return 0xFFFE;
+}
 
 static void power (void) {
 	clockMode = pending = counter1 = counter2 = prescaler = 0;
@@ -95,4 +117,5 @@ void Mapper222_Init (CartInfo *info) {
 	AddExState(stateRegs, ~0, 0, 0);
 	info->Power =power;
 	MapIRQHook = cpuCycle;
+	FCEU_SetCPUHookQuiet(cpuCycleQuiet);
 }

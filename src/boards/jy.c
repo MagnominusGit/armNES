@@ -118,6 +118,8 @@ static void jySyncNt(struct NES* nes, int and, int or) {
 
 static void jySync(struct NES* nes) {
 	struct Jy* j = JY;
+	// Only counting A12's rises does the board look at the PPU's bus (its CHR latch reads through ppuRead)
+	nes->watchPpuBus = (j->irqControl & 3) == 1;
 	jySyncPrg(nes, 0x3F, (j->mode[3] << 5) & ~0x3F);
 	if (j->mode[3] & 0x20) {
 		jySyncChr(nes, 0x1FF, (j->mode[3] << 6) & 0x600);
@@ -312,6 +314,10 @@ static void jyWrite(struct NES* nes, uint16_t address, uint8_t value) {
 			}
 			break;
 		case 1:
+			// Into A12 counting: the board hasn't been shown the bus, so it starts from where the bus is
+			if ((value & 3) == 1 && (j->irqControl & 3) != 1) {
+				j->a12 = nes->ppu.addressBus & 0x1000;
+			}
 			j->irqControl = value;
 			break;
 		case 2:
@@ -352,12 +358,11 @@ static void jyReset(struct NES* nes, bool hard) {
 	memset(j, 0, sizeof(*j));
 	j->dip = dip;
 	nes->readHooks |= 1 << 5;
-	nes->watchPpuBus = true;
 	nes->ppuReadHook = true;
 	jySync(nes);
 }
 
 const struct Board boardJy = {
-	.name = "J.Y. Company", .reset = jyReset, .write = jyWrite, .read = jyRead, .ppuBus = jyPpuBus,
+	.name = "J.Y. Company", .reset = jyReset, .write = jyWrite, .read = jyRead, .ppuBus = jyPpuBus, .busA12 = true,
 	.ppuRead = jyPpuRead, .cpuCycles = jyCycles, .cpuQuiet = jyQuiet, .irqQuietDots = jyIrqQuietDots, .sync = jySync, .stateSize = sizeof(struct Jy),
 };

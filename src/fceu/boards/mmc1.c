@@ -236,6 +236,12 @@ static void NWCIRQHook(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before NWCIRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int NWCIRQHookQuiet(void) {
+	if (NWCRec & 0x10)
+		return 0xFFFE;
+	return NWCIRQCount < nwcdip ? (int)(nwcdip - NWCIRQCount) - 1 : 0;
+}
 
 static void NWCCHRHook(uint32_t A, uint8_t V) {
 	if ((V & 0x10)) {
@@ -273,6 +279,7 @@ void Mapper105_Init(CartInfo *info) {
 	MMC1CHRHook4 = NWCCHRHook;
 	MMC1PRGHook16 = NWCPRGHook;
 	MapIRQHook = NWCIRQHook;
+	FCEU_SetCPUHookQuiet(NWCIRQHookQuiet);
 	info->Power = NWCPower;
 	info->Reset = NWCReset;
 }

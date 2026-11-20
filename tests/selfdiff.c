@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
 		return 3;
 	}
 	// FCEUmm's boards keep one state between them both
-	if (a.board == &boardFceu || a.board == &boardFceuCycle) {
+	if (a.board == &boardFceu || a.board == &boardFceuCycle || a.board == &boardFceuBatch) {
 		printf("SKIPPED FCEUmm board\n");
 		return 3;
 	}

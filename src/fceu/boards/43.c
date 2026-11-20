@@ -72,6 +72,12 @@ static void FP_FASTAPASS(1) M43IRQHook(int a) {
 			X6502_IRQBegin(FCEU_IQEXT);
 		}
 }
+/* armNES: CPU cycles before M43IRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M43IRQHookQuiet(void) {
+	if (!IRQa)
+		return 0xFFFE;
+	return IRQCount < 4096 ? (int)(4096 - IRQCount) - 1 : 0;
+}
 
 static void StateRestore(int version) {
 	Sync();
@@ -81,6 +87,7 @@ void Mapper43_Init(CartInfo *info) {
 	info->Reset = M43Reset;
 	info->Power = M43Power;
 	MapIRQHook = M43IRQHook;
+	FCEU_SetCPUHookQuiet(M43IRQHookQuiet);
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

@@ -150,6 +150,18 @@ void FP_FASTAPASS(1) VRC6_cpuCycle (int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before VRC6_cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int VRC6_cpuCycleQuiet(void) {
+	int first, clocks;
+	if (!(VRC6_mode & 0x02))
+		return 0xFFFE;
+	/* the IRQ comes on the clock that wraps the counter, a clock every cycle or every 341/3 */
+	clocks = 256 - VRC6_count;
+	if (VRC6_mode & 0x04)
+		return clocks - 1;
+	first = VRC6_cycles > 0 ? (VRC6_cycles + 2) / 3 : 1;
+	return first - 1 + (clocks - 1) * 113;
+}
 
 void VRC6_clear(void) {
 	VRC6_prg[0] = 0; VRC6_prg[1] = 0xFE;
@@ -164,6 +176,7 @@ static void VRC6_setHandlers () {
 	SetReadHandler(0x8000, 0xFFFF, CartBR);
 	SetWriteHandler(0x8000, 0xFFFF, VRC6_writeReg);
 	MapIRQHook =VRC6_cpuCycle;
+	FCEU_SetCPUHookQuiet(VRC6_cpuCycleQuiet);
 }
 
 static void VRC6_configure (void (*sync)(), int A0, int A1, int (*prg)(uint8_t), int (*chr)(uint8_t), DECLFR((*read)), DECLFW((*write))) {

@@ -72,6 +72,14 @@ static void FP_FASTAPASS(1) LH53IRQ(int a) {
 			X6502_IRQBegin(FCEU_IQEXT);
 	}
 }
+/* armNES: CPU cycles before LH53IRQ can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int LH53IRQQuiet(void) {
+	if (!IRQa)
+		return 0xFFFE;
+	if (IRQCount <= 7560)
+		return 7560 - IRQCount;
+	return (X.IRQlow & FCEU_IQEXT) ? 0xFFFE : 0;
+}
 
 static void LH53Power(void) {
 	FDSSoundPower();
@@ -97,6 +105,7 @@ void LH53_Init(CartInfo *info) {
 	info->Power = LH53Power;
 	info->Close = LH53Close;
 	MapIRQHook = LH53IRQ;
+	FCEU_SetCPUHookQuiet(LH53IRQQuiet);
 	GameStateRestore = StateRestore;
 
 	WRAMSIZE = 8192;

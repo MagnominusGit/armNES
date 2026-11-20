@@ -80,6 +80,12 @@ static void FP_FASTAPASS(1) VRC3_cpuCycle (int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before VRC3_cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int VRC3_cpuCycleQuiet(void) {
+	int const mask = VRC3_irq & 4 ? 0xFF : 0xFFFF;
+	/* the IRQ comes as the counter, masked, passes the top */
+	return (mask - (VRC3_count & mask)) & mask;
+}
 
 void VRC3_clear(void) {
 	VRC3_prg = VRC3_irq = VRC3_count = VRC3_reload = 0;
@@ -92,6 +98,7 @@ static void VRC3_setHandlers () {
 	SetWriteHandler(0x6000, 0x7FFF, CartBW);
 	SetWriteHandler(0x8000, 0xFFFF, VRC3_write);
 	MapIRQHook = VRC3_cpuCycle;
+	FCEU_SetCPUHookQuiet(VRC3_cpuCycleQuiet);
 }
 
 static void VRC3_configure (void (*sync)()) {

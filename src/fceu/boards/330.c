@@ -117,6 +117,12 @@ static void FP_FASTAPASS(1) M330IRQHook(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before M330IRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M330IRQHookQuiet(void) {
+	if (!IRQa)
+		return 0xFFFE;
+	return IRQCount <= 0x7FFF ? 0x7FFF - IRQCount : 0;
+}
 
 static void StateRestore(int version) {
 	SyncPRG();
@@ -134,6 +140,7 @@ void Mapper330_Init(CartInfo *info) {
 	info->Power = M330Power;
 	info->Close = M330Close;
 	MapIRQHook = M330IRQHook;
+	FCEU_SetCPUHookQuiet(M330IRQHookQuiet);
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 	WRAM = (uint8_t *)FCEU_gmalloc(8192);

@@ -88,6 +88,12 @@ static void FP_FASTAPASS(1) M40IRQHook(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before M40IRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M40IRQHookQuiet(void) {
+	if (!IRQa)
+		return 0xFFFE;
+	return IRQCount < 4096 ? (int)(4096 - IRQCount) : 0;
+}
 
 static void StateRestore(int version) {
 	Sync();
@@ -98,6 +104,7 @@ void Mapper40_Init(CartInfo *info) {
 	info->Reset = M40Reset;
 	info->Power = M40Power;
 	MapIRQHook = M40IRQHook;
+	FCEU_SetCPUHookQuiet(M40IRQHookQuiet);
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

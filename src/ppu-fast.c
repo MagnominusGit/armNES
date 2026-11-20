@@ -2123,8 +2123,9 @@ void fastRun(struct NES* nes, int dots) {
 				// attribute fetches hold A12 low for 4 dots, two M2 rises at most, and it takes three
 				// to clock the counter, so after the first tile (whose low stretch runs on from dot
 				// 337) the fetches can go unwatched; the bus ends high, as it was shown
+				// (A12 staying low means nothing only to a board that acts on A12 rising, Board.busA12)
 				if (dot < 256 && (dot & 7) == 0 && dots >= 8 &&
-					(!nes->watchPpuBus || (!ppu->bgTable && !(ppu->addressBus & 0x1000)) ||
+					(!nes->watchPpuBus || (nes->board->busA12 && !ppu->bgTable && !(ppu->addressBus & 0x1000)) ||
 					(nes->board->ppuBus == mmc3PpuBus && ppu->bgTable && dot >= 8 && (ppu->addressBus & 0x1000) &&
 					nes->busShown && nes->busA12Shown))) {
 					dots -= 8 * renderTiles(nes, dots / 8);

@@ -127,6 +127,18 @@ void FP_FASTAPASS(1) VRC7_cpuCycle (int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before VRC7_cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int VRC7_cpuCycleQuiet(void) {
+	int first, clocks;
+	if (!(VRC7_mode & 0x02))
+		return 0xFFFE;
+	/* the IRQ comes on the clock that wraps the counter, a clock every cycle or every 341/3 */
+	clocks = 256 - VRC7_count;
+	if (VRC7_mode & 0x04)
+		return clocks - 1;
+	first = VRC7_cycles > 0 ? (VRC7_cycles + 2) / 3 : 1;
+	return first - 1 + (clocks - 1) * 113;
+}
 
 void VRC7_clear(void) {
 	VRC7_prg[0] = 0; VRC7_prg[1] = 1; VRC7_prg[2] = 0xFE;
@@ -141,6 +153,7 @@ static void VRC7_setHandlers () {
 	SetReadHandler(0x8000, 0xFFFF, CartBR);
 	SetWriteHandler(0x8000, 0xFFFF, VRC7_writeReg);
 	MapIRQHook =VRC7_cpuCycle;
+	FCEU_SetCPUHookQuiet(VRC7_cpuCycleQuiet);
 }
 
 static void VRC7_configure (void (*sync)(), int A0) {

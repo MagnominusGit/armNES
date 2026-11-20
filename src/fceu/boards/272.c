@@ -146,6 +146,14 @@ static void M272Hook(uint32_t A) {
 	}
 	last_pa13 = pa13;
 }
+/* armNES: PPU dots before M272Hook can raise the IRQ (FCEU_SetPPUHookQuiet()): it counts A13 falling,
+ * once a tile or sprite slot at most, so 8 dots apart. One slot less: the core catches the PPU up
+ * on whole dots, and a bound to the last dot raised the IRQ a CPU cycle late. */
+static int M272HookQuiet(void) {
+	if (!IRQa)
+		return 1 << 20;
+	return IRQCount < 83 ? (82 - IRQCount) * 8 : 0;
+}
 
 static void M272Reset(void) {
 	prg[0] = prg[1] = 0;
@@ -166,6 +174,7 @@ void Mapper272_Init(CartInfo *info) {
 	info->Power = M272Power;
 	info->Reset = M272Reset;
 	PPU_hook = M272Hook;
+	FCEU_SetPPUHookQuiet(M272HookQuiet);
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

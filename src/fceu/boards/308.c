@@ -57,6 +57,22 @@ static void FP_FASTAPASS(1) cpuCycle (int a) {
 		if (!irqCounterHigh && (irqCounterLow &4095) <2048) X6502_IRQBegin(FCEU_IQEXT);
 	}
 }
+/* armNES: CPU cycles before cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int cpuCycleQuiet(void) {
+	uint16_t low = irqCounterLow;
+	uint8_t high = irqCounterHigh;
+	int n;
+	if (!irqEnabled)
+		return 0xFFFE;
+	/* the cycles before one sets the line, run on copies */
+	for (n = 0; n < 0xFFFE; n++) {
+		if ((++low & 4095) == 2048)
+			high--;
+		if (!high && (low & 4095) < 2048)
+			return n;
+	}
+	return 0xFFFE;
+}
 
 static void power (void) {
 	irqEnabled =irqCounterLow =irqCounterHigh =0;
@@ -69,4 +85,5 @@ void UNLTH21311_Init (CartInfo *info) {
 	AddExState(stateRegs, ~0, 0, 0);
 	info->Power =power;
 	MapIRQHook =cpuCycle;
+	FCEU_SetCPUHookQuiet(cpuCycleQuiet);
 }

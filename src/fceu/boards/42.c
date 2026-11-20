@@ -70,6 +70,19 @@ static void FP_FASTAPASS(1) M42IRQHook(int a) {
 			X6502_IRQEnd(FCEU_IQEXT);
 	}
 }
+/* armNES: CPU cycles before M42IRQHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M42IRQHookQuiet(void) {
+	uint32_t next;
+	int high;
+	if (!IRQa)
+		return 0xFFFE;
+	/* the line follows the counter, set from 24576 up to the wrap at 32768 */
+	next = (IRQCount + 1) & 0x7FFF;
+	high = next >= 24576;
+	if (high != !!(X.IRQlow & FCEU_IQEXT))
+		return 0;
+	return high ? (int)(32768 - IRQCount) - 1 : (int)(24576 - IRQCount) - 1;
+}
 
 static void StateRestore(int version) {
 	Sync();
@@ -83,6 +96,7 @@ void Mapper42_Init(CartInfo *info) {
 	}
 	info->Power = M42Power;
 	MapIRQHook = M42IRQHook;
+	FCEU_SetCPUHookQuiet(M42IRQHookQuiet);
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

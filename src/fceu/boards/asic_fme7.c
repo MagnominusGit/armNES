@@ -83,6 +83,13 @@ void FP_FASTAPASS(1) FME7_cpuCycle (int a) {
 		FME7_reg[15] = counter >>8;
 	}
 }
+/* armNES: CPU cycles before FME7_cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int FME7_cpuCycleQuiet(void) {
+	uint16_t const counter = FME7_reg[14] | FME7_reg[15] << 8;
+	if (!(FME7_reg[13] & 0x80) || !(FME7_reg[13] & 0x01))
+		return 0xFFFE;
+	return (counter ? counter : 0x10000) - 1;
+}
 
 void FME7_clear(void) {
 	int i;
@@ -96,6 +103,7 @@ static void FME7_setHandlers () {
 	SetReadHandler(0x8000, 0xFFFF, CartBR);
 	SetWriteHandler(0x8000, 0xBFFF, FME7_writeReg);
 	MapIRQHook = FME7_cpuCycle;
+	FCEU_SetCPUHookQuiet(FME7_cpuCycleQuiet);
 }
 
 static void FME7_configure (void (*sync)()) {

@@ -165,6 +165,39 @@ int mmc3IrqQuietDots(struct NES* nes) {
 		int fetches = ahead + safe / (ppu->tall ? 8 : 1) * 341 - 2;
 		dots = fetches > dots ? fetches : dots;
 	}
+	// With the background at $1000 and 8x8 sprites at $0000, A12 stays low from dot 257 to the first
+	// background fetch at 325 (shown on dot 326) and from 337 into the next line's first (shown on dot
+	// 6); the background tiles between hold it low for 4 dots, too short to count. So it can count
+	// only on dots 6 and 326 of a line that renders: the IRQ waits for the safe + 1'th of those.
+	if (ppu->bgTable && !ppu->spriteTable && !ppu->tall && (ppu->showBg || ppu->showSprites) &&
+		!(ppu->delay2001 | ppu->delay2006 | ppu->vramReadStep | ppu->vramWriteStep)) {
+		int const pre = nes->region == REGION_NTSC ? 261 : 311, lines = pre + 1;
+		int line = ppu->scanline, dot = ppu->dot, passed = 0, points = safe + 1;
+		// Dots from here to each point in turn, line by line
+		for (int guard = 0; guard < 2 * lines; guard++) {
+			bool const renders = line < 240 || line == pre;
+			if (renders) {
+				if (dot < 6) {
+					if (--points == 0) {
+						passed += 6 - dot;
+						break;
+					}
+				}
+				if (dot < 326) {
+					if (--points == 0) {
+						passed += 326 - dot;
+						break;
+					}
+				}
+			}
+			passed += 341 - dot;
+			dot = 0;
+			line = line == pre ? 0 : line + 1;
+		}
+		// The point's dot itself can change the IRQ, and a margin as the other bounds keep
+		int const quiet = points == 0 ? passed - 2 : 1 << 20;
+		dots = quiet > dots ? quiet : dots;
+	}
 	return dots;
 }
 

@@ -91,6 +91,12 @@ static void FP_FASTAPASS(1) M67IRQ(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before M67IRQ can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M67IRQQuiet(void) {
+	if (!IRQa)
+		return 0xFFFE;
+	return IRQCount > 0 ? IRQCount - 1 : 0;
+}
 
 static void StateRestore(int version) {
 	Sync();
@@ -99,6 +105,7 @@ static void StateRestore(int version) {
 void Mapper67_Init(CartInfo *info) {
 	info->Power = M67Power;
 	MapIRQHook = M67IRQ;
+	FCEU_SetCPUHookQuiet(M67IRQQuiet);
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
 }

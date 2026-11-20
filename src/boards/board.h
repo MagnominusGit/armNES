@@ -279,6 +279,7 @@ void fdsSoundCycle(struct FdsSound*);
 // fceu/bridge.c: FCEUmm's boards, for the rest
 BOARD(boardFceu);
 BOARD(boardFceuCycle);
+BOARD(boardFceuBatch);
 const struct Board* fceuFind(int mapper);
 
 #endif

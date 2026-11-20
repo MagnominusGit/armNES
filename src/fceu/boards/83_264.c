@@ -166,6 +166,14 @@ static void clockCounter (void) {
 static void FP_FASTAPASS(1) cycleCounter (int a) {
 	while (a--) if (~flags &0x40) clockCounter();
 }
+/* armNES: CPU cycles before cycleCounter can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int cycleCounterQuiet(void) {
+	uint16_t counter = reg[2] | reg[3] << 8;
+	if (flags & 0x40 || !(flags & 0x80) || !counter)
+		return 0xFFFE;
+	/* the IRQ comes on the clock that takes the counter to 0 */
+	return (reg[1] & 0x40 ? counter : 0x10000 - counter) - 1;
+}
 
 static void scanlineCounter() {
 	if (flags &0x40) {
@@ -205,6 +213,7 @@ static void power () {
 	SetWriteHandler(0x6000, 0x7FFF, writePRGRAM);
 	SetWriteHandler(0x8000, 0xFFFF, writeReg);
 	MapIRQHook = cycleCounter;
+	FCEU_SetCPUHookQuiet(cycleCounterQuiet);
 	GameHBIRQHook = scanlineCounter;
 	for (i = 0; i < 16; i++) reg[i] = 0;
 	for (i = 0; i < 4; i++) scratch[i] = 0;

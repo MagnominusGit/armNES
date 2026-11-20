@@ -95,6 +95,11 @@ void MMC1_syncMirror(void) {
 void FP_FASTAPASS(1) MMC1_cpuCycle (int a) {
 	while (a--) if (MMC1_filter) MMC1_filter--;
 }
+/* armNES: CPU cycles before MMC1_cpuCycle can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int MMC1_cpuCycleQuiet(void) {
+	/* it only times the write filter, and a write brings it up to date */
+	return 0xFFFE;
+}
 
 DECLFW (MMC1_writeReg) {
 	if (V &0x80) {
@@ -127,6 +132,7 @@ static void MMC1_setHandlers () {
 	SetReadHandler (0x8000, 0xFFFF, CartBR);
 	SetWriteHandler(0x8000, 0xFFFF, MMC1_writeReg);
 	MapIRQHook = MMC1_cpuCycle;
+	FCEU_SetCPUHookQuiet(MMC1_cpuCycleQuiet);
 }
 
 static void MMC1_configure (void (*sync)(), uint8_t type, int (*prg)(uint8_t), int (*chr)(uint8_t), DECLFR((*read)), DECLFW((*write))) {

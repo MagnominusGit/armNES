@@ -394,6 +394,7 @@ static void applyMode (uint8_t clear) {
 		mapperSync = sync_supervisor;
 		PPU_hook = NULL;
 		MapIRQHook = flashrom_cpuCycle;
+		FCEU_SetCPUHookQuiet(flashrom_cpuCycleQuiet);
 		GameHBIRQHook = NULL;
 		sync();
 	}

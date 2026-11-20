@@ -15,5 +15,6 @@ void            flashrom_init (uint8_t, uint8_t, uint32_t, uint32_t, uint32_t, u
 uint8_t		flashrom_read (uint32_t);
 void		flashrom_write (uint32_t, uint8_t);
 void FP_FASTAPASS(1) flashrom_cpuCycle(int);
+int flashrom_cpuCycleQuiet(void);
 
 #endif

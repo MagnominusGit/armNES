@@ -161,6 +161,12 @@ static void FP_FASTAPASS(1) M359CPUHook(int a) {
 		}
 	}
 }
+/* armNES: CPU cycles before M359CPUHook can change the IRQ line (FCEU_SetCPUHookQuiet()) */
+static int M359CPUHookQuiet(void) {
+	if (irqPA12 || !IRQa || !IRQCount16)
+		return 0xFFFE;
+	return IRQCount16 > 0 ? IRQCount16 - 1 : 0;
+}
 
 static void M359IRQHook(void) {
 	if (irqPA12) {
@@ -183,6 +189,7 @@ void Mapper359_Init(CartInfo* info) {
 	info->Power = M359Power;
 	info->Reset = M359Reset;
 	MapIRQHook = M359CPUHook;
+	FCEU_SetCPUHookQuiet(M359CPUHookQuiet);
 	GameHBIRQHook = M359IRQHook;
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
@@ -192,6 +199,7 @@ void Mapper540_Init(CartInfo* info) {
 	mapperNum = 540;
 	info->Power = M359Power;
 	MapIRQHook = M359CPUHook;
+	FCEU_SetCPUHookQuiet(M359CPUHookQuiet);
 	GameHBIRQHook = M359IRQHook;
 	GameStateRestore = StateRestore;
 	AddExState(&StateRegs, ~0, 0, 0);
