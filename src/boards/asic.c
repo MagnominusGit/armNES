@@ -93,8 +93,11 @@ struct Fme7 {
 	struct Sunsoft5b audio;
 };
 
-// 3 dB per volume step, 0 to 15
-static const uint16_t ayVolume[16] = { 0, 45, 63, 89, 126, 178, 251, 355, 501, 708, 1000, 1413, 1995, 2818, 3981, 5623 };
+// The 5B's logarithmic DAC, NESdev's Sunsoft 5B audio: a 5-bit level, 1.5 dB a step, 0 and 1 silent.
+// The volume register gives the odd levels (volume v is level 2v + 1); the envelope all 32. NESdev
+// only says the chip is very loud next to the 2A03 and other expansion audio: a channel at full volume
+// is about 3.6 times one 2A03 square at volume 15 (11 dB louder), as Mesen mixes it.
+static const uint16_t dacLevel[32] = { 0, 0, 142, 169, 201, 239, 284, 337, 401, 476, 566, 673, 799, 950, 1129, 1342, 1595, 1896, 2253, 2677, 3182, 3782, 4495, 5342, 6349, 7546, 8969, 10659, 12669, 15057, 17895, 21268 };
 
 void sunsoft5bWrite(struct Sunsoft5b* a, uint8_t value) {
 	// A register select with its high nibble set disables writes, as on the YM2149F
@@ -148,9 +151,9 @@ void sunsoft5bCycle(struct Sunsoft5b* a) {
 
 // Each of the three squares' level (noise mixed in as the chip does); the chip's output is their sum
 void sunsoft5bLevels(const struct Sunsoft5b* a, int out[3]) {
-	// The envelope's 5-bit level, two steps to each of the 16 volumes: ramping up (attack) or down,
-	// flipped on alternate ramps; held at 0 after one ramp for $00-$07, else at the far end of the
-	// ramp, or the near end with alternate ($0B and $0F turn as they stop)
+	// The envelope's 5-bit level, straight to the DAC: ramping up (attack) or down, flipped on
+	// alternate ramps; held at 0 after one ramp for $00-$07, else at the far end of the ramp, or the
+	// near end with alternate ($0B and $0F turn as they stop)
 	uint8_t shape = a->regs[13];
 	bool attack = shape & 4;
 	int level;
@@ -159,12 +162,11 @@ void sunsoft5bLevels(const struct Sunsoft5b* a, int out[3]) {
 	} else {
 		level = (attack ^ a->envelopeFlip) ? a->envelopeStep : 31 - a->envelopeStep;
 	}
-	level >>= 1;
 	for (int i = 0; i < 3; i++) {
 		bool toneOff = a->regs[7] & (1 << i), noiseOff = a->regs[7] & (8 << i);
 		bool on = (toneOff || a->toneOut[i]) && (noiseOff || (a->noiseShift & 1));
 		uint8_t volume = a->regs[8 + i];
-		out[i] = on ? ayVolume[(volume & 0x10) ? level : volume & 15] : 0;
+		out[i] = on ? dacLevel[(volume & 0x10) ? level : (volume & 15) * 2 + 1] : 0;
 	}
 }
 
