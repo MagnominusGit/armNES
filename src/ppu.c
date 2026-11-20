@@ -644,10 +644,19 @@ static void calculatePixel(struct NES* nes) {
 			ppu->pendingHit = true;
 			ppu->canHit = false;
 		}
+		// The picture leaves out the hidden layers (nesHiddenLayers), after the hit has seen them
+		if (nesHiddenLayers & LAYER_BACKGROUND) {
+			color = palette = 0;
+		}
+		if (nesHiddenLayers & (front ? LAYER_SPRITES_FRONT : LAYER_SPRITES_BEHIND)) {
+			spriteColor = 0;
+		}
 		if (spriteColor && (!color || front)) {
 			color = spriteColor;
 			palette = spritePalette;
 		}
+	} else if (nesHiddenLayers & LAYER_BACKGROUND) {
+		color = palette = 0;
 	}
 	uint8_t address;
 	if (rendering(ppu) && ppu->scanline < 240) {

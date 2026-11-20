@@ -90,8 +90,9 @@ Famicom keyboard.
 The menu shows only the options that do something for the game loaded: the VS. System category only
 for arcade games, Disk System Fast Loading only for disks, Cart Jumper only for carts that have one,
 the cart sound options only for carts with their own sound chip (and each voice's only for its chip),
-and the Zapper options only with a
-Zapper plugged in (the motion ones only with Zapper Motion on).
+the Zapper options only with a
+Zapper plugged in (the motion ones only with Zapper Motion on), and the Layers switches only with
+Layer Toggles on.
 
 | Category | Option | Values (default first) |
 | --- | --- | --- |
@@ -113,6 +114,9 @@ Zapper plugged in (the motion ones only with Zapper Motion on).
 | Audio | Pulse 1, Pulse 2, Triangle, Noise, DMC (Samples) and Cart Sound Volume | 100%, 0% to 90% in tenths |
 | | The same channels' Position | Center, Left to Right in quarters |
 | | Each voice of the cart's sound chip: VRC6 Pulse 1, 2 and Sawtooth; VRC7 FM 1 to 6; Sunsoft 5B Square A, B and C; Namco 163 Wave 1 to 8; MMC5 Pulse 1, 2 and PCM (Samples) | Volume and Position as above, on top of Cart Sound Volume |
+| Layers | Layer Toggles | Off, On (shows the switches below; Off shows and plays everything) |
+| | Background, Sprites in Front, Sprites Behind the Background | Shown, Hidden |
+| | Pulse 1, Pulse 2, Triangle, Noise, DMC (Samples), Cart Sound, and each voice of the cart's sound chip | On, Muted |
 | Input | Turbo Button Period | 4 frames, Off, 2 to 120 frames |
 | | Allow Opposing Directions | Off, On |
 | | Left Stick as D-Pad | On, Off |
@@ -137,6 +141,12 @@ color fringes, blended dithering and dot crawl, or the cleaner S-Video. Its pict
 line, so Scanlines can darken every other row; integer scaling or a smooth filter in the frontend
 shows them evenly. Custom palettes go in the system folder as `nes.pal` or `custom.pal` (64 colors,
 or 512 with the emphasis combinations).
+
+Layer Toggles hide parts of the picture or mute sound channels, to see or hear one on its own: for
+ripping graphics or music, or a closer look. With the background hidden the backdrop color shows and
+sprites drawn behind the background come to the front; a hidden sprite shows what's under it. Only
+what's shown and heard changes: the game still sees every layer (sprite 0 still hits), so it plays on
+the same, and netplay, run-ahead and save states aren't affected.
 
 ## Building
 
@@ -245,8 +255,10 @@ What games show and play comes first; test ROMs that probe corners no game reach
   5B's sound chips are emulated as NESdev documents them: the VRC7 with its own instruments (the
   chip's dump) and six channels, the Namco 163 as loud as each board's submapper says (11-19.5 dB over
   the 2A03), the MMC5's PCM with its read mode and IRQ, the FDS's modulation by NESdev's formula.
-- Save states are deterministic, so netplay, rewind and run-ahead stay in step. RetroAchievements,
-  cheats (Game Genie and raw codes) and memory maps are supported.
+- Save states are deterministic, so netplay, rewind and run-ahead stay in step. They leave out the
+  sound mixer's settings and output, so players can set volumes, positions and Layer Toggles as they
+  like and still match, and a state saved on x86-64 loads on ARM and the other way round.
+  RetroAchievements, cheats (Game Genie and raw codes) and memory maps are supported.
 
 ## Testing
 
@@ -259,7 +271,9 @@ What games show and play comes first; test ROMs that probe corners no game reach
   game whose picture changed, at several points; most have to come closer to it, and those that
   don't are looked into one by one.
 - **Save states:** `coretest` checks that a state taken and loaded again replays the same picture
-  and sound.
+  and sound. Every game is also run with run-ahead (each frame run unseen, the state loaded back, the
+  frame run again) and has to match a run without it; one game per mapper has to play the same on
+  x86-64, 64-bit ARM and 32-bit ARM, from boot and from a state another of them saved.
 
 ## Performance
 

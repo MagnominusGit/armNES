@@ -86,6 +86,56 @@ size_t nesStateSize(const struct NES* nes) {
 		(nes->cart.chrRam ? nes->cart.chrSize : 0) + nes->cart.vramSize + extraSize(nes) + parStateSize() + genieSize(nes);
 }
 
+// The sound as it goes out follows the frontend's mixer (each player's volumes, positions and mutes),
+// so states leave it out and are the same whatever those are. Run-ahead and netplay load back states
+// this run saved a moment ago: their sound comes back from here, so it goes on as it did. Any other
+// state goes on with the run's sound.
+struct AudioOut {
+	int32_t lastMix, level, accum, accumCount, hpPrev, hpOut, lpOut;
+	int64_t phase;
+	int32_t lastRight, accumRight, levelRight, rightHpPrev, rightHpOut, rightLpOut;
+	// The changes not yet turned into samples (a state saved before the first frame has some)
+	uint32_t changeCount;
+	struct AudioChange changes[16];
+};
+
+static void audioOutGet(const struct NES* nes, struct AudioOut* a) {
+	*a = (struct AudioOut) { nes->apu.lastMix, nes->audioLevel, nes->audioAccum, nes->audioAccumCount, nes->hpPrev,
+		nes->hpOut, nes->lpOut, nes->audioPhase, nes->mixer.lastRight, nes->mixer.accumRight, nes->mixer.levelRight,
+		nes->mixer.hpPrev, nes->mixer.hpOut, nes->mixer.lpOut, 0, { { 0, 0, 0 } } };
+	if (nes->audioChangeCount <= sizeof(a->changes) / sizeof(a->changes[0])) {
+		a->changeCount = nes->audioChangeCount;
+		memcpy(a->changes, nes->audioChanges, a->changeCount * sizeof(a->changes[0]));
+	}
+}
+
+static void audioOutPut(struct NES* nes, const struct AudioOut* a) {
+	nes->apu.lastMix = a->lastMix;
+	nes->audioLevel = a->level;
+	nes->audioAccum = a->accum;
+	nes->audioAccumCount = a->accumCount;
+	nes->hpPrev = a->hpPrev;
+	nes->hpOut = a->hpOut;
+	nes->lpOut = a->lpOut;
+	nes->audioPhase = a->phase;
+	nes->mixer.lastRight = a->lastRight;
+	nes->mixer.accumRight = a->accumRight;
+	nes->mixer.levelRight = a->levelRight;
+	nes->mixer.hpPrev = a->rightHpPrev;
+	nes->mixer.hpOut = a->rightHpOut;
+	nes->mixer.lpOut = a->rightLpOut;
+	nes->audioChangeCount = a->changeCount;
+	memcpy(nes->audioChanges, a->changes, a->changeCount * sizeof(a->changes[0]));
+}
+
+// The last saves' sound, by machine and master clock (newest last)
+static struct {
+	const struct NES* nes;
+	uint64_t clock;
+	struct AudioOut out;
+} savedAudio[32];
+static unsigned savedAudioCount;
+
 bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	if (size < nesStateSize(nes)) {
 		return false;
@@ -134,12 +184,31 @@ bool nesSaveState(struct NES* nes, void* data, size_t size) {
 	LEAVE_OUT(overclockLines);
 	LEAVE_OUT(overclockPostRender);
 	LEAVE_OUT(noSpriteLimit);
+	LEAVE_OUT(audioCount);
+	LEAVE_OUT(apu.lastMix);
+	LEAVE_OUT(apu.stereo);
+	LEAVE_OUT(audioPhase);
+	LEAVE_OUT(audioAccum);
+	LEAVE_OUT(audioAccumCount);
+	LEAVE_OUT(audioLevel);
+	LEAVE_OUT(audioChangeCount);
+	LEAVE_OUT(audioChanges);
+	LEAVE_OUT(hpPrev);
+	LEAVE_OUT(hpOut);
+	LEAVE_OUT(lpOut);
 	LEAVE_OUT(audioCapacity);
 	LEAVE_OUT(sampleRate);
 	LEAVE_OUT(cheats);
 	LEAVE_OUT(cheatCount);
 	LEAVE_OUT(vsSub);
 #undef LEAVE_OUT
+	// Between frames the sound's changes are few or none, and it comes back whole
+	if (nes->audioChangeCount <= sizeof(savedAudio[0].out.changes) / sizeof(savedAudio[0].out.changes[0])) {
+		unsigned const slot = savedAudioCount++ % (sizeof(savedAudio) / sizeof(savedAudio[0]));
+		savedAudio[slot].nes = nes;
+		savedAudio[slot].clock = nes->masterClock;
+		audioOutGet(nes, &savedAudio[slot].out);
+	}
 	out += sizeof(struct NES);
 	uint32_t tags[32];
 	for (int i = 0; i < 16; i++) {
@@ -206,6 +275,10 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	int overclockLines = nes->overclockLines;
 	bool overclockPostRender = nes->overclockPostRender, noSpriteLimit = nes->noSpriteLimit;
 	struct Mixer mixer = nes->mixer;
+	struct AudioOut audio;
+	audioOutGet(nes, &audio);
+	// The run's changes not yet turned into samples are of its own time, not the state's
+	audio.changeCount = 0;
 
 	memcpy(nes, in, sizeof(struct NES));
 	in += sizeof(struct NES);
@@ -239,6 +312,16 @@ bool nesLoadState(struct NES* nes, const void* data, size_t size) {
 	nes->noSpriteLimit = noSpriteLimit;
 	nes->mixer = mixer;
 	nes->apu.stereo = mixer.custom;
+	// The sound saved with it this run, newest first, or the run's
+	unsigned const saved = sizeof(savedAudio) / sizeof(savedAudio[0]);
+	for (unsigned i = 0; i < saved && i < savedAudioCount; i++) {
+		unsigned const slot = (savedAudioCount - 1 - i) % saved;
+		if (savedAudio[slot].nes == nes && savedAudio[slot].clock == nes->masterClock) {
+			audio = savedAudio[slot].out;
+			break;
+		}
+	}
+	audioOutPut(nes, &audio);
 	// The board ran every cycle before the state was saved; what it may skip is worked out again
 	nes->boardPending = 0;
 	nes->boardQuiet = board->cpuCycles ? 0 : 0xFFFF;

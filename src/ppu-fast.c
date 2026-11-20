@@ -358,6 +358,9 @@ static inline void dotShift(struct Ppu* ppu) {
 	ppu->atH <<= 1;
 }
 
+static inline int shownBackground(int bg);
+static inline bool spriteHidden(bool behind);
+
 static inline void drawPixel(struct NES* nes, int x) {
 	struct Ppu* ppu = &nes->ppu;
 	uint8_t color;
@@ -373,14 +376,15 @@ static inline void drawPixel(struct NES* nes, int x) {
 			}
 		}
 		uint8_t sprite = ppu->lineSprites[x];
-		int index = bg;
+		int const shown = shownBackground(bg);
+		int index = shown;
 		if ((sprite & SPRITE_OPAQUE) && ppu->showSprites && (x >= 8 || ppu->showSpritesLeft)) {
 			if ((sprite & SPRITE_ZERO) && bg && ppu->showBg && x != 255 && !ppu->hit && !ppu->pendingHit) {
 				// The flag shows a couple of dots after the pixel
 				ppu->pendingHit = true;
 				ppu->hitDelay = 3;
 			}
-			if (!bg || !(sprite & SPRITE_BEHIND)) {
+			if ((!shown || !(sprite & SPRITE_BEHIND)) && !spriteHidden(sprite & SPRITE_BEHIND)) {
 				index = 0x10 | (sprite & 0x0F);
 			}
 		}
@@ -709,7 +713,8 @@ static inline void dotPixel(struct NES* nes, int x) {
 			bg |= (((ppu->atL >> bit) & 1) | (((ppu->atH >> bit) & 1) << 1)) << 2;
 		}
 	}
-	int index = bg;
+	int const shown = shownBackground(bg);
+	int index = shown;
 	if (ppu->showSprites && (x >= 8 || ppu->showSpritesLeft)) {
 		// The first slot past its X with a color, all eight at once
 		uint64_t counters, lo, hi;
@@ -725,7 +730,8 @@ static inline void dotPixel(struct NES* nes, int x) {
 				ppu->pendingHit = true;
 				ppu->hitDelay = BALANCED_HIT_DOTS;
 			}
-			if (!bg || !(ppu->spriteAttr[i] & 0x20)) {
+			bool const behind = ppu->spriteAttr[i] & 0x20;
+			if ((!shown || !behind) && !spriteHidden(behind)) {
 				index = 0x10 | ((ppu->spriteAttr[i] & 3) << 2) | color;
 			}
 		}
@@ -1219,6 +1225,37 @@ static void drawTile(uint16_t* out, uint64_t pixels, const uint8_t* sprites, con
 
 // Up to a tile's end on a visible line, dot by dot but with only what such a dot does: the sprite 0
 // flag coming due, the pixel, the fetch, the shift, and at the end the next tile and the X step
+uint8_t nesHiddenLayers;
+
+// The background's pixel as drawn (0, the backdrop, with the layer hidden)
+static inline int shownBackground(int bg) {
+	return nesHiddenLayers & LAYER_BACKGROUND ? 0 : bg;
+}
+
+// Whether a sprite's pixel is left out of the picture: its layer, in front or behind, hidden
+static inline bool spriteHidden(bool behind) {
+	return nesHiddenLayers & (behind ? LAYER_SPRITES_BEHIND : LAYER_SPRITES_FRONT);
+}
+
+// drawTile() with the hidden layers left out: a hidden sprite's pixel shows what's under it, and with
+// the background hidden the sprites behind it show
+static inline void drawTileShown(uint16_t* out, uint64_t pixels, const uint8_t* sprites, const uint8_t* palette,
+	uint8_t grayMask, uint16_t emphasis) {
+	uint8_t shown[8];
+	if (__builtin_expect(nesHiddenLayers != 0, 0)) {
+		if (nesHiddenLayers & LAYER_BACKGROUND) {
+			pixels = 0;
+		}
+		if (sprites) {
+			for (int i = 0; i < 8; i++) {
+				shown[i] = (sprites[i] & SPRITE_OPAQUE) && spriteHidden(sprites[i] & SPRITE_BEHIND) ? 0 : sprites[i];
+			}
+			sprites = shown;
+		}
+	}
+	drawTile(out, pixels, sprites, palette, grayMask, emphasis);
+}
+
 static void renderSpan(struct NES* nes, int n) {
 	struct Ppu* ppu = &nes->ppu;
 	for (int i = 0; i < n; i++) {
@@ -1291,7 +1328,7 @@ static int renderTiles(struct NES* nes, int count) {
 			}
 		}
 		if (!skip) {
-			drawTile(out + x, pixels, sprites, ppu->palette, grayMask, emphasis);
+			drawTileShown(out + x, pixels, sprites, ppu->palette, grayMask, emphasis);
 		}
 		bgL <<= 8;
 		bgH <<= 8;
@@ -1381,7 +1418,7 @@ static __attribute__((noinline)) int renderTilesShown(struct NES* nes, int count
 			}
 		}
 		if (!skip) {
-			drawTile(out + x, pixels, sprites, ppu->palette, grayMask, emphasis);
+			drawTileShown(out + x, pixels, sprites, ppu->palette, grayMask, emphasis);
 		}
 		bgL <<= 8;
 		bgH <<= 8;
@@ -1734,7 +1771,7 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 			if (!nes->skipPixels) {
 				uint8_t bytes[8];
 				memcpy(bytes, &sprites, 8);
-				drawTile(out, pixels, sprites ? bytes : NULL, ppu->palette, ppu->gray ? 0x30 : 0x3F, emphasis);
+				drawTileShown(out, pixels, sprites ? bytes : NULL, ppu->palette, ppu->gray ? 0x30 : 0x3F, emphasis);
 			}
 			// Sprite 0 on an opaque background (not at x 255) sets the flag three dots later
 			uint64_t hit = ppu->hasZero && !ppu->hit ? zero & ((pixels | pixels >> 1) & 0x0101010101010101ull) * 0xFF : 0;
@@ -1770,7 +1807,7 @@ static inline __attribute__((always_inline)) void balancedTile(struct NES* nes, 
 		// With no sprite pattern left in any slot the tile's eight pixels are the background's
 		bool const whole = visible && !(lo | hi);
 		if (whole && !nes->skipPixels) {
-			drawTile(out, pixels, NULL, ppu->palette, ppu->gray ? 0x30 : 0x3F, emphasis);
+			drawTileShown(out, pixels, NULL, ppu->palette, ppu->gray ? 0x30 : 0x3F, emphasis);
 		}
 #pragma GCC unroll 8
 		for (int k = 1; k <= 8; k++) {
@@ -1836,7 +1873,7 @@ static bool balancedPart(struct NES* nes, int n, bool visible, bool pre) {
 			uint16_t out[8];
 			uint16_t const emphasis = (ppu->emphRed ? 0x40 : 0) | (ppu->emphGreen ? 0x80 : 0) | (ppu->emphBlue ? 0x100 : 0);
 			memcpy(bytes, &sprites, 8);
-			drawTile(out, pixels, sprites ? bytes : NULL, ppu->palette, ppu->gray ? 0x30 : 0x3F, emphasis);
+			drawTileShown(out, pixels, sprites ? bytes : NULL, ppu->palette, ppu->gray ? 0x30 : 0x3F, emphasis);
 			memcpy(&nes->frameBuffer[ppu->scanline * NES_WIDTH + ppu->dot], out, n * sizeof(out[0]));
 		}
 		uint64_t hit = ppu->hasZero && !ppu->hit ? zero & ((pixels | pixels >> 1) & 0x0101010101010101ull) * 0xFF : 0;

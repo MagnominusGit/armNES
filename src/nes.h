@@ -586,6 +586,11 @@ uint8_t cpuPeek(struct NES*, uint16_t address);
 uint8_t busRead(struct NES*, uint16_t address);
 void busWrite(struct NES*, uint16_t address, uint8_t value);
 
+// Picture layers left out of the picture the frontend gets (Layer Toggles): only what's drawn changes,
+// so the game sees them all (sprite 0 still hits) and states and netplay don't depend on them
+enum { LAYER_BACKGROUND = 1, LAYER_SPRITES_FRONT = 2, LAYER_SPRITES_BEHIND = 4 };
+extern uint8_t nesHiddenLayers;
+
 // ppu.c
 void ppuReset(struct NES*, bool hard);
 void ppuStep(struct NES*);
