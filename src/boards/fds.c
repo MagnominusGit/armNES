@@ -363,8 +363,7 @@ static void fdsWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	}
 	// The drive, timer and sound as they are at this write, which may start something: their quiet
 	// stretch is worked out again after it
-	nesBoardSync(nes);
-	nes->boardQuiet = 0;
+	nesBoardWriteSync(nes);
 	if (address == 0x4023) {
 		f->diskEnabled = value & 1;
 		f->soundEnabled = value & 2;

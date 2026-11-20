@@ -364,6 +364,8 @@ NAMCO108_BOARD(boardNamco3425, "Namco 3425", &namco3425);
 static void ramboSync(struct NES* nes) {
 	struct Mmc3* m = STATE(Mmc3);
 	uint8_t* r = RAMBO_REGS(m);
+	// Counting CPU cycles, the board doesn't look at the PPU's bus
+	nes->watchPpuBus = !m->extra[16];
 	if (m->select & 0x40) {
 		prg8(nes, 0x8000, r[15]);
 		prg8(nes, 0xA000, r[6]);
@@ -404,6 +406,8 @@ static void ramboSync(struct NES* nes) {
 
 static void ramboWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Mmc3* m = STATE(Mmc3);
+	// The CPU-cycle counter as it is at this write; its quiet stretch is worked out again after it
+	nesBoardWriteSync(nes);
 	switch (address & 0xE001) {
 	case 0x8000:
 		m->select = value;
@@ -415,9 +419,11 @@ static void ramboWrite(struct NES* nes, uint16_t address, uint8_t value) {
 		m->mirroring = value;
 		break;
 	case 0xC001:
-		// Bit 0 picks the CPU-cycle clock; extra[16] holds the mode, extra[17] the prescaler
+		// Bit 0 picks the CPU-cycle clock; extra[16] holds the mode, extra[17] the prescaler. Counting
+		// CPU cycles, the board doesn't look at the PPU's bus.
 		m->extra[16] = value & 1;
 		m->extra[17] = 0;
+		nes->watchPpuBus = !m->extra[16];
 		mmc3Write(nes, address, value);
 		return;
 	default:
@@ -427,17 +433,15 @@ static void ramboWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	ramboSync(nes);
 }
 
-static void ramboPpuBus(struct NES* nes, uint16_t address) {
-	if (!STATE(Mmc3)->extra[16]) {
-		mmc3PpuBus(nes, address);
-	}
+// Counting A12's rises it's an MMC3's counter, shown the bus as an MMC3 is (so the PPU's MMC3 paths
+// serve it); counting CPU cycles it doesn't look, and its IRQ doesn't follow the PPU
+static int ramboIrqQuietDots(struct NES* nes) {
+	return STATE(Mmc3)->extra[16] ? 1 << 20 : mmc3IrqQuietDots(nes);
 }
 
-static void ramboCycle(struct NES* nes) {
-	struct Mmc3* m = STATE(Mmc3);
-	if (!m->extra[16] || (++m->extra[17] & 3)) {
-		return;
-	}
+// The counter in its CPU-cycle mode: clocked every 4 cycles, reloading at 0 (or when asked), the IRQ
+// when it reaches 0
+static void ramboClock(struct Mmc3* m, bool* irq) {
 	if (m->reload || m->counter == 0) {
 		m->counter = m->latch;
 		m->reload = false;
@@ -445,19 +449,64 @@ static void ramboCycle(struct NES* nes) {
 		m->counter--;
 	}
 	if (m->counter == 0 && m->irqEnabled) {
+		*irq = true;
+	}
+}
+
+// The counter through cycles CPU cycles; the IRQ comes on the last, if at all, as ramboQuiet() keeps it
+// there
+static void ramboCycles(struct NES* nes, int cycles) {
+	struct Mmc3* m = STATE(Mmc3);
+	if (!m->extra[16]) {
+		return;
+	}
+	bool irq = false;
+	// The prescaler's low 2 bits come round to 0 on the cycle after it shows 3
+	int const first = 4 - (m->extra[17] & 3);
+	int clocks = cycles >= first ? 1 + (cycles - first) / 4 : 0;
+	m->extra[17] = (uint8_t) (m->extra[17] + cycles);
+	while (clocks--) {
+		ramboClock(m, &irq);
+	}
+	if (irq) {
 		nesSetIrq(nes, IRQ_MAPPER, true);
 	}
+}
+
+// Cycles that can pass before a clock raises the IRQ, worked out clock by clock on a copy
+static int ramboQuiet(struct NES* nes) {
+	const struct Mmc3* m = STATE(Mmc3);
+	if (!m->extra[16] || !m->irqEnabled) {
+		return 0xFFFE;
+	}
+	struct Mmc3 copy = *m;
+	int const first = 4 - (m->extra[17] & 3);
+	for (int n = 0; n < 260; n++) {
+		bool irq = false;
+		ramboClock(&copy, &irq);
+		if (irq) {
+			int const quiet = first - 1 + n * 4;
+			return quiet < 0xFFFE ? quiet : 0xFFFE;
+		}
+	}
+	return 0xFFFE;
+}
+
+// After a state loads: the bus watched by the mode the state has (1.3's watched it in either mode)
+static void ramboLoaded(struct NES* nes, const uint8_t* in) {
+	(void) in;
+	nes->watchPpuBus = !STATE(Mmc3)->extra[16];
 }
 
 static void ramboReset(struct NES* nes, bool hard) {
 	if (hard) {
 		memset(nes->boardState, 0, sizeof(struct Mmc3));
 	}
-	nes->watchPpuBus = true;
 	ramboSync(nes);
 }
 
 const struct Board boardRambo = {
-	.name = "RAMBO-1", .reset = ramboReset, .write = ramboWrite, .ppuBus = ramboPpuBus, .busA12 = true, .cpuCycle = ramboCycle,
-	.irqQuietDots = mmc3IrqQuietDots, .sync = ramboSync, .stateSize = sizeof(struct Mmc3),
+	.name = "RAMBO-1", .reset = ramboReset, .write = ramboWrite, .ppuBus = mmc3PpuBus, .busA12 = true, .cpuCycles = ramboCycles, .cpuQuiet = ramboQuiet,
+	.irqQuietDots = ramboIrqQuietDots, .sync = ramboSync, .stateSize = sizeof(struct Mmc3),
+	.loadExtra = ramboLoaded,
 };

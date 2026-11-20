@@ -201,8 +201,7 @@ static void fme7Write(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Fme7* f = STATE(Fme7);
 	// The counter and the sound as they are at this write; the IRQ's quiet stretch is worked out again
 	// after it
-	nesBoardSync(nes);
-	nes->boardQuiet = 0;
+	nesBoardWriteSync(nes);
 	if (address >= 0xC000) {
 		if (address < 0xE000) {
 			f->audio.address = value;
@@ -418,6 +417,8 @@ static void vrc24Write(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address < 0x8000) {
 		return;
 	}
+	// The counter as it is at this write; its quiet stretch is worked out again after it
+	nesBoardWriteSync(nes);
 	struct VrcWiring w = vrcWiring(nes);
 	int sub = (((address >> w.a0) | (address >> w.a0b)) & 1) | ((((address >> w.a1) | (address >> w.a1b)) & 1) << 1);
 	switch (address & 0xF000) {
@@ -466,8 +467,12 @@ static void vrc24Write(struct NES* nes, uint16_t address, uint8_t value) {
 	vrc24Sync(nes);
 }
 
-static void vrc24Cycle(struct NES* nes) {
-	vrcIrqCycle(nes, &STATE(Vrc24)->irq);
+static void vrc24Cycles(struct NES* nes, int cycles) {
+	vrcIrqCycles(nes, &STATE(Vrc24)->irq, cycles);
+}
+
+static int vrc24Quiet(struct NES* nes) {
+	return vrcIrqQuiet(&STATE(Vrc24)->irq);
 }
 
 static void vrc24Reset(struct NES* nes, bool hard) {
@@ -479,7 +484,7 @@ static void vrc24Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardVrc24 = {
-	.name = "VRC2/VRC4", .reset = vrc24Reset, .write = vrc24Write, .cpuCycle = vrc24Cycle, .sync = vrc24Sync,
+	.name = "VRC2/VRC4", .reset = vrc24Reset, .write = vrc24Write, .cpuCycles = vrc24Cycles, .cpuQuiet = vrc24Quiet, .sync = vrc24Sync,
 	.stateSize = sizeof(struct Vrc24),
 };
 
@@ -570,6 +575,8 @@ static inline void setNibble(uint8_t* reg, int high, uint8_t value) {
 
 static void ss88006Write(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Ss88006* s = STATE(Ss88006);
+	// The counter as it is at this write; its quiet stretch is worked out again after it
+	nesBoardWriteSync(nes);
 	int a = address & 0xF003;
 	if (a >= 0x8000 && a < 0x9002) {
 		int index = ((a - 0x8000) >> 11) | ((a >> 1) & 1);
@@ -597,17 +604,32 @@ static void ss88006Write(struct NES* nes, uint16_t address, uint8_t value) {
 	ss88006Sync(nes);
 }
 
-static void ss88006Cycle(struct NES* nes) {
+static uint16_t ss88006Mask(const struct Ss88006* s) {
+	return (s->control & 8) ? 0x000F : (s->control & 4) ? 0x00FF : (s->control & 2) ? 0x0FFF : 0xFFFF;
+}
+
+// The counter's low bits (by the size chosen) through cycles CPU cycles: down while enabled, the IRQ as
+// they pass 0 (on the last cycle, as ss88006Quiet() keeps it there)
+static void ss88006Cycles(struct NES* nes, int cycles) {
 	struct Ss88006* s = STATE(Ss88006);
 	if (!(s->control & 1)) {
 		return;
 	}
-	uint16_t mask = (s->control & 8) ? 0x000F : (s->control & 4) ? 0x00FF : (s->control & 2) ? 0x0FFF : 0xFFFF;
-	uint16_t low = (s->counter & mask) - 1;
-	if ((s->counter & mask) == 0) {
+	uint16_t const mask = ss88006Mask(s);
+	int const low = s->counter & mask;
+	if (cycles > low) {
 		nesSetIrq(nes, IRQ_MAPPER, true);
 	}
-	s->counter = (s->counter & ~mask) | (low & mask);
+	s->counter = (uint16_t) ((s->counter & ~mask) | ((low - cycles) & mask));
+}
+
+static int ss88006Quiet(struct NES* nes) {
+	struct Ss88006* s = STATE(Ss88006);
+	if (!(s->control & 1)) {
+		return 0xFFFE;
+	}
+	int const low = s->counter & ss88006Mask(s);
+	return low < 0xFFFE ? low : 0xFFFE;
 }
 
 static void ss88006Reset(struct NES* nes, bool hard) {
@@ -619,7 +641,7 @@ static void ss88006Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardSs88006 = {
-	.name = "SS88006", .reset = ss88006Reset, .write = ss88006Write, .cpuCycle = ss88006Cycle, .sync = ss88006Sync,
+	.name = "SS88006", .reset = ss88006Reset, .write = ss88006Write, .cpuCycles = ss88006Cycles, .cpuQuiet = ss88006Quiet, .sync = ss88006Sync,
 	.stateSize = sizeof(struct Ss88006),
 };
 
@@ -774,8 +796,7 @@ static void namco163Write(struct NES* nes, uint16_t address, uint8_t value) {
 	}
 	// The counter and the sound as they are at this write; the IRQ's quiet stretch is worked out again
 	// after it
-	nesBoardSync(nes);
-	nes->boardQuiet = 0;
+	nesBoardWriteSync(nes);
 	switch (address & 0xF800) {
 	case 0x4800:
 		namco163SoundWrite(&n->sound, value);
@@ -989,6 +1010,8 @@ static void vrc3Sync(struct NES* nes) {
 
 static void vrc3Write(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Vrc3* v = STATE(Vrc3);
+	// The counter as it is at this write; its quiet stretch is worked out again after it
+	nesBoardWriteSync(nes);
 	if (address >= 0x8000 && address < 0xC000) {
 		int shift = ((address >> 12) - 8) * 4;
 		v->latch = (v->latch & ~(15 << shift)) | ((value & 15) << shift);
@@ -1013,22 +1036,38 @@ static void vrc3Write(struct NES* nes, uint16_t address, uint8_t value) {
 	}
 }
 
-static void vrc3Cycle(struct NES* nes) {
+// Cycles before the counter wraps: its low byte in 8-bit mode, all 16 bits otherwise
+static int vrc3Left(const struct Vrc3* v) {
+	return (v->control & 4) ? 0x100 - (v->counter & 0xFF) : 0x10000 - v->counter;
+}
+
+// The counter through cycles CPU cycles: up while enabled, the IRQ and the latch as it wraps (on the
+// last cycle, as vrc3Quiet() keeps it there)
+static void vrc3Cycles(struct NES* nes, int cycles) {
 	struct Vrc3* v = STATE(Vrc3);
 	if (!(v->control & 2)) {
 		return;
 	}
+	int const left = vrc3Left(v);
+	bool const wraps = cycles >= left;
 	if (v->control & 4) {
-		uint8_t low = v->counter + 1;
-		if (low == 0) {
-			low = v->latch;
-			nesSetIrq(nes, IRQ_MAPPER, true);
-		}
-		v->counter = (v->counter & 0xFF00) | low;
-	} else if (++v->counter == 0) {
-		v->counter = v->latch;
+		uint8_t const low = wraps ? (uint8_t) (v->latch + (cycles - left)) : (uint8_t) (v->counter + cycles);
+		v->counter = (uint16_t) ((v->counter & 0xFF00) | low);
+	} else {
+		v->counter = wraps ? (uint16_t) (v->latch + (cycles - left)) : (uint16_t) (v->counter + cycles);
+	}
+	if (wraps) {
 		nesSetIrq(nes, IRQ_MAPPER, true);
 	}
+}
+
+static int vrc3Quiet(struct NES* nes) {
+	struct Vrc3* v = STATE(Vrc3);
+	if (!(v->control & 2)) {
+		return 0xFFFE;
+	}
+	int const left = vrc3Left(v) - 1;
+	return left < 0xFFFE ? left : 0xFFFE;
 }
 
 static void vrc3Reset(struct NES* nes, bool hard) {
@@ -1040,7 +1079,7 @@ static void vrc3Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board boardVrc3 = {
-	.name = "VRC3", .reset = vrc3Reset, .write = vrc3Write, .cpuCycle = vrc3Cycle, .sync = vrc3Sync,
+	.name = "VRC3", .reset = vrc3Reset, .write = vrc3Write, .cpuCycles = vrc3Cycles, .cpuQuiet = vrc3Quiet, .sync = vrc3Sync,
 	.stateSize = sizeof(struct Vrc3),
 };
 
@@ -1180,8 +1219,7 @@ static void vrc6Write(struct NES* nes, uint16_t address, uint8_t value) {
 	}
 	// The IRQ counter and the sound as they are at this write; the IRQ's quiet stretch is worked out
 	// again after it
-	nesBoardSync(nes);
-	nes->boardQuiet = 0;
+	nesBoardWriteSync(nes);
 	int sub = nes->cart.mapper == 26 ? ((address & 1) << 1) | ((address >> 1) & 1) : address & 3;
 	switch (address & 0xF000) {
 	case 0x8000:
@@ -1405,8 +1443,7 @@ static void vrc7Write(struct NES* nes, uint16_t address, uint8_t value) {
 	}
 	// The IRQ counter and the synthesizer as they are at this write; the IRQ's quiet stretch is worked
 	// out again after it
-	nesBoardSync(nes);
-	nes->boardQuiet = 0;
+	nesBoardWriteSync(nes);
 	// The register select line: A4 on VRC7a, A3 on VRC7b, either without a submapper
 	int line = nes->cart.submapper == 1 ? 0x08 : nes->cart.submapper == 2 ? 0x10 : 0x18;
 	bool odd = address & line;

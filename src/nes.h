@@ -543,6 +543,15 @@ void nesApuSync(struct NES*);
 void apuSetVoiceGains(const float gains[VOICES][2], bool custom);
 // Runs a board's cpuCycles through the cycles the CPU has passed
 void nesBoardSync(struct NES*);
+// For a write that may change when a batched board's IRQ comes: the board up to now, its quiet stretch
+// worked out again after the write. Nothing for a board without cpuCycles, whose quiet count stays
+// open (boards share write handlers).
+static inline void nesBoardWriteSync(struct NES* nes) {
+	if (nes->board->cpuCycles) {
+		nesBoardSync(nes);
+		nes->boardQuiet = 0;
+	}
+}
 // A board's sound for Board.audioSum, as runs of APU cycles at one level: cartLevelsStart() before it
 // runs the cycles it's been given (the last of them the APU's count), cartLevelsPut() each run's level
 // and length in order, cartLevelsSum() for audioSum. One board's at a time; not in the state, as the

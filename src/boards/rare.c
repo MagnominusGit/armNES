@@ -38,6 +38,8 @@ static void m127Write(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address < 0x8000) {
 		return;
 	}
+	// The counter as it is at this write; its quiet stretch is worked out again after it
+	nesBoardWriteSync(nes);
 	int reg = address & 0x73;
 	switch (reg >> 4) {
 	case 0:
@@ -62,11 +64,22 @@ static void m127Write(struct NES* nes, uint16_t address, uint8_t value) {
 	m127Sync(nes);
 }
 
-static void m127Cycle(struct NES* nes) {
+// The counter through cycles CPU cycles: down while enabled, the IRQ as it reaches 0 (on the last
+// cycle, as m127Quiet() keeps it there)
+static void m127Cycles(struct NES* nes, int cycles) {
 	struct M127* m = M127S;
-	if (m->irqEnabled && !--m->irqCounter) {
-		nesSetIrq(nes, IRQ_MAPPER, true);
+	if (m->irqEnabled) {
+		int const left = m->irqCounter ? m->irqCounter : 256;
+		m->irqCounter = (uint8_t) (m->irqCounter - cycles);
+		if (cycles >= left) {
+			nesSetIrq(nes, IRQ_MAPPER, true);
+		}
 	}
+}
+
+static int m127Quiet(struct NES* nes) {
+	struct M127* m = M127S;
+	return m->irqEnabled ? (m->irqCounter ? m->irqCounter : 256) - 1 : 0xFFFE;
 }
 
 static void m127Reset(struct NES* nes, bool hard) {
@@ -78,7 +91,7 @@ static void m127Reset(struct NES* nes, bool hard) {
 }
 
 const struct Board board127 = {
-	.name = "Mapper 127", .reset = m127Reset, .write = m127Write, .cpuCycle = m127Cycle, .sync = m127Sync,
+	.name = "Mapper 127", .reset = m127Reset, .write = m127Write, .cpuCycles = m127Cycles, .cpuQuiet = m127Quiet, .sync = m127Sync,
 	.stateSize = sizeof(struct M127),
 };
 
@@ -142,6 +155,8 @@ static void karaokeLoadExtra(struct NES* nes, const uint8_t* in) {
 
 static void karaokeWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Karaoke* n = STATE(Karaoke);
+	// The synthesizer as it is at this write
+	nesBoardSync(nes);
 	if ((address & 0xE003) == 0x6000) {
 		n->audioAddress = value;
 	} else if ((address & 0xE003) == 0x6001) {
@@ -156,16 +171,33 @@ static uint8_t karaokeRead(struct NES* nes, uint16_t address) {
 	return (address & 0xE003) == 0x6003 ? 0 : nes->cpu.openBus;
 }
 
-static void karaokeCycle(struct NES* nes) {
+// The synthesizer through cycles CPU cycles, the sound held between its samples, one every 36 cycles
+static void karaokeCycles(struct NES* nes, int cycles) {
 	struct Karaoke* n = STATE(Karaoke);
-	if (++n->audioClock == 36) {
-		n->audioClock = 0;
-		n->sample = OPLL_calc(ym2413);
+	cartLevelsStart(nes, cycles);
+	while (cycles > 0) {
+		int hold = 35 - n->audioClock;
+		hold = hold < 0 ? 0 : hold < cycles ? hold : cycles;
+		n->audioClock = (uint8_t) (n->audioClock + hold);
+		cartLevelsPut(nes, n->sample * 2, hold);
+		cycles -= hold;
+		if (cycles) {
+			n->audioClock = 0;
+			n->sample = OPLL_calc(ym2413);
+			cartLevelsPut(nes, n->sample * 2, 1);
+			cycles--;
+		}
 	}
 }
 
-static int karaokeAudio(struct NES* nes) {
-	return STATE(Karaoke)->sample * 2;
+static int karaokeQuiet(struct NES* nes) {
+	(void) nes;
+	return 0xFFFE;
+}
+
+static int32_t karaokeAudioSum(struct NES* nes, uint64_t first, uint64_t last, float sides[2]) {
+	(void) nes;
+	return cartLevelsSum(first, last, sides);
 }
 
 static void karaokeReset(struct NES* nes, bool hard) {
@@ -185,7 +217,7 @@ static void karaokeReset(struct NES* nes, bool hard) {
 
 const struct Board boardKaraoke = {
 	.name = "Karaoke (515)", .reset = karaokeReset, .write = karaokeWrite, .read = karaokeRead,
-	.cpuCycle = karaokeCycle, .audio = karaokeAudio, .sync = karaokeBanks, .stateSize = sizeof(struct Karaoke),
+	.cpuCycles = karaokeCycles, .cpuQuiet = karaokeQuiet, .audioSum = karaokeAudioSum, .sync = karaokeBanks, .stateSize = sizeof(struct Karaoke),
 	.saveExtra = karaokeSaveExtra, .loadExtra = karaokeLoadExtra,
 };
 
@@ -236,6 +268,8 @@ static void qtaWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	if ((address & 0xF000) != 0xD000) {
 		return;
 	}
+	// The counter as it is at this write; its quiet stretch is worked out again after it
+	nesBoardWriteSync(nes);
 	int reg = (address >> 8) & 15;
 	q->reg[reg] = value;
 	if (reg == QT_ACK) {
@@ -303,12 +337,28 @@ static uint8_t qtaPpuRead(struct NES* nes, uint16_t address) {
 	return nes->cart.vram[((q->qtByte & 1) << 12) | (address & 0xFFF)];
 }
 
-static void qtaCycle(struct NES* nes) {
+// The counter through cycles CPU cycles: up while enabled, the IRQ and the latch as it wraps (on the
+// last cycle, as qtaQuiet() keeps it there)
+static void qtaCycles(struct NES* nes, int cycles) {
 	struct Qta* q = QT;
-	if ((q->reg[QT_IRQ] & 2) && !++q->irqCounter) {
-		nesSetIrq(nes, IRQ_MAPPER, true);
-		q->irqCounter = q->reg[QT_LATCHLO] | q->reg[QT_LATCHHI] << 8;
+	if (q->reg[QT_IRQ] & 2) {
+		int const left = 0x10000 - q->irqCounter;
+		if (cycles >= left) {
+			nesSetIrq(nes, IRQ_MAPPER, true);
+			q->irqCounter = (uint16_t) ((q->reg[QT_LATCHLO] | q->reg[QT_LATCHHI] << 8) + (cycles - left));
+		} else {
+			q->irqCounter = (uint16_t) (q->irqCounter + cycles);
+		}
 	}
+}
+
+static int qtaQuiet(struct NES* nes) {
+	struct Qta* q = QT;
+	if (!(q->reg[QT_IRQ] & 2)) {
+		return 0xFFFE;
+	}
+	int const left = 0x10000 - q->irqCounter - 1;
+	return left < 0xFFFE ? left : 0xFFFE;
 }
 
 static void qtaReset(struct NES* nes, bool hard) {
@@ -323,7 +373,7 @@ static void qtaReset(struct NES* nes, bool hard) {
 
 const struct Board boardQta = {
 	.name = "Konami QTa", .reset = qtaReset, .write = qtaWrite, .read = qtaRead, .ppuRead = qtaPpuRead,
-	.cpuCycle = qtaCycle, .sync = qtaSync, .stateSize = sizeof(struct Qta),
+	.cpuCycles = qtaCycles, .cpuQuiet = qtaQuiet, .sync = qtaSync, .stateSize = sizeof(struct Qta),
 };
 
 // 169: Yuxing's educational computers. 1 MB of RAM and 256 KB of CHR RAM; in its own mode it maps

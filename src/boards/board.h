@@ -144,6 +144,8 @@ const struct Board* discreteFind(int mapper, int submapper);
 // nsf.c: music files, played by a driver of armNES's own, as a mapper number past NES 2.0's
 #define NSF_MAPPER 0x1000
 BOARD(boardNsf);
+// The NSF player's own code ($4100 on), which reads the same whatever the file does
+bool nsfDriverCode(uint16_t address);
 bool nsfCartLoad(struct NES*, const uint8_t* data, size_t size);
 struct NsfInfo {
 	const char *title, *artist, *copyright;

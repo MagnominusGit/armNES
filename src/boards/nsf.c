@@ -33,6 +33,10 @@ static const uint8_t driver[] = {
 	0xAA, 0x68, 0x40,
 };
 #define DRIVER_RESET 0x4100
+
+bool nsfDriverCode(uint16_t address) {
+	return address >= 0x4100 && address < 0x4100 + sizeof(driver);
+}
 #define DRIVER_IRQ 0x4150
 #define DRIVER_NMI 0x4162
 
@@ -83,6 +87,12 @@ static void nsfSync(struct NES* nes) {
 
 static uint8_t nsfRead(struct NES* nes, uint16_t address) {
 	struct Nsf* n = NS;
+	// The play timer and the chips as they are at a read of what they hold (not the driver's code
+	// or the file's)
+	if (address >= 0xFFFA || address == 0x41F3 || (address >= 0x4040 && address <= 0x4092) ||
+		(address >= 0x4800 && address < 0x5000) || address == 0x5015) {
+		nesBoardSync(nes);
+	}
 	uint8_t open = nes->cpu.openBus;
 	uint8_t* page = nes->prgPages[address >> 12];
 	if (address >= 0xFFFA) {
@@ -142,6 +152,9 @@ static uint8_t nsfRead(struct NES* nes, uint16_t address) {
 
 static void nsfWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Nsf* n = NS;
+	// The play timer and the chips as they are at this write; the timer's quiet stretch is worked
+	// out again after it
+	nesBoardWriteSync(nes);
 	if (address == 0x41F2) {
 		// The play rate, in CPU cycles
 		bool pal = nes->region != REGION_NTSC;
@@ -202,13 +215,10 @@ static void nsfWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	}
 }
 
-static void nsfCycle(struct NES* nes) {
-	struct Nsf* n = NS;
-	if (n->timing && --n->timer == 0) {
-		n->timer = n->period;
-		n->timerIrq = true;
-		nesSetIrq(nes, IRQ_MAPPER, true);
-	}
+static int nsfAudio(struct NES* nes);
+
+// The chips through one CPU cycle
+static void nsfChipsCycle(struct Nsf* n) {
 	uint8_t chips = n->chips;
 	if (chips & CHIP_VRC6) {
 		vrc6SoundCycle(&n->vrc6);
@@ -228,6 +238,45 @@ static void nsfCycle(struct NES* nes) {
 	if (chips & CHIP_5B) {
 		sunsoft5bCycle(&n->s5b);
 	}
+}
+
+// The play timer and the chips through cycles CPU cycles: the timer counts down and raises the IRQ as
+// it runs out (on the last cycle, as nsfQuiet() keeps it there); the chips step cycle by cycle, their
+// sound put in runs
+static void nsfCycles(struct NES* nes, int cycles) {
+	struct Nsf* n = NS;
+	if (n->timing) {
+		uint64_t const left = n->timer ? n->timer : 0x100000000ull;
+		if ((uint64_t) cycles >= left) {
+			n->timer = n->period - (uint32_t) ((uint64_t) cycles - left);
+			n->timerIrq = true;
+			nesSetIrq(nes, IRQ_MAPPER, true);
+		} else {
+			n->timer -= (uint32_t) cycles;
+		}
+	}
+	cartLevelsStart(nes, cycles);
+	if (!n->chips) {
+		cartLevelsPut(nes, 0, cycles);
+		return;
+	}
+	for (int i = 0; i < cycles; i++) {
+		nsfChipsCycle(n);
+		cartLevelsPut(nes, nsfAudio(nes), 1);
+	}
+}
+
+static int nsfQuiet(struct NES* nes) {
+	struct Nsf* n = NS;
+	if (!n->timing || !n->timer) {
+		return 0xFFFE;
+	}
+	return n->timer - 1 < 0xFFFE ? (int) n->timer - 1 : 0xFFFE;
+}
+
+static int32_t nsfAudioSum(struct NES* nes, uint64_t first, uint64_t last, float sides[2]) {
+	(void) nes;
+	return cartLevelsSum(first, last, sides);
 }
 
 static int nsfAudio(struct NES* nes) {
@@ -334,7 +383,8 @@ static void nsfLoadExtra(struct NES* nes, const uint8_t* in) {
 }
 
 const struct Board boardNsf = {
-	.name = "NSF", .reset = nsfReset, .write = nsfWrite, .read = nsfRead, .cpuCycle = nsfCycle, .audio = nsfAudio, .voices = nsfVoices,
+	.name = "NSF", .reset = nsfReset, .write = nsfWrite, .read = nsfRead, .cpuCycles = nsfCycles, .cpuQuiet = nsfQuiet, .audioSum = nsfAudioSum,
+	.voices = nsfVoices,
 	.sync = nsfSync, .stateSize = sizeof(struct Nsf), .saveExtra = nsfSaveExtra, .loadExtra = nsfLoadExtra,
 };
 

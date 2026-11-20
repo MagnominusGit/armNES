@@ -155,10 +155,64 @@ static void jyClock(struct NES* nes) {
 	}
 }
 
-static void jyCycle(struct NES* nes) {
-	if ((JY->irqControl & 3) == 0) {
+// The counter through cycles CPU cycles, in its CPU-cycle mode; the IRQ comes on the last, if at all,
+// as jyQuiet() keeps it there
+static void jyCycles(struct NES* nes, int cycles) {
+	struct Jy* j = JY;
+	if ((j->irqControl & 3) || !j->irqEnabled || !(j->irqControl & 0xC0) || (j->irqControl & 0xC0) == 0xC0) {
+		return;
+	}
+	for (int i = 0; i < cycles; i++) {
 		jyClock(nes);
 	}
+}
+
+// Clocks that can pass before the counter raises the IRQ (1 << 20 for never): the prescaler (3 or 8
+// bits) wraps every 8 or 256 clocks, and the counter steps at each wrap, or only looks with bit 3 set
+static int jyQuietClocks(const struct Jy* j) {
+	int const dir = j->irqControl & 0xC0;
+	if (!j->irqEnabled || !dir || dir == 0xC0) {
+		return 1 << 20;
+	}
+	int const period = (j->irqControl & 4) ? 8 : 256;
+	int const p = j->irqPrescaler & (period - 1);
+	bool const up = dir == 0x40;
+	// The first wrap: up, when the prescaler comes round to 0; down, when it comes round to the top
+	int const first = up ? period - p : p + 1;
+	int wraps;
+	if (j->irqControl & 8) {
+		// The counter stays: the IRQ at the first wrap if it's already there, else never
+		if (j->irqCounter != (up ? 0 : 0xFF)) {
+			return 1 << 20;
+		}
+		wraps = 1;
+	} else {
+		wraps = up ? 256 - j->irqCounter : j->irqCounter + 1;
+	}
+	return first - 1 + (wraps - 1) * period;
+}
+
+// CPU cycles that can pass before the counter, counting them, raises the IRQ
+static int jyQuiet(struct NES* nes) {
+	struct Jy* j = JY;
+	int const clocks = (j->irqControl & 3) ? 0xFFFE : jyQuietClocks(j);
+	return clocks < 0xFFFE ? clocks : 0xFFFE;
+}
+
+// PPU dots that can pass before the counter, counting A12's rises, raises the IRQ. Each rise counts
+// (no filter, unlike MMC3's), and the fetches make one at most every 8 dots; a register access still
+// on its way can move the bus sooner.
+static int jyIrqQuietDots(struct NES* nes) {
+	struct Jy* j = JY;
+	if ((j->irqControl & 3) != 1) {
+		return 1 << 20;
+	}
+	const struct Ppu* ppu = &nes->ppu;
+	if (ppu->delay2006 | ppu->vramReadStep | ppu->vramWriteStep) {
+		return 0;
+	}
+	int const clocks = jyQuietClocks(j);
+	return clocks < (1 << 17) ? clocks * 8 : 1 << 20;
 }
 
 static void jyPpuBus(struct NES* nes, uint16_t address) {
@@ -208,6 +262,8 @@ static uint8_t jyRead(struct NES* nes, uint16_t address) {
 
 static void jyWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	struct Jy* j = JY;
+	// The counter as it is at this write; its quiet stretch is worked out again after it
+	nesBoardWriteSync(nes);
 	if (address >= 0x5000 && address < 0x6000) {
 		switch (address & 3) {
 		case 0:
@@ -303,5 +359,5 @@ static void jyReset(struct NES* nes, bool hard) {
 
 const struct Board boardJy = {
 	.name = "J.Y. Company", .reset = jyReset, .write = jyWrite, .read = jyRead, .ppuBus = jyPpuBus,
-	.ppuRead = jyPpuRead, .cpuCycle = jyCycle, .sync = jySync, .stateSize = sizeof(struct Jy),
+	.ppuRead = jyPpuRead, .cpuCycles = jyCycles, .cpuQuiet = jyQuiet, .irqQuietDots = jyIrqQuietDots, .sync = jySync, .stateSize = sizeof(struct Jy),
 };

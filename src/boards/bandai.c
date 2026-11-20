@@ -153,6 +153,9 @@ static void bandaiWrite(struct NES* nes, uint16_t address, uint8_t value) {
 	if (address < 0x6000 || (nes->cart.mapper == 153 && address < 0x8000)) {
 		return;
 	}
+	// The counter and the barcode reader as they are at this write; the counter's quiet stretch is
+	// worked out again after it
+	nesBoardWriteSync(nes);
 	int reg = address & 0x0F;
 	if (reg < 0x0A) {
 		b->regs[reg] = value;
@@ -186,13 +189,24 @@ static void bandaiWrite(struct NES* nes, uint16_t address, uint8_t value) {
 }
 
 static uint8_t bandaiRead(struct NES* nes, uint16_t address) {
+	// The barcode reader's bit as it is at this read
+	nesBoardSync(nes);
 	return (nes->cpu.openBus & 0xE7) | (BD->eeprom.out << 4) | BD->barcode.out;
 }
 
-static void bandaiCycle(struct NES* nes) {
+// The barcode reader and the counter through cycles CPU cycles: a bar every 1000 cycles while a code
+// is being read; the counter down while enabled, the IRQ as it passes 0 (on the last cycle, as
+// bandaiQuiet() keeps it there), which stops it
+static void bandaiCycles(struct NES* nes, int cycles) {
 	struct Bandai* b = BD;
 	struct Barcode* c = &b->barcode;
-	if (c->count && ++c->cycles >= 1000) {
+	for (int left = cycles; c->count && left > 0;) {
+		int const step = 1000 - c->cycles > 1 ? 1000 - c->cycles : 1;
+		if (left < step) {
+			c->cycles += left;
+			break;
+		}
+		left -= step;
 		c->cycles = 0;
 		if (c->position < c->count) {
 			c->out = (c->bars[c->position++] ^ 1) << 3;
@@ -201,11 +215,24 @@ static void bandaiCycle(struct NES* nes) {
 			c->count = 0;
 		}
 	}
-	if (b->irqEnabled && --b->counter < 0) {
-		nesSetIrq(nes, IRQ_MAPPER, true);
-		b->irqEnabled = false;
-		b->counter = -1;
+	if (b->irqEnabled) {
+		int64_t const left = b->counter < 0 ? 1 : (int64_t) b->counter + 1;
+		if (cycles >= left) {
+			nesSetIrq(nes, IRQ_MAPPER, true);
+			b->irqEnabled = false;
+			b->counter = -1;
+		} else {
+			b->counter -= cycles;
+		}
 	}
+}
+
+static int bandaiQuiet(struct NES* nes) {
+	struct Bandai* b = BD;
+	if (!b->irqEnabled) {
+		return 0xFFFE;
+	}
+	return b->counter < 0 ? 0 : b->counter < 0xFFFE ? (int) b->counter : 0xFFFE;
 }
 
 static void bandaiReset(struct NES* nes, bool hard) {
@@ -281,6 +308,6 @@ bool datachSwipe(struct NES* nes, const char* text) {
 }
 
 const struct Board boardBandai = {
-	.name = "Bandai FCG", .reset = bandaiReset, .write = bandaiWrite, .read = bandaiRead, .cpuCycle = bandaiCycle,
+	.name = "Bandai FCG", .reset = bandaiReset, .write = bandaiWrite, .read = bandaiRead, .cpuCycles = bandaiCycles, .cpuQuiet = bandaiQuiet,
 	.sync = bandaiSync, .stateSize = sizeof(struct Bandai),
 };
