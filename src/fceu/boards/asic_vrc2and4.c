@@ -58,6 +58,8 @@ static SFORMAT VRC24_stateRegs[] = {
 
 static SFORMAT VRC2_stateRegs[] = {
 	{ &VRC2_pins, 1, "VC2E" },
+	{ 0 } /* armNES: without it the list ran on into whatever the compiler put next, so states differed
+	       * from platform to platform */
 };
 
 static SFORMAT VRC4_stateRegs[] = {
