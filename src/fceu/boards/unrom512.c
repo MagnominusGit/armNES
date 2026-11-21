@@ -268,6 +268,7 @@ void UNROM512_Init(CartInfo *info) {
 	if (flash_save)
 	{
 		info->SaveGame[0] = fceumm_flash_buf;
+		info->SaveGameFlash = 1;
 		info->SaveGameLen[0] = fceumm_flash_buf_size;
 		AddExState(flash_write_count,ROM_size * 4 * sizeof(uint32_t), 0, "FLASH_WRITE_COUNT");
 		AddExState(flashdata,ROM_size * 0x4000, 0, "FLASH_DATA");
