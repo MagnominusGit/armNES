@@ -210,9 +210,9 @@ changed.
 | F12 | Screenshot |
 
 Controllers work too, one per player, with ROCKNIX's hotkeys held with the Hotkey (Home, or Select
-on a controller without one): Start twice quits, A pauses, R and L save and load a state, R2 turns
-fast-forward on or off, L2 rewinds, X opens the menu, Y shows the frame rate and B takes a
-screenshot. A touch screen aims and fires the Zapper.
+on a controller without one): Start twice quits (the second held a second), A pauses, R and L save
+and load a state, R2 turns fast-forward on or off, L2 rewinds, X opens the menu, Y shows the frame
+rate and B takes a screenshot. A touch screen aims and fires the Zapper.
 
 ### Menu
 
