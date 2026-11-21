@@ -10,6 +10,7 @@ typedef struct {
 	void (*Close)(void);
 	uint8_t *SaveGame[4];
 	uint32_t SaveGameLen[4];
+	int SaveGameFlash;
 
 	int iNES2;
 	int mapper;

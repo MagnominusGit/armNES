@@ -1268,7 +1268,7 @@ static void power(struct NES* n) {
 		bool rom = (save >= PRGptr[0] && save < PRGptr[0] + PRGsize[0]) || (save >= CHRptr[0] && save < CHRptr[0] + CHRsize[0]);
 		if (kept) {
 			memcpy(save, kept, keptSize < info.SaveGameLen[0] ? keptSize : info.SaveGameLen[0]);
-		} else if (!rom) {
+		} else if (!rom && !info.SaveGameFlash) {
 			// Battery RAM starts as the cart's does ($FF), unlike flash or CHR RAM
 			memcpy(save, cart->wram, cart->wramSize < info.SaveGameLen[0] ? cart->wramSize : info.SaveGameLen[0]);
 		}

@@ -234,6 +234,7 @@ void Mapper111_Init(CartInfo* info) {
 		FLASHROMSIZE = 1024 * 512;
 		FLASHROM = (uint8_t*)FCEU_gmalloc(FLASHROMSIZE);
 		info->SaveGame[0] = FLASHROM;
+		info->SaveGameFlash = 1;
 		info->SaveGameLen[0] = FLASHROMSIZE;
 		AddExState(FLASHROM, FLASHROMSIZE, 0, "FROM");
 		AddExState(&FlashRegs, ~0, 0, 0);
