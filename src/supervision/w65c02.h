@@ -16,6 +16,9 @@ struct W65c02 {
 	bool nmi, irq;
 	// After WAI, until an interrupt; after STP, until reset.
 	bool waiting, stopped;
+	// As an NMOS 6502 (the Gamate's NCR 65CX02): its decimal flags and timing, decimal mode kept through
+	// interrupts, and JMP ($xxFF)'s page wrap.
+	bool nmos;
 	uint8_t (*read)(void* context, uint16_t address);
 	void (*write)(void* context, uint16_t address, uint8_t data);
 	void* context;

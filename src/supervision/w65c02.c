@@ -74,6 +74,19 @@ static void adc(struct W65c02* cpu, uint8_t m, int* extra) {
 		nz(cpu, cpu->a);
 		return;
 	}
+	if (cpu->nmos) {
+		// NMOS (Bruce Clark): Z from the binary sum, N and V from the high digit before its correction
+		int lo = (a & 0x0f) + (m & 0x0f) + c;
+		int hi = (a >> 4) + (m >> 4) + (lo > 9);
+		lo += lo > 9 ? 6 : 0;
+		uint8_t const binary = (uint8_t) (a + m + c);
+		uint8_t const n = (uint8_t) (hi << 4);
+		bool const v = ((n ^ a) & 0x80) && !((a ^ m) & 0x80);
+		hi += hi > 9 ? 6 : 0;
+		cpu->a = (uint8_t) (hi << 4 | (lo & 0x0f));
+		cpu->p = (uint8_t) ((cpu->p & ~(C | V | N | Z)) | (hi > 15 ? C : 0) | (v ? V : 0) | (n & N) | (binary ? 0 : Z));
+		return;
+	}
 	int lo = (a & 0x0f) + (m & 0x0f) + c;
 	if (lo >= 0x0a) {
 		lo = ((lo + 0x06) & 0x0f) + 0x10;
@@ -96,6 +109,16 @@ static void sbc(struct W65c02* cpu, uint8_t m, int* extra) {
 	if (!(cpu->p & D)) {
 		cpu->a = (uint8_t) r;
 		nz(cpu, cpu->a);
+		return;
+	}
+	if (cpu->nmos) {
+		// NMOS: every flag from the binary difference (set above, N and Z here), the digits corrected
+		nz(cpu, (uint8_t) r);
+		int lo = (a & 0x0f) - (m & 0x0f) + c - 1;
+		int hi = (a >> 4) - (m >> 4) - (lo < 0);
+		lo -= lo < 0 ? 6 : 0;
+		hi -= hi < 0 ? 6 : 0;
+		cpu->a = (uint8_t) (hi << 4 | (lo & 0x0f));
 		return;
 	}
 	int lo = (a & 0x0f) - (m & 0x0f) + c - 1;
@@ -173,7 +196,8 @@ static int interrupt(struct W65c02* cpu, uint16_t vector, bool brk) {
 	push(cpu, cpu->pc >> 8);
 	push(cpu, (uint8_t) cpu->pc);
 	push(cpu, (cpu->p | U | (brk ? B : 0)) & (brk ? 0xff : ~B));
-	cpu->p = (cpu->p | I) & ~D;
+	// The 65C02 clears decimal mode for the handler; an NMOS 6502 leaves it
+	cpu->p = (uint8_t) ((cpu->p | I) & (cpu->nmos ? 0xff : ~D));
 	cpu->pc = RD(vector) | RD(vector + 1) << 8;
 	return 7;
 }
@@ -353,7 +377,13 @@ int w65c02Step(struct W65c02* cpu) {
 
 	// Jumps, calls, returns and branches
 	case 0x4c: cpu->pc = fetch16(cpu); return 3;
-	case 0x6c: { uint16_t a = fetch16(cpu); cpu->pc = RD(a) | RD(a + 1) << 8; return 6; }
+	case 0x6c: {
+		// An NMOS 6502 takes the high byte from the start of the same page when the pointer ends one
+		uint16_t a = fetch16(cpu);
+		uint16_t high = cpu->nmos ? (uint16_t) ((a & 0xff00) | ((a + 1) & 0xff)) : (uint16_t) (a + 1);
+		cpu->pc = (uint16_t) (RD(a) | RD(high) << 8);
+		return cpu->nmos ? 5 : 6;
+	}
 	case 0x7c: { uint16_t a = fetch16(cpu) + cpu->x; cpu->pc = RD(a) | RD(a + 1) << 8; return 6; }
 	case 0x20: {
 		uint16_t to = fetch16(cpu);

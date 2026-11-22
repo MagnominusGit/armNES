@@ -70,14 +70,14 @@ desktops.
   run-ahead and netplay work as for the NES; the NES options are hidden while one runs.
 - Gamate games (`.bin`), with its BIOS in the system folder: MAME's `gamate_bios_umc.bin` or
   `gamate_bios_bit.bin` (loose or in `gamate.zip`), or No-Intro's `[BIOS] Gamate (World).bin` or its
-  Rev 1 (loose or zipped). Its 65C02, 160x150 four-shade LCD with its scrolling and window (each bit
-  plane read as the LCD takes it), the AY-3-8910's three channels, noise and 16-step envelope in
-  stereo, the timer, and plain, banked and 4 in 1 cartridges with their protection check, ported from
-  MAME's driver and Kevin Horton's notes. Gamate Link Cable joins a second Gamate, on controller 2,
-  for the two-player games; Link Screen shows both side by side or one player's (each player's own in
-  netplay). LCD Palette, LCD Ghosting and Channel Selection work as for the Supervision, and save
-  states, run-ahead and netplay as for the NES. Cheats for both handhelds write RAM: `AAAA:VV` (or
-  `AAAAVV`), several joined by `+`.
+  Rev 1 (loose or zipped). Its CPU (an NCR 65CX02, which acts as an NMOS 6502), 160x150 four-shade
+  LCD with its scrolling and window (each bit plane read as the LCD takes it), the AY-3-8910's three
+  channels, noise and 16-step envelope in stereo, the timer, and plain, banked and 4 in 1 cartridges
+  with their protection check, ported from MAME's driver and Kevin Horton's notes. Gamate Link Cable
+  joins a second Gamate, on controller 2, for the two-player games; Link Screen shows both side by
+  side or one player's (each player's own in netplay). LCD Palette, LCD Ghosting and Channel
+  Selection work as for the Supervision, and save states, run-ahead and netplay as for the NES.
+  Cheats for both handhelds write RAM: `AAAA:VV` (or `AAAAVV`), several joined by `+`.
 
 ## Controls
 
@@ -405,7 +405,8 @@ SuperVision core** (how cartridges over 128 KB bank); for the Gamate, Kevin Hort
 (open bus, the timer's acknowledge, the LCD's passes, the AY's envelope and the link port's UART).
 
 Test ROMs: AccuracyCoin, blargg's NES tests and the nes-test-roms collection; for the Supervision's
-65C02, Klaus Dormann's 6502 functional and 65C02 extended opcodes tests, which it passes.
+65C02, Klaus Dormann's 6502 functional and 65C02 extended opcodes tests, which it passes (and, as
+the Gamate's NMOS 6502, the functional test).
 
 ## AI assistance
 

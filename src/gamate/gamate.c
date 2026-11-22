@@ -290,6 +290,7 @@ static void cpuFromMachine(struct Gamate* gm) {
 	c->irq = M.irq;
 	c->waiting = M.waiting;
 	c->stopped = M.stopped;
+	c->nmos = true;
 	c->read = gmBusRead;
 	c->write = gmBusWrite;
 	c->context = gm;
