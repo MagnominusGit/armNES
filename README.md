@@ -63,10 +63,10 @@ desktops.
 - Games inside `.zip` and `.7z` archives. RetroArch unpacks them, so achievements recognize the game.
 - Watara Supervision games (`.sv`, or `.ws`): its 65C02, 160x160 four-shade LCD, two square channels,
   noise, sample DMA, video DMA and timer, ported from MAME's driver, and cartridges up to 512 KB. A
-  multicart without a menu (a game in every 64 KB) plays its next game on each Reset. Its shades come
-  in its own greys, a Game Boy's colors or amber, with optional LCD ghosting. Turbo A and B, Left
-  Stick as D-Pad, save states, run-ahead and netplay work as for the NES; the NES options are hidden
-  while one runs.
+  multicart without a menu (a game in every 64 KB) starts on the Multicart Game chosen, and Reset moves
+  to the next. Its shades come in its own greys, a Game Boy's colors or amber, with optional LCD
+  ghosting. Turbo A and B, Left Stick as D-Pad, save states, run-ahead and netplay work as for the
+  NES; the NES options are hidden while one runs.
 
 ## Controls
 
@@ -358,8 +358,8 @@ the last frame; `coretest <core> <rom>` drives any libretro core and checks its 
   counters.
 - Overclock gives games extra CPU time each frame; a few games misbehave with it.
 - The app's netplay connects only to another armnes, not to RetroArch.
-- Supervision: how a multicart without a menu picks its game on the hardware isn't known, so Reset
-  steps through them. There's no link cable.
+- Supervision: how a multicart without a menu picks its game on the hardware isn't known, so the
+  Multicart Game option and Reset pick it. There's no link cable.
 
 ## Credits
 

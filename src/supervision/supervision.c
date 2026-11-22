@@ -370,8 +370,7 @@ bool svLoad(struct Supervision* sv, const uint8_t* rom, size_t size) {
 		}
 		sv->games = g == games ? games : 1;
 	}
-	sv->m.game = (uint8_t) (sv->games - 1);
-	svReset(sv);
+	svPlay(sv, 0);
 	return true;
 }
 
@@ -382,9 +381,13 @@ void svUnload(struct Supervision* sv) {
 }
 
 void svReset(struct Supervision* sv) {
-	uint8_t game = (uint8_t) ((sv->m.game + 1u) % (sv->games ? sv->games : 1));
+	svPlay(sv, sv->m.game + 1u);
+}
+
+void svPlay(struct Supervision* sv, uint32_t game) {
+	game %= sv->games ? sv->games : 1;
 	memset(&sv->m, 0, sizeof(sv->m));
-	M.game = game;
+	M.game = (uint8_t) game;
 	memset(&sv->cpu, 0, sizeof(sv->cpu));
 	M.noise.period = M.dma.period = 8;
 	cpuFromMachine(sv);

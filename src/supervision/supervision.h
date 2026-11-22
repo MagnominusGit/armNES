@@ -79,6 +79,8 @@ bool svLoad(struct Supervision* sv, const uint8_t* rom, size_t size);
 void svUnload(struct Supervision* sv);
 // A multicart moves to its next game.
 void svReset(struct Supervision* sv);
+// Starts a multicart's game (from 0).
+void svPlay(struct Supervision* sv, uint32_t game);
 // One frame, with the buttons held through it.
 void svRunFrame(struct Supervision* sv, uint8_t buttons);
 size_t svStateSize(void);

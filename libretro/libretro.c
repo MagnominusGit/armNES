@@ -87,6 +87,7 @@ static bool parPutGame(const char* name);
 static const char* parChosen(void);
 static void parWriteSave(bool now);
 static void setMemoryMaps(void);
+static void svShowGame(void);
 static uint16_t palette565[512];
 
 #ifdef __aarch64__
@@ -398,6 +399,11 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
 	{ "armnes_cart_code_5", "Cheat Code 5", NULL,
 		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
+	{ "armnes_sv_game", "Multicart Game", NULL,
+		"The game a Supervision multicart without a menu plays. Reset moves on to the next one. Changing it "
+		"restarts the console.",
+		NULL, "system", { { "1", "Game 1" }, { "2", "Game 2" }, { "3", "Game 3" }, { "4", "Game 4" }, { "5", "Game 5" },
+		{ "6", "Game 6" }, { "7", "Game 7" }, { "8", "Game 8" }, { NULL, NULL } }, "1" },
 	{ "armnes_jumper", "Cart Jumper", NULL,
 		"The cart's solder pads or DIP switches, which pick its menu, games, language or timing. Auto uses "
 		"the setting known for the dump. Changing it restarts the console.",
@@ -1034,7 +1040,8 @@ static bool showOptions(void) {
 		for (const struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
 			bool const show = !strcmp(d->key, "armnes_left_stick_dpad") || !strcmp(d->key, "armnes_turbo_period") ||
 			                  !strcmp(d->key, "armnes_opposing") || !strcmp(d->key, "armnes_sv_palette") ||
-			                  !strcmp(d->key, "armnes_sv_ghosting");
+			                  !strcmp(d->key, "armnes_sv_ghosting") ||
+			                  (!strcmp(d->key, "armnes_sv_game") && supervision.games > 1);
 			struct retro_core_option_display display = { d->key, show };
 			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
 		}
@@ -1060,6 +1067,7 @@ static bool showOptions(void) {
 		{ "armnes_jumper", !loaded || nes.hasJumper || nes.cart.jumper >= 0 },
 		{ "armnes_sv_palette", !loaded },
 		{ "armnes_sv_ghosting", !loaded },
+		{ "armnes_sv_game", !loaded },
 		{ "armnes_palette", !optionIs(environ_cb, "armnes_filter", "Composite") && !optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_scanlines", optionIs(environ_cb, "armnes_filter", "Composite") || optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_volume_cart", !loaded || cartSound() },
@@ -1137,6 +1145,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {
 void retro_reset(void) {
 	if (svLoaded) {
 		svReset(&supervision);
+		svShowGame();
 		return;
 	}
 	if (loaded) {
@@ -1795,7 +1804,7 @@ static void readFastForward(void) {
 enum { SV_LEVELS = 3 * 64 + 1 };
 static uint16_t svColors[SV_LEVELS];
 static uint8_t svLevel[SV_WIDTH * SV_HEIGHT], svNext[SV_LEVELS][4];
-static int svGhosting, svPaletteShown = -1;
+static int svGhosting, svPaletteShown = -1, svGameChosen;
 static bool svLevelsSet;
 
 static void buildSupervisionFade(int strength) {
@@ -1850,12 +1859,54 @@ static void readSupervisionOptions(void) {
 			svColors[level] = (uint16_t) ((rgb[0] >> 3) << 11 | (rgb[1] >> 2) << 5 | rgb[2] >> 3);
 		}
 	}
+	// A multicart's game chosen anew: the console restarts with it
+	const char* game = optionValue(environ_cb, "armnes_sv_game");
+	int const chosen = game && atoi(game) > 0 ? atoi(game) : 1;
+	if (supervision.games > 1 && chosen != svGameChosen) {
+		svGameChosen = chosen;
+		if ((uint32_t) (chosen - 1) % supervision.games != supervision.m.game) {
+			svPlay(&supervision, (uint32_t) (chosen - 1));
+			svShowGame();
+		}
+	}
 	int const strength = optionChoice(environ_cb, "armnes_sv_ghosting", ghosting, 4, 0);
 	if (strength != svGhosting) {
 		svGhosting = strength;
 		svLevelsSet = false;
 		if (strength) {
 			buildSupervisionFade(strength);
+		}
+	}
+}
+
+// A multicart's game playing: shown, and kept as the Multicart Game option (which then changes nothing)
+static void svShowGame(void) {
+	if (supervision.games < 2) {
+		return;
+	}
+	static char text[40], value[4];
+	snprintf(text, sizeof(text), "Game %u of %u", supervision.m.game + 1u, supervision.games);
+	struct retro_message message = { text, 120 };
+	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+	snprintf(value, sizeof(value), "%u", supervision.m.game + 1u);
+	struct retro_variable variable = { "armnes_sv_game", value };
+	if (environ_cb(RETRO_ENVIRONMENT_SET_VARIABLE, &variable)) {
+		svGameChosen = (int) supervision.m.game + 1;
+	}
+}
+
+// The Multicart Game option's values: the cartridge's games
+static void svListGames(void) {
+	for (struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
+		if (!strcmp(d->key, "armnes_sv_game")) {
+			static const char* const values[8] = { "1", "2", "3", "4", "5", "6", "7", "8" };
+			static const char* const labels[8] = { "Game 1", "Game 2", "Game 3", "Game 4", "Game 5", "Game 6", "Game 7", "Game 8" };
+			uint32_t const count = supervision.games > 1 && supervision.games < 8 ? supervision.games : 8;
+			for (uint32_t i = 0; i < 8; i++) {
+				d->values[i] = i < count ? (struct retro_core_option_value) { values[i], labels[i] } : (struct retro_core_option_value) { NULL, NULL };
+			}
+			optionsGive(environ_cb, &options);
+			return;
 		}
 	}
 }
@@ -3113,6 +3164,10 @@ bool retro_load_game(const struct retro_game_info* game) {
 		}
 		svLoaded = true;
 		svLevelsSet = false;
+		svGameChosen = 0;
+		if (supervision.games > 1) {
+			svListGames();
+		}
 		readInputOptions();
 		readSupervisionOptions();
 		showOptions();
