@@ -419,15 +419,16 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_cart_code_5", "Cheat Code 5", NULL,
 		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
 	{ "armnes_gm_link", "Link Mode", NULL,
-		"The Gamate's link cable, for its two-player games. Off: one Gamate. Together: both Gamates on every "
-		"device, the second on controller 2 (or the second player in netplay); changing it restarts them. "
-		"Separate: one Gamate per device, linked in netplay; applies when the game starts.",
-		NULL, "system", { { "off", "Off" }, { "together", "Together" }, { "separate", "Separate" }, { NULL, NULL } }, "off" },
+		"The Gamate's link cable, for its two-player games. Together, for netplay: both Gamates on every device, "
+		"the second on controller 2 or the second player; changing it restarts them. Separate: one Gamate per "
+		"device over netplay's packets, set when the game starts; over Wi-Fi most link games play badly this "
+		"way. Off: one Gamate.",
+		NULL, "system", { { "together", "Together" }, { "separate", "Separate" }, { "off", "Off" }, { NULL, NULL } }, "together" },
 	{ "armnes_gm_link_screen", "Screen Layout", NULL,
-		"With Link Mode Together, how the two Gamates are shown (and heard): both, or one player's, as each "
-		"picks in netplay.",
-		NULL, "system", { { "side by side", "Side by Side" }, { "top and bottom", "Top and Bottom" },
-		{ "player 1", "Player 1 Only" }, { "player 2", "Player 2 Only" }, { NULL, NULL } }, "side by side" },
+		"With Link Mode Together, which Gamate is shown and heard: player 1's, as for one player; player 2's, "
+		"for the second player in netplay; or both, for two players on one device.",
+		NULL, "system", { { "player 1", "Player 1 Only" }, { "player 2", "Player 2 Only" }, { "side by side", "Side by Side" },
+		{ "top and bottom", "Top and Bottom" }, { NULL, NULL } }, "player 1" },
 	{ "armnes_sv_game", "Multicart Game", NULL,
 		"The game a Supervision multicart without a menu plays. Reset moves on to the next one. Changing it "
 		"restarts the console.",
@@ -2065,7 +2066,7 @@ static void readGamateLink(bool loading) {
 	static const struct OptionChoice screens[] = {
 		{ "side by side", 0 }, { "top and bottom", 1 }, { "player 1", 2 }, { "player 2", 3 },
 	};
-	int const screen = optionChoice(environ_cb, "armnes_gm_link_screen", screens, 4, 0);
+	int const screen = optionChoice(environ_cb, "armnes_gm_link_screen", screens, 4, 2);
 	unsigned const width = gamateWidth(), height = gamateHeight();
 	if (linked != gmLinked && !loading) {
 		gmReset(&gamate);
@@ -3497,7 +3498,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 			return false;
 		}
 		// The second Gamate switched on 65536 cycles (1.8 frames) after the first: half the BIOS's
-		// 8-tick wait, which Tennis's link handshake has to fall within either way
+		// 8-tick wait, which a game's link handshake can have to fall within either way
 		gamateTwo.switchedOnLater = 65536;
 		bool const ok = unpack(game, &data, &size) && gmLoad(&gamate, bios, data, size) && gmLoad(&gamateTwo, bios, data, size);
 		free(bios);

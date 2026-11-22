@@ -74,12 +74,14 @@ desktops.
   LCD with its scrolling and window (each bit plane read as the LCD takes it), the AY-3-8910's three
   channels, noise and 16-step envelope in stereo, the timer, and plain, banked and 4 in 1 cartridges
   with their protection check, ported from MAME's driver and Kevin Horton's notes. Link Mode links
-  two Gamates for the two-player games, as armGBA does: Together runs both on every device (the
-  second on controller 2, or the second player in netplay), shown side by side, top and bottom, or
-  one player's; Separate runs one per device, joined over netplay (both players pick it before the
-  game starts). LCD Palette, LCD Ghosting and Channel Selection work as for the Supervision, and
-  save states, run-ahead and netplay as for the NES. Cheats for both handhelds write RAM: `AAAA:VV`
-  (or `AAAAVV`), several joined by `+`.
+  two Gamates for the games two can play over the cable, as armGBA does. Together, the default and
+  the mode for netplay, runs both Gamates on every device, the second on controller 2 or the second
+  netplay player; Screen Layout shows player 1's (the default), player 2's (for the second player in
+  netplay), or both side by side or top and bottom (two players on one device). Separate runs one
+  Gamate per device over netplay's packets (both players pick it before the game starts). LCD
+  Palette, LCD Ghosting and Channel Selection work as for the Supervision, and save states,
+  run-ahead and netplay as for the NES. Cheats for both handhelds write RAM: `AAAA:VV` (or
+  `AAAAVV`), several joined by `+`.
 
 ## Controls
 
@@ -373,10 +375,13 @@ the last frame; `coretest <core> <rom>` drives any libretro core and checks its 
 - The app's netplay connects only to another armnes, not to RetroArch.
 - Supervision: how a multicart without a menu picks its game on the hardware isn't known, so the
   Multicart Game option and Reset pick it. There's no link cable.
-- Gamate: in Link Mode Separate each byte crosses the network a frame or more late, so the two-player
-  games slow down on a slow connection; Together has no such delay. Tennis's start of a two-player
-  game gives the other Gamate about 3.6 frames to answer, so in Separate it needs a fast connection
-  (on a slow one it starts a one-player game instead; restart and try again).
+- Gamate: Link Mode Separate can't stand in for the cable over Wi-Fi. The games expect each byte
+  within about a frame, and the network takes about that long, so in Separate they wait on it or get
+  bytes late. Between a Raspberry Pi 5 and a handheld (16-33 ms ping), a game that waits for every
+  answer played at about 79% speed; one that trades bytes every frame lost its two Gamates' agreement
+  mid-match; and one that gives the other Gamate about 3.6 frames to answer the start of a
+  two-player game started one-player games instead. Together, which runs both Gamates on each device
+  and sends only the buttons through netplay's rollback, played all of them at full speed.
 
 ## Credits
 
