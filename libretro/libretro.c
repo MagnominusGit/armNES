@@ -410,6 +410,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The Supervision's four shades: its own greys, or a Game Boy's screen.",
 		NULL, "video", { { "Grey", NULL }, { "Game Boy", NULL }, { "Game Boy Pocket", NULL }, { "Game Boy Light", NULL },
 		{ "Amber", NULL }, { NULL, NULL } }, "Grey" },
+	{ "armnes_sv_ghosting", "LCD Ghosting", NULL,
+		"The Supervision's slow LCD, which leaves trails behind moving things and blends flicker: how much "
+		"of the last picture stays in each new one.",
+		NULL, "video", { { "Off", NULL }, { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { NULL, NULL } }, "Off" },
 	{ "armnes_filter", "NTSC/PAL Filter", NULL,
 		"The picture as a TV decoded it: Composite, with its color fringes and blended dithering, or the "
 		"sharper S-Video. It makes its own colors. Takes more CPU time. Not used on arcade boards, whose "
@@ -1029,7 +1033,8 @@ static bool showOptions(void) {
 	if (svLoaded) {
 		for (const struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
 			bool const show = !strcmp(d->key, "armnes_left_stick_dpad") || !strcmp(d->key, "armnes_turbo_period") ||
-			                  !strcmp(d->key, "armnes_opposing") || !strcmp(d->key, "armnes_sv_palette");
+			                  !strcmp(d->key, "armnes_opposing") || !strcmp(d->key, "armnes_sv_palette") ||
+			                  !strcmp(d->key, "armnes_sv_ghosting");
 			struct retro_core_option_display display = { d->key, show };
 			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
 		}
@@ -1054,6 +1059,7 @@ static bool showOptions(void) {
 		{ "armnes_cart_code_5", !loaded || (parLoaded && *parTop && !parIsGenie) },
 		{ "armnes_jumper", !loaded || nes.hasJumper || nes.cart.jumper >= 0 },
 		{ "armnes_sv_palette", !loaded },
+		{ "armnes_sv_ghosting", !loaded },
 		{ "armnes_palette", !optionIs(environ_cb, "armnes_filter", "Composite") && !optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_scanlines", optionIs(environ_cb, "armnes_filter", "Composite") || optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_volume_cart", !loaded || cartSound() },
@@ -1781,9 +1787,13 @@ static void readFastForward(void) {
 	environ_cb(RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE, &override);
 }
 
-// The Supervision's picture in a palette's four shades.
-static uint16_t svColors[4];
-static int svPaletteShown = -1;
+// The Supervision's picture in a palette's four shades, which LCD Ghosting fades between: levels 0-192
+// (a shade every 64), each frame keeping a quarter, half or three quarters of the last.
+enum { SV_LEVELS = 3 * 64 + 1 };
+static uint16_t svColors[SV_LEVELS];
+static uint8_t svLevel[SV_WIDTH * SV_HEIGHT];
+static int svGhostKept, svPaletteShown = -1;
+static bool svLevelsSet;
 
 static void readSupervisionOptions(void) {
 	// Lightest to darkest, as 0xRRGGBB; the first is MAME's greys
@@ -1797,13 +1807,26 @@ static void readSupervisionOptions(void) {
 	static const struct OptionChoice paletteNames[] = {
 		{ "Grey", 0 }, { "Game Boy", 1 }, { "Game Boy Pocket", 2 }, { "Game Boy Light", 3 }, { "Amber", 4 },
 	};
+	// In quarters of the last picture kept
+	static const struct OptionChoice ghosting[] = { { "Off", 0 }, { "25%", 1 }, { "50%", 2 }, { "75%", 3 } };
 	int const which = optionChoice(environ_cb, "armnes_sv_palette", paletteNames, 5, 0);
 	if (which != svPaletteShown) {
 		svPaletteShown = which;
-		for (int shade = 0; shade < 4; shade++) {
-			uint32_t const rgb = palettes[which][shade];
-			svColors[shade] = (uint16_t) ((rgb >> 19 & 0x1F) << 11 | (rgb >> 10 & 0x3F) << 5 | (rgb >> 3 & 0x1F));
+		for (int level = 0; level < SV_LEVELS; level++) {
+			int const shade = level >> 6 < 3 ? level >> 6 : 2, within = level - shade * 64;
+			uint32_t const from = palettes[which][shade], to = palettes[which][shade + 1];
+			int rgb[3];
+			for (int c = 0; c < 3; c++) {
+				int const a = (int) (from >> (16 - 8 * c) & 0xFF), b = (int) (to >> (16 - 8 * c) & 0xFF);
+				rgb[c] = (a * (64 - within) + b * within + 32) / 64;
+			}
+			svColors[level] = (uint16_t) ((rgb[0] >> 3) << 11 | (rgb[1] >> 2) << 5 | rgb[2] >> 3);
 		}
+	}
+	int const kept = optionChoice(environ_cb, "armnes_sv_ghosting", ghosting, 4, 0);
+	if (kept != svGhostKept) {
+		svGhostKept = kept;
+		svLevelsSet = false;
 	}
 }
 
@@ -1826,7 +1849,7 @@ static void runSupervision(void) {
 	if (supervision.soundFrames) {
 		audio_batch_cb(supervision.sound, supervision.soundFrames);
 	}
-	// A frame the frontend won't show (run-ahead, fast-forward) isn't drawn
+	// A frame the frontend won't show (run-ahead, fast-forward) isn't drawn, nor does it fade the LCD
 	int av = RETRO_AV_ENABLE_VIDEO;
 	bool dupe = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av) && !(av & RETRO_AV_ENABLE_VIDEO) &&
@@ -1834,8 +1857,21 @@ static void runSupervision(void) {
 		video_cb(NULL, SV_WIDTH, SV_HEIGHT, SV_WIDTH * sizeof(uint16_t));
 		return;
 	}
-	for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
-		video[i] = svColors[supervision.picture[i]];
+	if (!svGhostKept || !svLevelsSet) {
+		for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
+			svLevel[i] = (uint8_t) (supervision.picture[i] * 64);
+			video[i] = svColors[svLevel[i]];
+		}
+		svLevelsSet = svGhostKept != 0;
+	} else {
+		int const moved = 4 - svGhostKept;
+		for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
+			int const level = svLevel[i], diff = supervision.picture[i] * 64 - level;
+			// Rounded away from the old level, so it gets there
+			int const step = diff >= 0 ? (diff * moved + 3) / 4 : -((-diff * moved + 3) / 4);
+			svLevel[i] = (uint8_t) (level + step);
+			video[i] = svColors[svLevel[i]];
+		}
 	}
 	video_cb(video, SV_WIDTH, SV_HEIGHT, SV_WIDTH * sizeof(uint16_t));
 }
@@ -3050,6 +3086,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 			return false;
 		}
 		svLoaded = true;
+		svLevelsSet = false;
 		readInputOptions();
 		readSupervisionOptions();
 		showOptions();
