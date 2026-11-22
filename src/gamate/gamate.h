@@ -46,6 +46,8 @@ struct GmMachine {
 	uint8_t bank, multibank;
 	uint8_t protectionPassed, protectionFailed, protectionReady, protectionBit, protectionByte, protectionCount;
 	struct Sunsoft5b ay;
+	// The link port: the byte being sent, the bits coming in and how many, the last byte received.
+	uint8_t txData, rxShift, rxBits, rxData;
 	// Cycles run in the frame and to the next timer IRQ (and whether it's waiting); the LCD's pass next.
 	int32_t frameCycles, irqLeft, irqPending, line;
 	// The sound: cycles towards the next tick and sample, and the ticks being summed.
@@ -62,6 +64,8 @@ struct Gamate {
 	uint8_t bios[GM_BIOS_SIZE];
 	// Sound channels left out of the sound, the machine running on the same.
 	uint8_t muted;
+	// The Gamate at the other end of the link cable, or NULL.
+	struct Gamate* link;
 	// The frame's picture (in the four shades, 0 lightest) and sound (stereo pairs).
 	uint8_t picture[GM_WIDTH * GM_HEIGHT];
 	int16_t sound[2 * 640];
@@ -74,6 +78,8 @@ void gmUnload(struct Gamate* gm);
 void gmReset(struct Gamate* gm);
 // One frame, with the buttons held through it.
 void gmRunFrame(struct Gamate* gm, uint8_t buttons);
+// A frame of two Gamates joined by the link cable, run an instruction at a time each.
+void gmRunLinked(struct Gamate* first, struct Gamate* second, uint8_t buttonsFirst, uint8_t buttonsSecond);
 size_t gmStateSize(void);
 void gmSave(const struct Gamate* gm, void* out);
 bool gmLoadState(struct Gamate* gm, const void* in, size_t size);

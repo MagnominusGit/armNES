@@ -94,6 +94,23 @@ static void stepVramAddress(struct Gamate* gm) {
 	M.vramAddress = (uint16_t) ((M.vramAddress + (M.lcd & LCD_DOWN ? 0x20 : 1)) & 0x1fff);
 }
 
+// The link port's UART: each access to $4C00 sends the transmit register's top bit and shifts it left
+// (zeros after the 8th). The other Gamate latches it, and after 8 bits has the byte at $4800 and an NMI.
+static void linkClock(struct Gamate* gm) {
+	int const bit = M.txData >> 7;
+	M.txData = (uint8_t) (M.txData << 1);
+	struct Gamate* other = gm->link;
+	if (!other) {
+		return;
+	}
+	other->m.rxShift = (uint8_t) (other->m.rxShift << 1 | bit);
+	if (++other->m.rxBits == 8) {
+		other->m.rxBits = 0;
+		other->m.rxData = other->m.rxShift;
+		other->cpu.nmi = true;
+	}
+}
+
 static uint8_t gmBusRead(void* context, uint16_t a) {
 	struct Gamate* gm = context;
 	if (a < 0x2000) {
@@ -115,6 +132,10 @@ static uint8_t gmBusRead(void* context, uint16_t a) {
 	uint8_t const open = (uint8_t) (a >> 8);
 	switch (a & 0xfc00) {
 	case 0x4400: return (uint8_t) ~M.buttons;
+	case 0x4800: return M.rxData;
+	case 0x4c00:
+		linkClock(gm);
+		return open;
 	case 0x5000:
 		if ((a & 7) == 6) {
 			uint8_t data = M.vram[(M.vramAddress << 1) | M.plane];
@@ -146,6 +167,8 @@ static void gmBusWrite(void* context, uint16_t a, uint8_t data) {
 		M.ay.address = (uint8_t) (a & 15);
 		sunsoft5bWrite(&M.ay, data);
 		break;
+	case 0x4400: M.txData = data; break;
+	case 0x4c00: linkClock(gm); break;
 	case 0x5000:
 		switch (a & 7) {
 		case 1: M.lcd = data; break;
@@ -379,6 +402,23 @@ void gmRunFrame(struct Gamate* gm, uint8_t buttons) {
 	frameStart(gm, buttons);
 	runTo(gm, GM_FRAME_CYCLES);
 	frameEnd(gm);
+}
+
+void gmRunLinked(struct Gamate* first, struct Gamate* second, uint8_t buttonsFirst, uint8_t buttonsSecond) {
+	first->link = second;
+	second->link = first;
+	frameStart(first, buttonsFirst);
+	frameStart(second, buttonsSecond);
+	// An instruction at a time, the one behind first, so a bit sent arrives within a few cycles of
+	// when it was sent, as games waiting on the cable need
+	while (first->m.frameCycles < GM_FRAME_CYCLES || second->m.frameCycles < GM_FRAME_CYCLES) {
+		bool const firstNext = first->m.frameCycles <= second->m.frameCycles ? first->m.frameCycles < GM_FRAME_CYCLES
+			: second->m.frameCycles >= GM_FRAME_CYCLES;
+		step(firstNext ? first : second);
+	}
+	frameEnd(first);
+	frameEnd(second);
+	first->link = second->link = NULL;
 }
 
 size_t gmStateSize(void) {

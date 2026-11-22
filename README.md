@@ -73,8 +73,10 @@ desktops.
   Rev 1 (loose or zipped). Its 65C02, 160x150 four-shade LCD with its scrolling and window (each bit
   plane read as the LCD takes it), the AY-3-8910's three channels, noise and 16-step envelope in
   stereo, the timer, and plain, banked and 4 in 1 cartridges with their protection check, ported from
-  MAME's driver and Kevin Horton's notes. LCD Palette, LCD Ghosting and Channel Selection work as for
-  the Supervision, and save states, run-ahead and netplay as for the NES.
+  MAME's driver and Kevin Horton's notes. Gamate Link Cable joins a second Gamate, on controller 2,
+  for the two-player games; Link Screen shows both side by side or one player's (each player's own in
+  netplay). LCD Palette, LCD Ghosting and Channel Selection work as for the Supervision, and save
+  states, run-ahead and netplay as for the NES.
 
 ## Controls
 
@@ -368,7 +370,8 @@ the last frame; `coretest <core> <rom>` drives any libretro core and checks its 
 - The app's netplay connects only to another armnes, not to RetroArch.
 - Supervision: how a multicart without a menu picks its game on the hardware isn't known, so the
   Multicart Game option and Reset pick it. There's no link cable.
-- Gamate: there's no link cable.
+- Gamate: the link cable joins two Gamates in the core (or two players in netplay), not another
+  device.
 
 ## Credits
 
@@ -398,7 +401,7 @@ Read for how the hardware behaves, without code taken: **Mesen** (the VS. System
 protection, DualSystem wiring, and several unlicensed boards), the **NESdev Wiki**, and **Nestopia**;
 for the Supervision, Kevin Horton's reverse engineering notes (the video DMA) and the **MiSTer
 SuperVision core** (how cartridges over 128 KB bank); for the Gamate, Kevin Horton's "Gamate Inside"
-(open bus, the timer's acknowledge, the LCD's passes, and the AY's envelope).
+(open bus, the timer's acknowledge, the LCD's passes, the AY's envelope and the link port's UART).
 
 Test ROMs: AccuracyCoin, blargg's NES tests and the nes-test-roms collection; for the Supervision's
 65C02, Klaus Dormann's 6502 functional and 65C02 extended opcodes tests, which it passes.

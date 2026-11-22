@@ -40,9 +40,11 @@ static bool loaded;
 // A Watara Supervision game (src/supervision), run in place of the NES while it's loaded.
 static struct Supervision supervision;
 static bool svLoaded;
-// A Bit Corporation Gamate game (src/gamate), likewise
-static struct Gamate gamate;
-static bool gmLoaded;
+// A Bit Corporation Gamate game (src/gamate), likewise; with the link cable, a second Gamate with the
+// same game on controller 2, and which of them is shown (0 both, 1 or 2 one player's)
+static struct Gamate gamate, gamateTwo;
+static bool gmLoaded, gmLinked;
+static int gmScreen;
 
 // Pro Action Replay (see the game on top, further down)
 enum { PAR_CHOICES = RETRO_NUM_CORE_OPTION_VALUES_MAX - 2, PAR_NAME = 256 };
@@ -92,6 +94,8 @@ static const char* parChosen(void);
 static void parWriteSave(bool now);
 static void setMemoryMaps(void);
 static void svShowGame(void);
+static unsigned gamateWidth(void);
+
 static uint16_t palette565[512];
 
 #ifdef __aarch64__
@@ -403,6 +407,14 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
 	{ "armnes_cart_code_5", "Cheat Code 5", NULL,
 		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
+	{ "armnes_gm_link", "Gamate Link Cable", NULL,
+		"A second Gamate with the same game, on controller 2, joined by the link cable, for the games two "
+		"can play. Changing it restarts both.",
+		NULL, "system", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
+	{ "armnes_gm_link_screen", "Link Screen", NULL,
+		"Which Gamate is shown and heard: both, side by side, or one player's (in netplay, each picks their "
+		"own).",
+		NULL, "system", { { "Both", NULL }, { "Player 1", NULL }, { "Player 2", NULL }, { NULL, NULL } }, "Both" },
 	{ "armnes_sv_game", "Multicart Game", NULL,
 		"The game a Supervision multicart without a menu plays. Reset moves on to the next one. Changing it "
 		"restarts the console.",
@@ -1001,7 +1013,7 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 		return;
 	}
 	if (gmLoaded) {
-		info->geometry = (struct retro_game_geometry) { GM_WIDTH, GM_HEIGHT, GM_WIDTH, GM_HEIGHT, (float) GM_WIDTH / GM_HEIGHT };
+		info->geometry = (struct retro_game_geometry) { gamateWidth(), GM_HEIGHT, 2 * GM_WIDTH, GM_HEIGHT, (float) gamateWidth() / GM_HEIGHT };
 		info->timing.fps = GM_FPS;
 		info->timing.sample_rate = GM_SOUND_RATE;
 		return;
@@ -1061,7 +1073,9 @@ static bool showOptions(void) {
 			                  !strcmp(d->key, "armnes_opposing") || !strcmp(d->key, "armnes_sv_palette") ||
 			                  !strcmp(d->key, "armnes_sv_ghosting") || !strcmp(d->key, "armnes_channel_selection") ||
 			                  (channel && optionIs(environ_cb, "armnes_channel_selection", "On")) ||
-			                  (!strcmp(d->key, "armnes_sv_game") && svLoaded && supervision.games > 1);
+			                  (!strcmp(d->key, "armnes_sv_game") && svLoaded && supervision.games > 1) ||
+			                  (!strcmp(d->key, "armnes_gm_link") && gmLoaded) ||
+			                  (!strcmp(d->key, "armnes_gm_link_screen") && gmLoaded && gmLinked);
 			struct retro_core_option_display display = { d->key, show };
 			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
 		}
@@ -1088,6 +1102,8 @@ static bool showOptions(void) {
 		{ "armnes_sv_palette", !loaded },
 		{ "armnes_sv_ghosting", !loaded },
 		{ "armnes_sv_game", !loaded },
+		{ "armnes_gm_link", !loaded },
+		{ "armnes_gm_link_screen", !loaded },
 		{ "armnes_channel_sv_square1", !loaded && channels },
 		{ "armnes_channel_sv_square2", !loaded && channels },
 		{ "armnes_channel_sv_noise", !loaded && channels },
@@ -1177,6 +1193,7 @@ void retro_reset(void) {
 	}
 	if (gmLoaded) {
 		gmReset(&gamate);
+		gmReset(&gamateTwo);
 		return;
 	}
 	if (loaded) {
@@ -1834,7 +1851,8 @@ static void readFastForward(void) {
 // share of them. Its next level is read from a table, for each level now and shade wanted.
 enum { SV_LEVELS = 3 * 64 + 1 };
 static uint16_t svColors[SV_LEVELS];
-static uint8_t svLevel[SV_WIDTH * SV_HEIGHT], svNext[SV_LEVELS][4];
+// (Room for the widest picture: two Gamates side by side)
+static uint8_t svLevel[2 * GM_WIDTH * SV_HEIGHT], svNext[SV_LEVELS][4];
 static int svGhosting, svPaletteShown = -1, svGameChosen;
 static bool svLevelsSet;
 
@@ -2007,6 +2025,47 @@ static void runSupervision(void) {
 }
 
 // A Gamate frame: the NES pad's buttons as the Gamate's, as for the Supervision.
+static uint8_t gamateButtons(unsigned port) {
+	uint8_t pad = readPad(port), buttons = 0;
+	static const uint8_t to[8] = { GM_A, GM_B, GM_SELECT, GM_START, GM_UP, GM_DOWN, GM_LEFT, GM_RIGHT };
+	for (int i = 0; i < 8; i++) {
+		buttons |= pad >> i & 1 ? to[i] : 0;
+	}
+	return buttons;
+}
+
+// The Gamate's frame picture's size: one screen, or two side by side
+static unsigned gamateWidth(void) {
+	return gmLinked && !gmScreen ? 2 * GM_WIDTH : GM_WIDTH;
+}
+
+// Link Cable and Link Screen: a change to the cable restarts both Gamates; the picture's shape follows
+static void readGamateLink(bool loading) {
+	bool const linked = optionIs(environ_cb, "armnes_gm_link", "On");
+	static const struct OptionChoice screens[] = { { "Both", 0 }, { "Player 1", 1 }, { "Player 2", 2 } };
+	int const screen = optionChoice(environ_cb, "armnes_gm_link_screen", screens, 3, 0);
+	unsigned const width = gamateWidth();
+	if (linked != gmLinked && !loading) {
+		gmReset(&gamate);
+		gmReset(&gamateTwo);
+		struct retro_message message = { linked ? "Gamate link cable in: both Gamates restart" : "Gamate link cable out: the Gamate restarts", 180 };
+		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+	}
+	bool const shown = linked != gmLinked;
+	gmLinked = linked;
+	gmScreen = screen;
+	svLevelsSet = svLevelsSet && gamateWidth() == width;
+	if (!loading && gamateWidth() != width) {
+		struct retro_game_geometry g = { gamateWidth(), GM_HEIGHT, 2 * GM_WIDTH, GM_HEIGHT, (float) gamateWidth() / GM_HEIGHT };
+		environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g);
+	}
+	if (shown && !loading) {
+		showOptions();
+	}
+}
+
+// A Gamate frame: the NES pad's buttons as the Gamate's, as for the Supervision; with the link cable,
+// both Gamates, controller 2 the second's
 static void runGamate(void) {
 	input_poll_cb();
 	turboFrame++;
@@ -2015,17 +2074,40 @@ static void runGamate(void) {
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
 		readInputOptions();
 		readSupervisionOptions();
+		readGamateLink(false);
 	}
-	uint8_t pad = readPad(0), buttons = 0;
-	static const uint8_t to[8] = { GM_A, GM_B, GM_SELECT, GM_START, GM_UP, GM_DOWN, GM_LEFT, GM_RIGHT };
-	for (int i = 0; i < 8; i++) {
-		buttons |= pad >> i & 1 ? to[i] : 0;
+	if (!gmLinked) {
+		gmRunFrame(&gamate, gamateButtons(0));
+		if (gamate.soundFrames) {
+			audio_batch_cb(gamate.sound, gamate.soundFrames);
+		}
+		showLcd(gamate.picture, GM_WIDTH, GM_HEIGHT);
+		return;
 	}
-	gmRunFrame(&gamate, buttons);
-	if (gamate.soundFrames) {
-		audio_batch_cb(gamate.sound, gamate.soundFrames);
+	gmRunLinked(&gamate, &gamateTwo, gamateButtons(0), gamateButtons(1));
+	if (gmScreen) {
+		const struct Gamate* shown = gmScreen == 1 ? &gamate : &gamateTwo;
+		if (shown->soundFrames) {
+			audio_batch_cb(shown->sound, (size_t) shown->soundFrames);
+		}
+		showLcd(shown->picture, GM_WIDTH, GM_HEIGHT);
+		return;
 	}
-	showLcd(gamate.picture, GM_WIDTH, GM_HEIGHT);
+	// Both: the sound mixed, the screens side by side
+	static int16_t mixed[sizeof(gamate.sound) / sizeof(*gamate.sound)];
+	int const frames = gamate.soundFrames < gamateTwo.soundFrames ? gamate.soundFrames : gamateTwo.soundFrames;
+	for (int i = 0; i < 2 * frames; i++) {
+		mixed[i] = (int16_t) ((gamate.sound[i] + gamateTwo.sound[i]) / 2);
+	}
+	if (frames) {
+		audio_batch_cb(mixed, (size_t) frames);
+	}
+	static uint8_t both[2 * GM_WIDTH * GM_HEIGHT];
+	for (int y = 0; y < GM_HEIGHT; y++) {
+		memcpy(both + y * 2 * GM_WIDTH, gamate.picture + y * GM_WIDTH, GM_WIDTH);
+		memcpy(both + y * 2 * GM_WIDTH + GM_WIDTH, gamateTwo.picture + y * GM_WIDTH, GM_WIDTH);
+	}
+	showLcd(both, 2 * GM_WIDTH, GM_HEIGHT);
 }
 
 void retro_run(void) {
@@ -3300,7 +3382,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 			return false;
 		}
-		bool const ok = unpack(game, &data, &size) && gmLoad(&gamate, bios, data, size);
+		bool const ok = unpack(game, &data, &size) && gmLoad(&gamate, bios, data, size) && gmLoad(&gamateTwo, bios, data, size);
 		free(bios);
 		if (!ok) {
 			struct retro_message message = { "armNES: this Gamate game couldn't be loaded", 360 };
@@ -3309,6 +3391,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 		}
 		gmLoaded = true;
 		svLevelsSet = false;
+		gmLinked = false;
+		readGamateLink(true);
 		readInputOptions();
 		readSupervisionOptions();
 		showOptions();
@@ -3452,6 +3536,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 void retro_unload_game(void) {
 	if (gmLoaded) {
 		gmUnload(&gamate);
+		gmUnload(&gamateTwo);
 		gmLoaded = false;
 		free(unpacked);
 		unpacked = NULL;
@@ -3504,7 +3589,7 @@ size_t retro_serialize_size(void) {
 		return svStateSize();
 	}
 	if (gmLoaded) {
-		return gmStateSize();
+		return 2 * gmStateSize();
 	}
 	if (!loaded) {
 		return 0;
@@ -3522,10 +3607,11 @@ bool retro_serialize(void* data, size_t size) {
 		return true;
 	}
 	if (gmLoaded) {
-		if (size < gmStateSize()) {
+		if (size < 2 * gmStateSize()) {
 			return false;
 		}
 		gmSave(&gamate, data);
+		gmSave(&gamateTwo, (uint8_t*) data + gmStateSize());
 		return true;
 	}
 	if (!loaded || size < retro_serialize_size()) {
@@ -3547,7 +3633,8 @@ bool retro_unserialize(const void* data, size_t size) {
 		return svLoadState(&supervision, data, size);
 	}
 	if (gmLoaded) {
-		return gmLoadState(&gamate, data, size);
+		return size >= 2 * gmStateSize() && gmLoadState(&gamate, data, gmStateSize()) &&
+		       gmLoadState(&gamateTwo, (const uint8_t*) data + gmStateSize(), gmStateSize());
 	}
 	if (!loaded) {
 		return false;
