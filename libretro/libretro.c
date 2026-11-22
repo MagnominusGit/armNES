@@ -94,7 +94,16 @@ static const char* parChosen(void);
 static void parWriteSave(bool now);
 static void setMemoryMaps(void);
 static void svShowGame(void);
+static void handheldCheatsApply(void);
 static unsigned gamateWidth(void);
+
+// The Supervision's and Gamate's cheats: RAM bytes written before each frame
+enum { HANDHELD_CHEATS = 64 };
+static struct {
+	uint16_t address;
+	uint8_t value;
+} handheldCheats[HANDHELD_CHEATS];
+static int handheldCheatCount;
 
 static uint16_t palette565[512];
 
@@ -2017,6 +2026,7 @@ static void runSupervision(void) {
 	for (int i = 0; i < 8; i++) {
 		buttons |= pad >> i & 1 ? to[i] : 0;
 	}
+	handheldCheatsApply();
 	svRunFrame(&supervision, buttons);
 	if (supervision.soundFrames) {
 		audio_batch_cb(supervision.sound, supervision.soundFrames);
@@ -2076,6 +2086,7 @@ static void runGamate(void) {
 		readSupervisionOptions();
 		readGamateLink(false);
 	}
+	handheldCheatsApply();
 	if (!gmLinked) {
 		gmRunFrame(&gamate, gamateButtons(0));
 		if (gamate.soundFrames) {
@@ -3345,6 +3356,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	// A Supervision game, by its extension (.sv, or .ws as MAME also takes)
 	svLoaded = false;
 	gmLoaded = false;
+	handheldCheatCount = 0;
 	const char* dot = strrchr(contentName, '.');
 	if (!empty && dot && (!strcasecmp(dot, ".sv") || !strcasecmp(dot, ".ws"))) {
 		const uint8_t* data;
@@ -3661,8 +3673,54 @@ bool retro_unserialize(const void* data, size_t size) {
 	return true;
 }
 
+// A code's writes, each "AAAA:VV" (or with a space or =, or "AAAAVV" alone), several joined by +; false
+// if one isn't understood or there's no room
+static bool handheldCheatAdd(const char* code) {
+	while (*code) {
+		char* end;
+		unsigned long address = strtoul(code, &end, 16), value;
+		if (end - code == 6 && address <= 0xffffff) {
+			value = address & 0xff;
+			address >>= 8;
+		} else if (end - code >= 1 && end - code <= 4 && (*end == ':' || *end == ' ' || *end == '=')) {
+			const char* digits = end + 1;
+			value = strtoul(digits, &end, 16);
+			if (end == digits || end - digits > 2) {
+				return false;
+			}
+		} else {
+			return false;
+		}
+		if (address > 0xffff || handheldCheatCount == HANDHELD_CHEATS) {
+			return false;
+		}
+		handheldCheats[handheldCheatCount].address = (uint16_t) address;
+		handheldCheats[handheldCheatCount++].value = (uint8_t) value;
+		while (*end == ' ' || *end == '+') {
+			end++;
+		}
+		code = end;
+	}
+	return true;
+}
+
+// Before a frame: the cheats into RAM, the only memory they can change
+static void handheldCheatsApply(void) {
+	for (int i = 0; i < handheldCheatCount; i++) {
+		uint16_t const a = handheldCheats[i].address;
+		if (a < 0x2000) {
+			if (svLoaded) {
+				supervision.m.ram[a] = handheldCheats[i].value;
+			} else {
+				gamate.m.ram[a & 0x3ff] = gamateTwo.m.ram[a & 0x3ff] = handheldCheats[i].value;
+			}
+		}
+	}
+}
+
 void retro_cheat_reset(void) {
 	if (svLoaded || gmLoaded) {
+		handheldCheatCount = 0;
 		return;
 	}
 	nesCheatClear(&nes);
@@ -3671,6 +3729,10 @@ void retro_cheat_reset(void) {
 void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 	(void) index;
 	if (svLoaded || gmLoaded) {
+		if (enabled && code && !handheldCheatAdd(code)) {
+			struct retro_message message = { "armNES: a cheat code wasn't understood (AAAA:VV writes VV to RAM at AAAA)", 240 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+		}
 		return;
 	}
 	if (enabled && code && !nesCheatAdd(&nes, code)) {

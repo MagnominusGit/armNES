@@ -76,7 +76,8 @@ desktops.
   MAME's driver and Kevin Horton's notes. Gamate Link Cable joins a second Gamate, on controller 2,
   for the two-player games; Link Screen shows both side by side or one player's (each player's own in
   netplay). LCD Palette, LCD Ghosting and Channel Selection work as for the Supervision, and save
-  states, run-ahead and netplay as for the NES.
+  states, run-ahead and netplay as for the NES. Cheats for both handhelds write RAM: `AAAA:VV` (or
+  `AAAAVV`), several joined by `+`.
 
 ## Controls
 
