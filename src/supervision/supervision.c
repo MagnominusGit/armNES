@@ -23,12 +23,15 @@ static void checkIrq(struct Supervision* sv) {
 	sv->cpu.irq = irq;
 }
 
-static inline const uint8_t* bankAt8000(const struct Supervision* sv) {
-	return sv->rom + ((((uint32_t) M.outer << 3 | M.reg[BANK] >> 5) % sv->banks) << 14);
+// Where a 16 KiB bank (7 at $C000, else the bank bits) starts. A cartridge over 128 KiB takes 32 KiB pages from the link port's data
+// lines for banks 0-3, the last page for 4-7, as the MiSTer core has it.
+static inline uint32_t bankStart(const struct Supervision* sv, uint32_t bank) {
+	if (sv->romSize > 0x20000) {
+		uint32_t page = bank & 4 ? 0x0f : M.reg[LINK] & 0x0f;
+		return ((page << 15) | ((bank & 1) << 14)) % sv->romSize;
+	}
+	return (bank == 7 ? sv->banks - 1 : bank % sv->banks) << 14;
 }
-
-// A cartridge over 128 KiB (a 4 in 1) starts in its last 128 KiB, where its first game's code is;
-// how it moves to the others isn't known (MAME doesn't run them either).
 
 // Memory as the sound DMA reads it: the cartridge through its own bank bits, else what the CPU sees
 // (registers without their side effects).
@@ -38,8 +41,8 @@ static uint8_t peek(const struct Supervision* sv, uint16_t a) {
 	case 1: return M.reg[a & 0x1fff];
 	case 2: return M.vram[a & 0x1fff];
 	case 3: return 0;
-	case 4: case 5: return bankAt8000(sv)[a & 0x3fff];
-	default: return sv->rom[((sv->banks - 1) << 14) | (a & 0x3fff)];
+	case 4: case 5: return sv->rom[bankStart(sv, M.reg[BANK] >> 5) | (a & 0x3fff)];
+	default: return sv->rom[bankStart(sv, 7) | (a & 0x3fff)];
 	}
 }
 
@@ -107,7 +110,7 @@ static void dmaWrite(struct Supervision* sv, int offset, uint8_t data) {
 		d->period = (uint16_t) (8 * (1 + (data & 3)));
 		d->right = data & 4;
 		d->left = data & 8;
-		d->bank = (uint32_t) ((data >> 4) & 7) << 14;
+		d->bank = (uint32_t) (data >> 4) & 7;
 		break;
 	case 4:
 		d->on = data & 0x80;
@@ -215,7 +218,7 @@ static void soundTick(struct Supervision* sv) {
 	if (d->on) {
 		uint16_t address = (uint16_t) (d->start + d->pos / 2);
 		uint8_t sample = address >= 0x8000 && address < 0xc000
-			                 ? sv->rom[(d->bank | (address & 0x3fff)) % sv->romSize]
+			                 ? sv->rom[bankStart(sv, d->bank) | (address & 0x3fff)]
 			                 : peek(sv, address);
 		int32_t s = (d->pos & 1 ? sample & 0x0f : sample >> 4) << 8;
 		left += d->left ? s : 0;
@@ -338,7 +341,6 @@ void svReset(struct Supervision* sv) {
 	memset(&sv->m, 0, sizeof(sv->m));
 	memset(&sv->cpu, 0, sizeof(sv->cpu));
 	M.noise.period = M.dma.period = 8;
-	M.outer = (uint8_t) (sv->banks > 8 ? sv->banks / 8 - 1 : 0);
 	cpuFromMachine(sv);
 	w65c02Reset(&sv->cpu);
 	machineFromCpu(sv);

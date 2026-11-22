@@ -47,8 +47,6 @@ struct SvMachine {
 	uint8_t nmi, irq, waiting, stopped;
 	uint8_t ram[0x2000], vram[0x2000], reg[0x2000];
 	uint8_t timerOn, timerShot, dmaFinished, buttons;
-	// For a cartridge over 128 KiB: the 128 KiB its three bank bits select in (the last at power-on).
-	uint8_t outer;
 	int32_t timerLeft;
 	// Cycles run in the frame, and towards the next sound tick; the frames' leftover clocks (of 61ths).
 	int32_t frameCycles, soundCycles, frameRemainder;
