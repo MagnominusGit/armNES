@@ -219,7 +219,7 @@ static void soundTick(struct Supervision* sv) {
 			case 2: high = c->pos <= c->size / 2; break;
 			default: high = c->pos <= (9 * c->size) >> 5; break;
 			}
-			int32_t s = high ? c->volume << 8 : 0;
+			int32_t s = high && !(sv->muted & (SV_SQUARE1 << j)) ? c->volume << 8 : 0;
 			if (j == 0) {
 				right += s;
 			} else {
@@ -232,7 +232,7 @@ static void soundTick(struct Supervision* sv) {
 	}
 	struct SvNoise* n = &M.noise;
 	if (n->on && (n->play || n->count)) {
-		int32_t s = n->value ? n->volume << 8 : 0;
+		int32_t s = n->value && !(sv->muted & SV_NOISE) ? n->volume << 8 : 0;
 		left += n->left ? s : 0;
 		right += n->right ? s : 0;
 		if (++n->timer >= n->period) {
@@ -249,7 +249,7 @@ static void soundTick(struct Supervision* sv) {
 		uint8_t sample = address >= 0x8000 && address < 0xc000
 			                 ? sv->rom[bankStart(sv, d->bank) | (address & 0x3fff)]
 			                 : peek(sv, address);
-		int32_t s = (d->pos & 1 ? sample & 0x0f : sample >> 4) << 8;
+		int32_t s = sv->muted & SV_SAMPLES ? 0 : (d->pos & 1 ? sample & 0x0f : sample >> 4) << 8;
 		left += d->left ? s : 0;
 		right += d->right ? s : 0;
 		if (++d->timer >= d->period) {

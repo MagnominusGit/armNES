@@ -16,6 +16,9 @@ enum { SV_WIDTH = 160, SV_HEIGHT = 160, SV_CLOCK = 4000000, SV_FPS = 61 };
 // The sound comes out at the clock / 128.
 enum { SV_SOUND_RATE = SV_CLOCK / 128 };
 
+// The sound channels, to mute.
+enum { SV_SQUARE1 = 1, SV_SQUARE2 = 2, SV_NOISE = 4, SV_SAMPLES = 8 };
+
 // Buttons, as the joypad port has them (set when pressed).
 enum {
 	SV_RIGHT = 1, SV_LEFT = 2, SV_DOWN = 4, SV_UP = 8, SV_B = 16, SV_A = 32, SV_SELECT = 64, SV_START = 128,
@@ -68,6 +71,8 @@ struct Supervision {
 	uint32_t romSize, banks;
 	// Games in the cartridge (1 unless a multicart).
 	uint32_t games;
+	// Sound channels left out of the sound (SV_SQUARE1...), the machine running on the same.
+	uint8_t muted;
 	// The frame's picture (in the four shades, 0 lightest) and sound (stereo pairs).
 	uint8_t picture[SV_WIDTH * SV_HEIGHT];
 	int16_t sound[2 * (SV_SOUND_RATE / SV_FPS + 64)];

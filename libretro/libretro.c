@@ -504,6 +504,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_channel_dmc", "DMC (Samples)", NULL, NULL, NULL, "audio", CHANNEL_VALUES, "On" },
 	{ "armnes_channel_cart", "Cart Sound", NULL, "The sound chip in the cart or the Disk System, all of it.",
 		NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_sv_square1", "Square 1", NULL, "The Supervision's first square channel.", NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_sv_square2", "Square 2", NULL, "The Supervision's second square channel.", NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_sv_noise", "Noise", NULL, "The Supervision's noise channel.", NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_sv_samples", "Samples", NULL, "The Supervision's sample DMA.", NULL, "audio", CHANNEL_VALUES, "On" },
 	CHANNEL_OPTION("vrc6_pulse1", "VRC6 Pulse 1"),
 	CHANNEL_OPTION("vrc6_pulse2", "VRC6 Pulse 2"),
 	CHANNEL_OPTION("vrc6_saw", "VRC6 Sawtooth"),
@@ -1038,9 +1042,11 @@ static bool showOptions(void) {
 	// A Supervision game: the controller's options and its own
 	if (svLoaded) {
 		for (const struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
+			bool const channel = !strncmp(d->key, "armnes_channel_sv_", 18);
 			bool const show = !strcmp(d->key, "armnes_left_stick_dpad") || !strcmp(d->key, "armnes_turbo_period") ||
 			                  !strcmp(d->key, "armnes_opposing") || !strcmp(d->key, "armnes_sv_palette") ||
-			                  !strcmp(d->key, "armnes_sv_ghosting") ||
+			                  !strcmp(d->key, "armnes_sv_ghosting") || !strcmp(d->key, "armnes_channel_selection") ||
+			                  (channel && optionIs(environ_cb, "armnes_channel_selection", "On")) ||
 			                  (!strcmp(d->key, "armnes_sv_game") && supervision.games > 1);
 			struct retro_core_option_display display = { d->key, show };
 			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
@@ -1068,6 +1074,10 @@ static bool showOptions(void) {
 		{ "armnes_sv_palette", !loaded },
 		{ "armnes_sv_ghosting", !loaded },
 		{ "armnes_sv_game", !loaded },
+		{ "armnes_channel_sv_square1", !loaded && channels },
+		{ "armnes_channel_sv_square2", !loaded && channels },
+		{ "armnes_channel_sv_noise", !loaded && channels },
+		{ "armnes_channel_sv_samples", !loaded && channels },
 		{ "armnes_palette", !optionIs(environ_cb, "armnes_filter", "Composite") && !optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_scanlines", optionIs(environ_cb, "armnes_filter", "Composite") || optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_volume_cart", !loaded || cartSound() },
@@ -1859,6 +1869,8 @@ static void readSupervisionOptions(void) {
 			svColors[level] = (uint16_t) ((rgb[0] >> 3) << 11 | (rgb[1] >> 2) << 5 | rgb[2] >> 3);
 		}
 	}
+	supervision.muted = (uint8_t) ((muted("sv_square1") ? SV_SQUARE1 : 0) | (muted("sv_square2") ? SV_SQUARE2 : 0) |
+		(muted("sv_noise") ? SV_NOISE : 0) | (muted("sv_samples") ? SV_SAMPLES : 0));
 	// A multicart's game chosen anew: the console restarts with it
 	const char* game = optionValue(environ_cb, "armnes_sv_game");
 	int const chosen = game && atoi(game) > 0 ? atoi(game) : 1;
