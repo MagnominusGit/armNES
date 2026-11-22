@@ -2104,6 +2104,13 @@ static void gamateNetSend(void* context, uint8_t byte, int32_t cycle) {
 	}
 }
 
+static void gamateNetPoll(void* context) {
+	(void) context;
+	if (gmPoll) {
+		gmPoll();
+	}
+}
+
 static void RETRO_CALLCONV gamateNetStart(uint16_t self, retro_netpacket_send_t send, retro_netpacket_poll_receive_t poll) {
 	gmSend = send;
 	gmPoll = poll;
@@ -2158,6 +2165,7 @@ static void gamateNetplay(bool separate) {
 	};
 	gmSeparate = separate;
 	gamate.send = separate ? gamateNetSend : NULL;
+	gamate.poll = separate ? gamateNetPoll : NULL;
 	environ_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, separate ? (void*) &callbacks : NULL);
 }
 
@@ -2174,9 +2182,6 @@ static void runGamate(void) {
 		readGamateLink(false);
 	}
 	handheldCheatsApply();
-	if (gmSeparate && gmPoll) {
-		gmPoll();
-	}
 	if (!gmLinked) {
 		gmRunFrame(&gamate, gamateButtons(0));
 		if (gamate.soundFrames) {

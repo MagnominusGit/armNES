@@ -73,6 +73,8 @@ struct Gamate {
 	// Or the network: each byte sent, with the cycle of the frame it went on; and the bytes come in,
 	// each due at its sender's cycle.
 	void (*send)(void* context, uint8_t byte, int32_t cycle);
+	// Called a few times a frame to take in what the network has brought
+	void (*poll)(void* context);
 	void* sendContext;
 	struct {
 		uint8_t byte;

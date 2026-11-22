@@ -404,6 +404,10 @@ static void runTo(struct Gamate* gm, int32_t until) {
 	}
 }
 
+// Eight times a frame, a look at the network for bytes that have come in, so an answer that arrives
+// mid-frame is taken in this frame rather than the next
+enum { POLLS = 8 };
+
 static void frameEnd(struct Gamate* gm) {
 	while (M.line < GM_PASSES) {
 		passEnded(gm, M.line++);
@@ -417,7 +421,14 @@ static void frameEnd(struct Gamate* gm) {
 
 void gmRunFrame(struct Gamate* gm, uint8_t buttons) {
 	frameStart(gm, buttons);
-	runTo(gm, GM_FRAME_CYCLES);
+	if (gm->poll) {
+		for (int i = 1; i <= POLLS; i++) {
+			gm->poll(gm->sendContext);
+			runTo(gm, GM_FRAME_CYCLES * i / POLLS);
+		}
+	} else {
+		runTo(gm, GM_FRAME_CYCLES);
+	}
 	frameEnd(gm);
 }
 
