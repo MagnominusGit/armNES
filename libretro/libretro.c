@@ -406,6 +406,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The colors. armNES NTSC decodes the console's video signal; the others are measured or tuned. "
 		"Custom loads nes.pal (or custom.pal) from the system folder.",
 		NULL, "video", { { NULL, NULL } }, "armNES NTSC" },
+	{ "armnes_sv_palette", "Supervision Palette", NULL,
+		"The Supervision's four shades: its own greys, or a Game Boy's screen.",
+		NULL, "video", { { "Grey", NULL }, { "Game Boy", NULL }, { "Game Boy Pocket", NULL }, { "Game Boy Light", NULL },
+		{ "Amber", NULL }, { NULL, NULL } }, "Grey" },
 	{ "armnes_filter", "NTSC/PAL Filter", NULL,
 		"The picture as a TV decoded it: Composite, with its color fringes and blended dithering, or the "
 		"sharper S-Video. It makes its own colors. Takes more CPU time. Not used on arcade boards, whose "
@@ -1021,11 +1025,11 @@ static bool genieOverPut(bool on);
 // Shows only the options that do something for the game loaded, with the controllers plugged in and
 // the other options' values. Without a game, all of them.
 static bool showOptions(void) {
-	// A Supervision game: the controller's options alone
+	// A Supervision game: the controller's options and its own
 	if (svLoaded) {
 		for (const struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
 			bool const show = !strcmp(d->key, "armnes_left_stick_dpad") || !strcmp(d->key, "armnes_turbo_period") ||
-			                  !strcmp(d->key, "armnes_opposing");
+			                  !strcmp(d->key, "armnes_opposing") || !strcmp(d->key, "armnes_sv_palette");
 			struct retro_core_option_display display = { d->key, show };
 			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
 		}
@@ -1049,6 +1053,7 @@ static bool showOptions(void) {
 		{ "armnes_cart_code_4", !loaded || (parLoaded && *parTop && !parIsGenie) },
 		{ "armnes_cart_code_5", !loaded || (parLoaded && *parTop && !parIsGenie) },
 		{ "armnes_jumper", !loaded || nes.hasJumper || nes.cart.jumper >= 0 },
+		{ "armnes_sv_palette", !loaded },
 		{ "armnes_palette", !optionIs(environ_cb, "armnes_filter", "Composite") && !optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_scanlines", optionIs(environ_cb, "armnes_filter", "Composite") || optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_volume_cart", !loaded || cartSound() },
@@ -1776,26 +1781,63 @@ static void readFastForward(void) {
 	environ_cb(RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE, &override);
 }
 
-// A Supervision frame: the NES pad's buttons (with turbo and the left stick) as the Supervision's, and
-// its four shades as MAME has them, from a black and white handheld's pictures.
+// The Supervision's picture in a palette's four shades.
+static uint16_t svColors[4];
+static int svPaletteShown = -1;
+
+static void readSupervisionOptions(void) {
+	// Lightest to darkest, as 0xRRGGBB; the first is MAME's greys
+	static const uint32_t palettes[][4] = {
+		{ 0xE0E0E0, 0xB9B9B9, 0x545454, 0x121212 },
+		{ 0x9BBC0F, 0x8BAC0F, 0x306230, 0x0F380F },
+		{ 0xC4CFA1, 0x8B956D, 0x4D533C, 0x1F1F1F },
+		{ 0x00B581, 0x009A71, 0x00694A, 0x004F3B },
+		{ 0xF8B800, 0xC08000, 0x704800, 0x281800 },
+	};
+	static const struct OptionChoice paletteNames[] = {
+		{ "Grey", 0 }, { "Game Boy", 1 }, { "Game Boy Pocket", 2 }, { "Game Boy Light", 3 }, { "Amber", 4 },
+	};
+	int const which = optionChoice(environ_cb, "armnes_sv_palette", paletteNames, 5, 0);
+	if (which != svPaletteShown) {
+		svPaletteShown = which;
+		for (int shade = 0; shade < 4; shade++) {
+			uint32_t const rgb = palettes[which][shade];
+			svColors[shade] = (uint16_t) ((rgb >> 19 & 0x1F) << 11 | (rgb >> 10 & 0x3F) << 5 | (rgb >> 3 & 0x1F));
+		}
+	}
+}
+
+// A Supervision frame: the NES pad's buttons (with turbo and the left stick) as the Supervision's.
 static void runSupervision(void) {
 	input_poll_cb();
 	turboFrame++;
 	readFastForward();
+	bool updated = false;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+		readInputOptions();
+		readSupervisionOptions();
+	}
 	uint8_t pad = readPad(0), buttons = 0;
 	static const uint8_t to[8] = { SV_A, SV_B, SV_SELECT, SV_START, SV_UP, SV_DOWN, SV_LEFT, SV_RIGHT };
 	for (int i = 0; i < 8; i++) {
 		buttons |= pad >> i & 1 ? to[i] : 0;
 	}
 	svRunFrame(&supervision, buttons);
-	static const uint16_t shades[4] = { 0xE71C, 0xBDD7, 0x52AA, 0x1082 };
-	for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
-		video[i] = shades[supervision.picture[i]];
-	}
-	video_cb(video, SV_WIDTH, SV_HEIGHT, SV_WIDTH * sizeof(uint16_t));
 	if (supervision.soundFrames) {
 		audio_batch_cb(supervision.sound, supervision.soundFrames);
 	}
+	// A frame the frontend won't show (run-ahead, fast-forward) isn't drawn
+	int av = RETRO_AV_ENABLE_VIDEO;
+	bool dupe = false;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av) && !(av & RETRO_AV_ENABLE_VIDEO) &&
+		environ_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &dupe) && dupe) {
+		video_cb(NULL, SV_WIDTH, SV_HEIGHT, SV_WIDTH * sizeof(uint16_t));
+		return;
+	}
+	for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
+		video[i] = svColors[supervision.picture[i]];
+	}
+	video_cb(video, SV_WIDTH, SV_HEIGHT, SV_WIDTH * sizeof(uint16_t));
 }
 
 void retro_run(void) {
@@ -3009,6 +3051,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		}
 		svLoaded = true;
 		readInputOptions();
+		readSupervisionOptions();
 		showOptions();
 		return true;
 	}
