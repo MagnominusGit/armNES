@@ -47,6 +47,8 @@ struct SvMachine {
 	uint8_t nmi, irq, waiting, stopped;
 	uint8_t ram[0x2000], vram[0x2000], reg[0x2000];
 	uint8_t timerOn, timerShot, dmaFinished, buttons;
+	// The game of a multicart playing.
+	uint8_t game;
 	int32_t timerLeft;
 	// Cycles run in the frame, and towards the next sound tick; the frames' leftover clocks (of 61ths).
 	int32_t frameCycles, soundCycles, frameRemainder;
@@ -62,6 +64,8 @@ struct Supervision {
 	struct W65c02 cpu;
 	uint8_t* rom;
 	uint32_t romSize, banks;
+	// Games in the cartridge (1 unless a multicart).
+	uint32_t games;
 	// The frame's picture (in the four shades, 0 lightest) and sound (stereo pairs).
 	uint8_t picture[SV_WIDTH * SV_HEIGHT];
 	int16_t sound[2 * (SV_SOUND_RATE / SV_FPS + 64)];
@@ -71,6 +75,7 @@ struct Supervision {
 // The cartridge is copied; false if it can't be used.
 bool svLoad(struct Supervision* sv, const uint8_t* rom, size_t size);
 void svUnload(struct Supervision* sv);
+// A multicart moves to its next game.
 void svReset(struct Supervision* sv);
 // One frame, with the buttons held through it.
 void svRunFrame(struct Supervision* sv, uint8_t buttons);

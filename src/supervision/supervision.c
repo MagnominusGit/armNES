@@ -23,9 +23,13 @@ static void checkIrq(struct Supervision* sv) {
 	sv->cpu.irq = irq;
 }
 
-// Where a 16 KiB bank (7 at $C000, else the bank bits) starts. A cartridge over 128 KiB takes 32 KiB pages from the link port's data
+// Where a 16 KiB bank (7 at $C000, else the bank bits) starts. A multicart is 64 KiB games, the one
+// playing on its own. Another cartridge over 128 KiB takes 32 KiB pages from the link port's data
 // lines for banks 0-3, the last page for 4-7, as the MiSTer core has it.
 static inline uint32_t bankStart(const struct Supervision* sv, uint32_t bank) {
+	if (sv->games > 1) {
+		return (uint32_t) M.game << 16 | (bank == 7 ? 3 : bank & 3) << 14;
+	}
 	if (sv->romSize > 0x20000) {
 		uint32_t page = bank & 4 ? 0x0f : M.reg[LINK] & 0x0f;
 		return ((page << 15) | ((bank & 1) << 14)) % sv->romSize;
@@ -327,6 +331,21 @@ bool svLoad(struct Supervision* sv, const uint8_t* rom, size_t size) {
 	}
 	sv->romSize = banks << 14;
 	sv->banks = banks;
+	// A multicart: a game, with its reset vector, in every 64 KiB. It has no menu in it; the cartridge
+	// picks the game, so here each reset moves to the next.
+	sv->games = 1;
+	if (size > 0x20000 && !(size & 0xffff)) {
+		uint32_t games = (uint32_t) (size >> 16);
+		uint32_t g = 0;
+		for (; g < games; g++) {
+			const uint8_t* vector = rom + ((size_t) g << 16) + 0xfffc;
+			if (vector[1] < 0x80 || (vector[0] == 0xff && vector[1] == 0xff)) {
+				break;
+			}
+		}
+		sv->games = g == games ? games : 1;
+	}
+	sv->m.game = (uint8_t) (sv->games - 1);
 	svReset(sv);
 	return true;
 }
@@ -334,11 +353,13 @@ bool svLoad(struct Supervision* sv, const uint8_t* rom, size_t size) {
 void svUnload(struct Supervision* sv) {
 	free(sv->rom);
 	sv->rom = NULL;
-	sv->romSize = sv->banks = 0;
+	sv->romSize = sv->banks = sv->games = 0;
 }
 
 void svReset(struct Supervision* sv) {
+	uint8_t game = (uint8_t) ((sv->m.game + 1u) % (sv->games ? sv->games : 1));
 	memset(&sv->m, 0, sizeof(sv->m));
+	M.game = game;
 	memset(&sv->cpu, 0, sizeof(sv->cpu));
 	M.noise.period = M.dma.period = 8;
 	cpuFromMachine(sv);
@@ -395,6 +416,9 @@ bool svLoadState(struct Supervision* sv, const void* in, size_t size) {
 		return false;
 	}
 	memcpy(&sv->m, in, sizeof(sv->m));
+	if (M.game >= sv->games) {
+		M.game = 0;
+	}
 	cpuFromMachine(sv);
 	return true;
 }

@@ -62,9 +62,10 @@ desktops.
     on (NESdev, Game Genie).
 - Games inside `.zip` and `.7z` archives. RetroArch unpacks them, so achievements recognize the game.
 - Watara Supervision games (`.sv`, or `.ws`): its 65C02, 160x160 four-shade LCD, two square channels,
-  noise, sample DMA and timer, ported from MAME's driver, and cartridges up to 512 KB. Turbo
-  A and B, Left Stick as D-Pad, save states, run-ahead and netplay work as for the NES; the NES
-  options are hidden while one runs.
+  noise, sample DMA and timer, ported from MAME's driver, and cartridges up to 512 KB. A
+  multicart without a menu (a game in every 64 KB) plays its next game on each Reset. Turbo A and B,
+  Left Stick as D-Pad, save states, run-ahead and netplay work as for the NES; the NES options are
+  hidden while one runs.
 
 ## Controls
 
@@ -356,9 +357,9 @@ the last frame; `coretest <core> <rom>` drives any libretro core and checks its 
   counters.
 - Overclock gives games extra CPU time each frame; a few games misbehave with it.
 - The app's netplay connects only to another armnes, not to RetroArch.
-- Supervision: the 256 KB 4 in 1 starts one of its games and never shows a menu, and one aftermarket
-  game stops early, its music driver's NMI overwriting a copy routine's pointer. There's no LCD
-  ghosting and no link cable.
+- Supervision: how a multicart without a menu picks its game on the hardware isn't known, so Reset
+  steps through them. One aftermarket game stops early, its music driver's NMI overwriting a copy
+  routine's pointer. There's no LCD ghosting and no link cable.
 
 ## Credits
 
