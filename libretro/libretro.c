@@ -515,7 +515,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_opposing", "Allow Opposing Directions", NULL,
 		"Left and right (or up and down) held together, which a real pad can't do. A few games glitch.",
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_left_stick_dpad", "Left Stick as D-Pad", NULL, "The left stick presses the D-pad too.",
+	{ "armnes_left_stick_dpad", "Left Stick as D-Pad", NULL, "The left stick presses the D-pad too. Off: the game ignores the left stick.",
 		NULL, "input", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "On" },
 	{ "armnes_four_players", "4 Players", NULL,
 		"Players 3 and 4 through the NES Four Score or the Famicom's adapter. Auto follows an NES 2.0 header.",
@@ -2911,12 +2911,14 @@ bool retro_load_game(const struct retro_game_info* game) {
 		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select (VS. System: Coin)" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
 		{ RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" }, { RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
 	};
-	static struct retro_input_descriptor descriptors[4 * 10 + 10];
+	static struct retro_input_descriptor descriptors[4 * 12 + 10];
 	unsigned count = 0;
 	for (unsigned port = 0; port < 4; port++) {
 		for (unsigned i = 0; i < 10; i++) {
 			descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_JOYPAD, 0, buttons[i].id, buttons[i].name };
 		}
+		descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "D-Pad Left / Right" };
+		descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "D-Pad Up / Down" };
 	}
 	descriptors[count++] = (struct retro_input_descriptor) { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Microphone" };
 	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Disk System: Swap Disk; VS. System: Service; Datach: Swipe Barcode" };
