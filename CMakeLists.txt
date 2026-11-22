@@ -32,6 +32,7 @@ set(CORE_SOURCES
 	src/cheat.c
 	src/cpu.c
 	src/supervision/supervision.c
+	src/gamate/gamate.c
 	src/supervision/w65c02.c
 	src/input.c
 	src/nes.c
