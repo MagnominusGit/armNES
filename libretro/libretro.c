@@ -1151,6 +1151,40 @@ static int vsSwap;
 static unsigned coinFrames[4];
 static bool fdsFast;
 
+// Names each button for the frontend's controls menu, the left stick as the D-pad while Left Stick as
+// D-Pad is on.
+static void giveDescriptors(void) {
+	static const struct { unsigned id; const char* name; } buttons[] = {
+		{ RETRO_DEVICE_ID_JOYPAD_LEFT, "Left" }, { RETRO_DEVICE_ID_JOYPAD_UP, "Up" },
+		{ RETRO_DEVICE_ID_JOYPAD_DOWN, "Down" }, { RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right" },
+		{ RETRO_DEVICE_ID_JOYPAD_B, "B" }, { RETRO_DEVICE_ID_JOYPAD_A, "A" },
+		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select (VS. System: Coin)" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
+		{ RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" }, { RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
+	};
+	static struct retro_input_descriptor descriptors[4 * 12 + 10];
+	unsigned count = 0;
+	for (unsigned port = 0; port < 4; port++) {
+		for (unsigned i = 0; i < 10; i++) {
+			descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_JOYPAD, 0, buttons[i].id, buttons[i].name };
+		}
+		if (leftStickDpad) {
+			descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "D-Pad Left / D-Pad Right" };
+			descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "D-Pad Up / D-Pad Down" };
+		}
+	}
+	descriptors[count++] = (struct retro_input_descriptor) { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Microphone" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Disk System: Swap Disk; VS. System: Service; Datach: Swipe Barcode" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Zapper Aim X" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Zapper Trigger Off Screen" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Zapper: Center Crosshair" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" };
+	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Zapper Fine Aim" };
+	descriptors[count] = (struct retro_input_descriptor) { 0, 0, 0, 0, NULL };
+	environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
+}
+
 static void readInputOptions(void) {
 	const char* period = optionValue(environ_cb, "armnes_turbo_period");
 	turboPeriod = period && !strcmp(period, "off") ? 0 : period ? atoi(period) : 4;
@@ -1158,7 +1192,11 @@ static void readInputOptions(void) {
 		turboPeriod = 4;
 	}
 	allowOpposing = optionChoice(environ_cb, "armnes_opposing", onOffChoices, 2, 0);
-	leftStickDpad = optionChoice(environ_cb, "armnes_left_stick_dpad", onOffChoices, 2, 1);
+	bool stickDpad = optionChoice(environ_cb, "armnes_left_stick_dpad", onOffChoices, 2, 1);
+	if (stickDpad != leftStickDpad) {
+		leftStickDpad = stickDpad;
+		giveDescriptors();
+	}
 	fourPlayers = optionChoice(environ_cb, "armnes_four_players", fourPlayerChoices, 4, AUTO);
 	zapperAim = optionChoice(environ_cb, "armnes_zapper_aim", aimChoices, 4, AIM_STICK_PAN);
 	motionRotation = optionChoice(environ_cb, "armnes_motion_rotation", rotationChoices, 4, 0);
@@ -2904,33 +2942,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) {
 		return false;
 	}
-	static const struct { unsigned id; const char* name; } buttons[] = {
-		{ RETRO_DEVICE_ID_JOYPAD_LEFT, "Left" }, { RETRO_DEVICE_ID_JOYPAD_UP, "Up" },
-		{ RETRO_DEVICE_ID_JOYPAD_DOWN, "Down" }, { RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right" },
-		{ RETRO_DEVICE_ID_JOYPAD_B, "B" }, { RETRO_DEVICE_ID_JOYPAD_A, "A" },
-		{ RETRO_DEVICE_ID_JOYPAD_SELECT, "Select (VS. System: Coin)" }, { RETRO_DEVICE_ID_JOYPAD_START, "Start" },
-		{ RETRO_DEVICE_ID_JOYPAD_X, "Turbo A" }, { RETRO_DEVICE_ID_JOYPAD_Y, "Turbo B" },
-	};
-	static struct retro_input_descriptor descriptors[4 * 12 + 10];
-	unsigned count = 0;
-	for (unsigned port = 0; port < 4; port++) {
-		for (unsigned i = 0; i < 10; i++) {
-			descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_JOYPAD, 0, buttons[i].id, buttons[i].name };
-		}
-		descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "D-Pad Left / Right" };
-		descriptors[count++] = (struct retro_input_descriptor) { port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "D-Pad Up / Down" };
-	}
-	descriptors[count++] = (struct retro_input_descriptor) { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Microphone" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "Disk System: Swap Disk; VS. System: Service; Datach: Swipe Barcode" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Zapper Aim X" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Zapper Aim Y" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Zapper Trigger" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Zapper Trigger Off Screen" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "Zapper: Center Crosshair" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Fast-Forward" };
-	descriptors[count++] = (struct retro_input_descriptor) { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Zapper Fine Aim" };
-	descriptors[count] = (struct retro_input_descriptor) { 0, 0, 0, 0, NULL };
-	environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void*) descriptors);
+	giveDescriptors();
 
 	nesInit(&nes);
 	nes.audioOut = audio;
