@@ -411,9 +411,9 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, "video", { { "Grey", NULL }, { "Game Boy", NULL }, { "Game Boy Pocket", NULL }, { "Game Boy Light", NULL },
 		{ "Amber", NULL }, { NULL, NULL } }, "Grey" },
 	{ "armnes_sv_ghosting", "LCD Ghosting", NULL,
-		"The Supervision's slow LCD, which leaves trails behind moving things and blends flicker: how much "
-		"of the last picture stays in each new one.",
-		NULL, "video", { { "Off", NULL }, { "25%", NULL }, { "50%", NULL }, { "75%", NULL }, { NULL, NULL } }, "Off" },
+		"Changes fade in over a few frames, as on the Supervision's slow LCD. Flickering sprites need it.",
+		NULL, "video", { { "disabled", "Off" }, { "25", "25%" }, { "half", "50%" }, { "75", "75%" }, { "enabled", "100%" },
+		{ NULL, NULL } }, "disabled" },
 	{ "armnes_filter", "NTSC/PAL Filter", NULL,
 		"The picture as a TV decoded it: Composite, with its color fringes and blended dithering, or the "
 		"sharper S-Video. It makes its own colors. Takes more CPU time. Not used on arcade boards, whose "
@@ -1788,12 +1788,40 @@ static void readFastForward(void) {
 }
 
 // The Supervision's picture in a palette's four shades, which LCD Ghosting fades between: levels 0-192
-// (a shade every 64), each frame keeping a quarter, half or three quarters of the last.
+// (a shade every 64). As armGBA has it, each pixel moves in linear light towards the new picture by a
+// share each frame, set by the LCD's time constants to darken and to lighten (the first Game Boy's
+// STN estimates, 50 and 110 ms; the Supervision's own aren't measured); 25%, 50% and 75% take that
+// share of them. Its next level is read from a table, for each level now and shade wanted.
 enum { SV_LEVELS = 3 * 64 + 1 };
 static uint16_t svColors[SV_LEVELS];
-static uint8_t svLevel[SV_WIDTH * SV_HEIGHT];
-static int svGhostKept, svPaletteShown = -1;
+static uint8_t svLevel[SV_WIDTH * SV_HEIGHT], svNext[SV_LEVELS][4];
+static int svGhosting, svPaletteShown = -1;
 static bool svLevelsSet;
+
+static void buildSupervisionFade(int strength) {
+	// Each level's light, from MAME's greys
+	static const int greys[4] = { 0xE0, 0xB9, 0x54, 0x12 };
+	float linear[SV_LEVELS];
+	for (int level = 0; level < SV_LEVELS; level++) {
+		int const shade = level >> 6 < 3 ? level >> 6 : 2, within = level - shade * 64;
+		float const grey = (greys[shade] * (64 - within) + greys[shade + 1] * within) / 64.0f;
+		linear[level] = powf(grey / 255.0f, 2.2f);
+	}
+	float const frame = 1000.0f / SV_FPS;
+	float const darken = 1 - expf(-frame * 4 / strength / 50), lighten = 1 - expf(-frame * 4 / strength / 110);
+	for (int now = 0; now < SV_LEVELS; now++) {
+		for (int shade = 0; shade < 4; shade++) {
+			int const wanted = shade * 64, way = wanted > now ? 1 : -1;
+			float const moved = linear[now] + (linear[wanted] - linear[now]) * (wanted > now ? darken : lighten);
+			// The level nearest that light, at least one step on
+			int next = now;
+			while (next != wanted && fabsf(linear[next + way] - moved) <= fabsf(linear[next] - moved)) {
+				next += way;
+			}
+			svNext[now][shade] = (uint8_t) (next == now && now != wanted ? now + way : next);
+		}
+	}
+}
 
 static void readSupervisionOptions(void) {
 	// Lightest to darkest, as 0xRRGGBB; the first is MAME's greys
@@ -1807,8 +1835,7 @@ static void readSupervisionOptions(void) {
 	static const struct OptionChoice paletteNames[] = {
 		{ "Grey", 0 }, { "Game Boy", 1 }, { "Game Boy Pocket", 2 }, { "Game Boy Light", 3 }, { "Amber", 4 },
 	};
-	// In quarters of the last picture kept
-	static const struct OptionChoice ghosting[] = { { "Off", 0 }, { "25%", 1 }, { "50%", 2 }, { "75%", 3 } };
+	static const struct OptionChoice ghosting[] = { { "25", 1 }, { "half", 2 }, { "75", 3 }, { "enabled", 4 } };
 	int const which = optionChoice(environ_cb, "armnes_sv_palette", paletteNames, 5, 0);
 	if (which != svPaletteShown) {
 		svPaletteShown = which;
@@ -1823,10 +1850,13 @@ static void readSupervisionOptions(void) {
 			svColors[level] = (uint16_t) ((rgb[0] >> 3) << 11 | (rgb[1] >> 2) << 5 | rgb[2] >> 3);
 		}
 	}
-	int const kept = optionChoice(environ_cb, "armnes_sv_ghosting", ghosting, 4, 0);
-	if (kept != svGhostKept) {
-		svGhostKept = kept;
+	int const strength = optionChoice(environ_cb, "armnes_sv_ghosting", ghosting, 4, 0);
+	if (strength != svGhosting) {
+		svGhosting = strength;
 		svLevelsSet = false;
+		if (strength) {
+			buildSupervisionFade(strength);
+		}
 	}
 }
 
@@ -1857,19 +1887,15 @@ static void runSupervision(void) {
 		video_cb(NULL, SV_WIDTH, SV_HEIGHT, SV_WIDTH * sizeof(uint16_t));
 		return;
 	}
-	if (!svGhostKept || !svLevelsSet) {
+	if (!svGhosting || !svLevelsSet) {
 		for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
 			svLevel[i] = (uint8_t) (supervision.picture[i] * 64);
 			video[i] = svColors[svLevel[i]];
 		}
-		svLevelsSet = svGhostKept != 0;
+		svLevelsSet = svGhosting != 0;
 	} else {
-		int const moved = 4 - svGhostKept;
 		for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
-			int const level = svLevel[i], diff = supervision.picture[i] * 64 - level;
-			// Rounded away from the old level, so it gets there
-			int const step = diff >= 0 ? (diff * moved + 3) / 4 : -((-diff * moved + 3) / 4);
-			svLevel[i] = (uint8_t) (level + step);
+			svLevel[i] = svNext[svLevel[i]][supervision.picture[i]];
 			video[i] = svColors[svLevel[i]];
 		}
 	}
