@@ -65,8 +65,8 @@ desktops.
   noise, sample DMA, video DMA and timer, ported from MAME's driver, and cartridges up to 512 KB. A
   multicart without a menu (a game in every 64 KB) starts on the Multicart Game chosen, and Reset moves
   to the next. Its shades come in its own greys, a Game Boy's colors or amber, with optional LCD
-  ghosting. Turbo A and B, Left Stick as D-Pad, save states, run-ahead and netplay work as for the
-  NES; the NES options are hidden while one runs.
+  ghosting. Achievements see its RAM, registers and video RAM. Turbo A and B, Left Stick as D-Pad,
+  save states, run-ahead and netplay work as for the NES; the NES options are hidden while one runs.
 
 ## Controls
 

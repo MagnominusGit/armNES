@@ -1895,6 +1895,18 @@ static void svShowGame(void) {
 	}
 }
 
+// The Supervision's memory for achievements, where rcheevos has it: RAM, registers and video RAM
+static void setSupervisionMemoryMaps(void) {
+	static struct retro_memory_descriptor descriptors[3];
+	static struct retro_memory_map map = { descriptors, 3 };
+	descriptors[0] = (struct retro_memory_descriptor) { RETRO_MEMDESC_SYSTEM_RAM, supervision.m.ram, 0, 0x0000, 0, 0, 0x2000, NULL };
+	descriptors[1] = (struct retro_memory_descriptor) { 0, supervision.m.reg, 0, 0x2000, 0, 0, 0x2000, NULL };
+	descriptors[2] = (struct retro_memory_descriptor) { RETRO_MEMDESC_VIDEO_RAM, supervision.m.vram, 0, 0x4000, 0, 0, 0x2000, NULL };
+	environ_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &map);
+	bool achievements = true;
+	environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+}
+
 // The Multicart Game option's values: the cartridge's games
 static void svListGames(void) {
 	for (struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
@@ -3168,6 +3180,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		if (supervision.games > 1) {
 			svListGames();
 		}
+		setSupervisionMemoryMaps();
 		readInputOptions();
 		readSupervisionOptions();
 		showOptions();
@@ -3432,7 +3445,7 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 
 void* retro_get_memory_data(unsigned id) {
 	if (svLoaded) {
-		return id == RETRO_MEMORY_SYSTEM_RAM ? supervision.m.ram : NULL;
+		return id == RETRO_MEMORY_SYSTEM_RAM ? supervision.m.ram : id == RETRO_MEMORY_VIDEO_RAM ? supervision.m.vram : NULL;
 	}
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
@@ -3457,7 +3470,7 @@ void* retro_get_memory_data(unsigned id) {
 
 size_t retro_get_memory_size(unsigned id) {
 	if (svLoaded) {
-		return id == RETRO_MEMORY_SYSTEM_RAM ? sizeof(supervision.m.ram) : 0;
+		return id == RETRO_MEMORY_SYSTEM_RAM ? sizeof(supervision.m.ram) : id == RETRO_MEMORY_VIDEO_RAM ? sizeof(supervision.m.vram) : 0;
 	}
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
