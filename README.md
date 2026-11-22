@@ -70,11 +70,11 @@ desktops.
   run-ahead and netplay work as for the NES; the NES options are hidden while one runs.
 - Gamate games (`.bin`), with its BIOS in the system folder: MAME's `gamate_bios_umc.bin` or
   `gamate_bios_bit.bin` (loose or in `gamate.zip`), or No-Intro's `[BIOS] Gamate (World).bin` or its
-  Rev 1 (loose or zipped). Its 65C02, 160x150 four-shade LCD with its scrolling and window, the
-  AY-3-8910's three channels, noise and envelope in stereo, the timer, and plain, banked and 4 in 1
-  cartridges with their protection check, ported from MAME's driver. LCD Palette, LCD Ghosting and
-  Channel Selection work as for the Supervision, and save states, run-ahead and netplay as for the
-  NES.
+  Rev 1 (loose or zipped). Its 65C02, 160x150 four-shade LCD with its scrolling and window (each bit
+  plane read as the LCD takes it), the AY-3-8910's three channels, noise and 16-step envelope in
+  stereo, the timer, and plain, banked and 4 in 1 cartridges with their protection check, ported from
+  MAME's driver and Kevin Horton's notes. LCD Palette, LCD Ghosting and Channel Selection work as for
+  the Supervision, and save states, run-ahead and netplay as for the NES.
 
 ## Controls
 
@@ -387,7 +387,7 @@ Code taken from other projects, each under its own license (see License):
 - **MAME's Gamate driver** (Peter Trauner, GPL-2.0-or-later) and its video, cartridge and protection
   devices (David Haywood, Peter Wilhelmsen, Kevin Horton; BSD-3-Clause): the Gamate's memory map,
   timer, screen, banking and protection, in `src/gamate/gamate.c`. Its sound is armNES's AY-3-8910
-  (the Sunsoft 5B's).
+  (the Sunsoft 5B's), with the AY's own levels and 16-step envelope.
 - **RetroArch** (MIT, public domain): libretro-common and the LZMA SDK in `libretro/deps/`, and
   rcheevos in Armulators' `deps/`.
 - **stb_truetype** (Sean Barrett, public domain or MIT): the app's text, in Armulators' `app/`.
@@ -397,7 +397,8 @@ Code taken from other projects, each under its own license (see License):
 Read for how the hardware behaves, without code taken: **Mesen** (the VS. System boards and their
 protection, DualSystem wiring, and several unlicensed boards), the **NESdev Wiki**, and **Nestopia**;
 for the Supervision, Kevin Horton's reverse engineering notes (the video DMA) and the **MiSTer
-SuperVision core** (how cartridges over 128 KB bank).
+SuperVision core** (how cartridges over 128 KB bank); for the Gamate, Kevin Horton's "Gamate Inside"
+(open bus, the timer's acknowledge, the LCD's passes, and the AY's envelope).
 
 Test ROMs: AccuracyCoin, blargg's NES tests and the nes-test-roms collection; for the Supervision's
 65C02, Klaus Dormann's 6502 functional and 65C02 extended opcodes tests, which it passes.

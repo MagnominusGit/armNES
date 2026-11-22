@@ -16,8 +16,9 @@
 // (David Haywood, Peter Wilhelmsen, Kevin Horton; BSD-3-Clause).
 
 enum { GM_WIDTH = 160, GM_HEIGHT = 150, GM_CLOCK = 2216500, GM_BIOS_SIZE = 0x1000 };
-// A frame is 72900 of the 4.433 MHz clock: 36450 CPU cycles, 243 a line (60.8093 Hz)
-enum { GM_FRAME_CYCLES = 36450, GM_LINE_CYCLES = 243 };
+// A frame is 72900 of the 4.433 MHz clock: 36450 CPU cycles, 243 a line (60.8093 Hz), each line sent
+// to the LCD in three passes of 81
+enum { GM_FRAME_CYCLES = 36450, GM_LINE_CYCLES = 243, GM_PASS_CYCLES = 81, GM_PASSES = 3 * 150 };
 #define GM_FPS (4433000.0 / 72900.0)
 // The sound comes out at the CPU clock / 64.
 #define GM_SOUND_RATE (GM_CLOCK / 64.0)
@@ -40,13 +41,13 @@ struct GmMachine {
 	uint8_t vram[0x4000];
 	uint16_t vramAddress;
 	uint8_t plane, scrollX, scrollY, lcd, buttons;
-	// The cartridge: its bank at $A000 (and a 4 in 1's at $6000), the card flag, and the protection's
+	// The cartridge: its bank at $A000 (and a 4 in 1's at $6000), and the protection's
 	// serial exchange (each byte of "BIT CORPORATION" in, then one out).
-	uint8_t bank, multibank, cardAvailable;
+	uint8_t bank, multibank;
 	uint8_t protectionPassed, protectionFailed, protectionReady, protectionBit, protectionByte, protectionCount;
 	struct Sunsoft5b ay;
-	// Cycles run in the frame, to the next timer IRQ, and to the IRQ line dropping; the line drawn next.
-	int32_t frameCycles, irqLeft, irqHeld, line;
+	// Cycles run in the frame and to the next timer IRQ (and whether it's waiting); the LCD's pass next.
+	int32_t frameCycles, irqLeft, irqPending, line;
 	// The sound: cycles towards the next tick and sample, and the ticks being summed.
 	int32_t soundCycles, sumLeft, sumRight, summed;
 };

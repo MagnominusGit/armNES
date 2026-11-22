@@ -16,8 +16,11 @@
 enum { PLAIN, BANKED, FOUR_IN_1 };
 // The LCD control register's bits: blank, add 32 to the address, the window, swapped planes
 enum { LCD_BLANK = 0x80, LCD_DOWN = 0x40, LCD_WINDOW = 0x20, LCD_SWAP = 0x10 };
-// The timer's IRQ: every 16384 cycles, held for 10
-enum { IRQ_PERIOD = 16384, IRQ_HOLD = 10 };
+// The timer's IRQ: 16384 cycles after the last was taken (the vector fetch acknowledges it)
+enum { IRQ_PERIOD = 16384 };
+
+// The AY-3-8910's volume levels, its log DAC as Ayumi measures it, scaled as the 5B's loudest
+static const uint16_t ayLevel[16] = { 0, 147, 213, 310, 453, 672, 951, 1583, 1866, 3022, 4308, 5497, 7261, 9367, 11877, 14743 };
 
 static const uint8_t protectionString[15] = { 'B', 'I', 'T', ' ', 'C', 'O', 'R', 'P', 'O', 'R', 'A', 'T', 'I', 'O', 'N' };
 
@@ -97,13 +100,20 @@ static uint8_t gmBusRead(void* context, uint16_t a) {
 		return M.ram[a & 0x3ff];
 	}
 	if (a >= 0xe000) {
+		// The IRQ's (or reset's) vector fetch acknowledges the timer and restarts it
+		if (a == 0xfffe || a == 0xfffc) {
+			M.irqPending = 0;
+			M.irqLeft = IRQ_PERIOD;
+			gm->cpu.irq = false;
+		}
 		return gm->bios[a & 0xfff];
 	}
 	if (a >= 0x6000) {
 		return cartRead(gm, (uint16_t) (a - 0x6000));
 	}
+	// As Kevin Horton found: what isn't there reads as the address's upper byte (open bus)
+	uint8_t const open = (uint8_t) (a >> 8);
 	switch (a & 0xfc00) {
-	case 0x4000: return M.ay.regs[a & 15];
 	case 0x4400: return (uint8_t) ~M.buttons;
 	case 0x5000:
 		if ((a & 7) == 6) {
@@ -111,16 +121,14 @@ static uint8_t gmBusRead(void* context, uint16_t a) {
 			stepVramAddress(gm);
 			return data;
 		}
-		return 0;
+		return open;
+	case 0x5400: return 0xff;
 	}
-	if (a == 0x5800) {
-		M.cardAvailable = 1;
-		return 0;
+	// $5A00-$5AFF: bits 1-0 always set
+	if ((a & 0xff00) == 0x5a00) {
+		return (uint8_t) (open | 3);
 	}
-	if (a == 0x5a00) {
-		return M.cardAvailable ? 3 : 1;
-	}
-	return 0;
+	return open;
 }
 
 static void gmBusWrite(void* context, uint16_t a, uint8_t data) {
@@ -157,10 +165,13 @@ static void gmBusWrite(void* context, uint16_t a, uint8_t data) {
 	}
 }
 
-// One line of the screen, with the scroll and window as they are now. Below Y scroll $C8 the picture
-// wraps at row $C8, and the window puts rows $D0-$DF, unscrolled, at the top 16 lines; at $C8 and above
-// (no game known to use it) the top 1-8 lines come from rows $F8-$FF, or it's as Y scroll 0.
-static void drawLine(struct Gamate* gm, int line) {
+// One bit plane of a line, with the scroll, window and VRAM as they are now. Each line goes to the LCD
+// three times in a row, 81 cycles each, as Kevin Horton found: bit plane 0 once, then plane 1 twice
+// (so a pixel lit by both is refreshed three times, its darkest), each read as it's sent. Below Y
+// scroll $C8 the picture wraps at row $C8, and the window puts rows $D0-$DF, unscrolled, at the top 16
+// lines; at $C8 and above (no game known to use it) the top 1-8 lines come from rows $F8-$FF, or it's
+// as Y scroll 0.
+static void drawPlane(struct Gamate* gm, int line, int plane) {
 	int x = M.scrollX, y;
 	if (M.scrollY < 0xc8) {
 		y = line + M.scrollY;
@@ -181,26 +192,54 @@ static void drawLine(struct Gamate* gm, int line) {
 		}
 	}
 	uint8_t* out = gm->picture + line * GM_WIDTH;
+	uint8_t const keep = (uint8_t) ~(1 << plane);
 	if (M.lcd & LCD_BLANK) {
-		memset(out, 0, GM_WIDTH);
+		for (int i = 0; i < GM_WIDTH; i++) {
+			out[i] &= keep;
+		}
 		return;
 	}
-	const uint8_t* row = M.vram + (((y & 0xff) * 0x20) << 1);
-	bool const swap = M.lcd & LCD_SWAP;
+	// Swapped planes send VRAM's other plane in each pass
+	const uint8_t* row = M.vram + (((y & 0xff) * 0x20) << 1) + (plane ^ ((M.lcd & LCD_SWAP) != 0));
 	for (int i = 0; i < GM_WIDTH; i++) {
 		int const px = (x + i) & 0xff;
-		const uint8_t* pair = row + ((px >> 3) << 1);
-		int const shift = 7 - (px & 7);
-		int const p0 = pair[0] >> shift & 1, p1 = pair[1] >> shift & 1;
-		out[i] = (uint8_t) (swap ? p1 | p0 << 1 : p0 | p1 << 1);
+		int const bit = row[(px >> 3) << 1] >> (7 - (px & 7)) & 1;
+		out[i] = (uint8_t) ((out[i] & keep) | bit << plane);
+	}
+}
+
+// A pass of the LCD's 450 a frame ended: the first of each line's three has read plane 0, the second
+// plane 1
+static void passEnded(struct Gamate* gm, int pass) {
+	int const line = pass / 3, step = pass % 3;
+	if (step < 2) {
+		drawPlane(gm, line, step);
 	}
 }
 
 // One AY tick (16 cycles): its channels' levels into the sums, A to the left, B to the right and C to
 // both at half, as MAME routes them.
+static void ayLevels(const struct Sunsoft5b* a, int out[3]) {
+	// The envelope's 16 levels: the 5B's 32 steps (at twice the rate) halved, as the AY has them
+	uint8_t const shape = a->regs[13];
+	bool const attack = shape & 4;
+	int level;
+	if (a->envelopeHolding) {
+		level = (shape & 8) && (attack ^ ((shape & 2) != 0)) ? 15 : 0;
+	} else {
+		level = ((attack ^ a->envelopeFlip) ? a->envelopeStep : 31 - a->envelopeStep) >> 1;
+	}
+	for (int i = 0; i < 3; i++) {
+		bool const toneOff = a->regs[7] & (1 << i), noiseOff = a->regs[7] & (8 << i);
+		bool const on = (toneOff || a->toneOut[i]) && (noiseOff || (a->noiseShift & 1));
+		uint8_t const volume = a->regs[8 + i];
+		out[i] = on ? ayLevel[(volume & 0x10) ? level : volume & 15] : 0;
+	}
+}
+
 static void soundTick(struct Gamate* gm) {
 	int levels[3];
-	sunsoft5bLevels(&M.ay, levels);
+	ayLevels(&M.ay, levels);
 	for (int i = 0; i < 3; i++) {
 		levels[i] = gm->muted & (1 << i) ? 0 : levels[i];
 	}
@@ -291,23 +330,23 @@ void gmReset(struct Gamate* gm) {
 	machineFromCpu(gm);
 }
 
-void gmRunFrame(struct Gamate* gm, uint8_t buttons) {
+static void frameStart(struct Gamate* gm, uint8_t buttons) {
 	cpuFromMachine(gm);
 	M.buttons = buttons;
 	gm->soundFrames = 0;
 	M.line = 0;
-	while (M.frameCycles < GM_FRAME_CYCLES) {
+}
+
+// One instruction, and what runs beside it
+static void step(struct Gamate* gm) {
+	{
 		int const cycles = w65c02Step(&gm->cpu);
 		M.frameCycles += cycles;
-		while (M.line < GM_HEIGHT && M.frameCycles >= (M.line + 1) * GM_LINE_CYCLES) {
-			drawLine(gm, M.line++);
+		while (M.line < GM_PASSES && M.frameCycles >= (M.line + 1) * GM_PASS_CYCLES) {
+			passEnded(gm, M.line++);
 		}
-		if (M.irqHeld > 0 && (M.irqHeld -= cycles) <= 0) {
-			gm->cpu.irq = false;
-		}
-		if ((M.irqLeft -= cycles) <= 0) {
-			M.irqLeft += IRQ_PERIOD;
-			M.irqHeld = IRQ_HOLD;
+		if (!M.irqPending && (M.irqLeft -= cycles) <= 0) {
+			M.irqPending = 1;
 			gm->cpu.irq = true;
 		}
 		for (int i = 0; i < cycles; i++) {
@@ -319,11 +358,27 @@ void gmRunFrame(struct Gamate* gm, uint8_t buttons) {
 			soundTick(gm);
 		}
 	}
-	while (M.line < GM_HEIGHT) {
-		drawLine(gm, M.line++);
+}
+
+// Runs to the given cycle of the frame
+static void runTo(struct Gamate* gm, int32_t until) {
+	while (M.frameCycles < until) {
+		step(gm);
+	}
+}
+
+static void frameEnd(struct Gamate* gm) {
+	while (M.line < GM_PASSES) {
+		passEnded(gm, M.line++);
 	}
 	M.frameCycles -= GM_FRAME_CYCLES;
 	machineFromCpu(gm);
+}
+
+void gmRunFrame(struct Gamate* gm, uint8_t buttons) {
+	frameStart(gm, buttons);
+	runTo(gm, GM_FRAME_CYCLES);
+	frameEnd(gm);
 }
 
 size_t gmStateSize(void) {
