@@ -374,7 +374,9 @@ the last frame; `coretest <core> <rom>` drives any libretro core and checks its 
 - Supervision: how a multicart without a menu picks its game on the hardware isn't known, so the
   Multicart Game option and Reset pick it. There's no link cable.
 - Gamate: in Link Mode Separate each byte crosses the network a frame or more late, so the two-player
-  games slow down on a slow connection; Together has no such delay.
+  games slow down on a slow connection; Together has no such delay. Tennis's start of a two-player
+  game gives the other Gamate about 3.6 frames to answer, so in Separate it needs a fast connection
+  (on a slow one it starts a one-player game instead; restart and try again).
 
 ## Credits
 

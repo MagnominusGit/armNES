@@ -2096,10 +2096,10 @@ static bool gmPartnered;
 static uint16_t gmPartner;
 enum { GM_PACKET_BYTE = 1 };
 
-static void gamateNetSend(void* context, uint8_t byte, int32_t cycle) {
+static void gamateNetSend(void* context, uint8_t byte, uint32_t sent) {
 	(void) context;
 	if (gmSend && gmPartnered) {
-		uint8_t const packet[5] = { GM_PACKET_BYTE, byte, (uint8_t) cycle, (uint8_t) (cycle >> 8), (uint8_t) (cycle >> 16) };
+		uint8_t const packet[6] = { GM_PACKET_BYTE, byte, (uint8_t) sent, (uint8_t) (sent >> 8), (uint8_t) (sent >> 16), (uint8_t) (sent >> 24) };
 		gmSend(RETRO_NETPACKET_RELIABLE | RETRO_NETPACKET_FLUSH_HINT, packet, sizeof(packet), gmPartner);
 	}
 }
@@ -2118,16 +2118,17 @@ static void RETRO_CALLCONV gamateNetStart(uint16_t self, retro_netpacket_send_t 
 	gmPartnered = self != 0;
 	gmPartner = 0;
 	gamate.incomingCount = 0;
+	gamate.haveLast = false;
 	struct retro_message message = { self ? "Gamate link cable: joined to the host's Gamate" : "Gamate link cable: waiting for a player to join", 240 };
 	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 }
 
 static void RETRO_CALLCONV gamateNetReceive(const void* data, size_t size, uint16_t from) {
 	const uint8_t* packet = data;
-	if (!gmPartnered || from != gmPartner || size < 5 || packet[0] != GM_PACKET_BYTE) {
+	if (!gmPartnered || from != gmPartner || size < 6 || packet[0] != GM_PACKET_BYTE) {
 		return;
 	}
-	gmLinkReceive(&gamate, packet[1], (int32_t) (packet[2] | packet[3] << 8 | packet[4] << 16));
+	gmLinkReceive(&gamate, packet[1], (uint32_t) packet[2] | (uint32_t) packet[3] << 8 | (uint32_t) packet[4] << 16 | (uint32_t) packet[5] << 24);
 }
 
 static void RETRO_CALLCONV gamateNetStop(void) {
@@ -2161,7 +2162,7 @@ static void RETRO_CALLCONV gamateNetDisconnected(uint16_t player) {
 static void gamateNetplay(bool separate) {
 	static const struct retro_netpacket_callback callbacks = {
 		gamateNetStart, gamateNetReceive, gamateNetStop, NULL, gamateNetConnected, gamateNetDisconnected,
-		"armNES Gamate link 1",
+		"armNES Gamate link 2",
 	};
 	gmSeparate = separate;
 	gamate.send = separate ? gamateNetSend : NULL;
@@ -3495,6 +3496,9 @@ bool retro_load_game(const struct retro_game_info* game) {
 			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 			return false;
 		}
+		// The second Gamate switched on 65536 cycles (1.8 frames) after the first: half the BIOS's
+		// 8-tick wait, which Tennis's link handshake has to fall within either way
+		gamateTwo.switchedOnLater = 65536;
 		bool const ok = unpack(game, &data, &size) && gmLoad(&gamate, bios, data, size) && gmLoad(&gamateTwo, bios, data, size);
 		free(bios);
 		if (!ok) {

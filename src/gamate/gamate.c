@@ -104,7 +104,7 @@ static void linkClock(struct Gamate* gm) {
 	if (++M.outBits == 8) {
 		M.outBits = 0;
 		if (gm->send) {
-			gm->send(gm->sendContext, M.outShift, M.frameCycles);
+			gm->send(gm->sendContext, M.outShift, gm->frames * GM_FRAME_CYCLES + (uint32_t) M.frameCycles);
 		}
 	}
 	struct Gamate* other = gm->link;
@@ -357,6 +357,7 @@ void gmReset(struct Gamate* gm) {
 	M.scrollY = 10;
 	M.ay.noiseShift = 1;
 	M.irqLeft = 1000;
+	M.held = gm->switchedOnLater;
 	cpuFromMachine(gm);
 	w65c02Reset(&gm->cpu);
 	machineFromCpu(gm);
@@ -371,13 +372,30 @@ static void frameStart(struct Gamate* gm, uint8_t buttons) {
 
 // One instruction, and what runs beside it: first a byte from the network that's due
 static void step(struct Gamate* gm) {
-	if (gm->incomingCount && gm->incoming[0].due <= M.frameCycles) {
+	if (gm->incomingCount && (int32_t) (gm->incoming[0].due - (gm->frames * GM_FRAME_CYCLES + (uint32_t) M.frameCycles)) <= 0) {
 		M.rxData = gm->incoming[0].byte;
 		gm->cpu.nmi = true;
 		memmove(gm->incoming, gm->incoming + 1, --gm->incomingCount * sizeof(gm->incoming[0]));
 	}
 	{
-		int const cycles = w65c02Step(&gm->cpu);
+		// Held as if not yet switched on: the CPU and its timer wait, the LCD and sound run on
+		int const cycles = M.held > 0 ? (M.held < 64 ? M.held : 64) : w65c02Step(&gm->cpu);
+		if (M.held > 0) {
+			M.held -= cycles;
+			M.frameCycles += cycles;
+			while (M.line < GM_PASSES && M.frameCycles >= (M.line + 1) * GM_PASS_CYCLES) {
+				passEnded(gm, M.line++);
+			}
+			for (int i = 0; i < cycles; i++) {
+				sunsoft5bCycle(&M.ay);
+			}
+			M.soundCycles += cycles;
+			while (M.soundCycles >= 16) {
+				M.soundCycles -= 16;
+				soundTick(gm);
+			}
+			return;
+		}
 		M.frameCycles += cycles;
 		while (M.line < GM_PASSES && M.frameCycles >= (M.line + 1) * GM_PASS_CYCLES) {
 			passEnded(gm, M.line++);
@@ -413,9 +431,7 @@ static void frameEnd(struct Gamate* gm) {
 		passEnded(gm, M.line++);
 	}
 	M.frameCycles -= GM_FRAME_CYCLES;
-	for (int i = 0; i < gm->incomingCount; i++) {
-		gm->incoming[i].due = gm->incoming[i].due > GM_FRAME_CYCLES ? gm->incoming[i].due - GM_FRAME_CYCLES : 0;
-	}
+	gm->frames++;
 	machineFromCpu(gm);
 }
 
@@ -449,15 +465,20 @@ void gmRunLinked(struct Gamate* first, struct Gamate* second, uint8_t buttonsFir
 	first->link = second->link = NULL;
 }
 
-void gmLinkReceive(struct Gamate* gm, uint8_t byte, int32_t cycle) {
+void gmLinkReceive(struct Gamate* gm, uint8_t byte, uint32_t sent) {
 	if (gm->incomingCount == GM_INCOMING) {
 		return;
 	}
-	// At the sender's point in a frame, not before one now under way or the byte before
-	int32_t due = cycle > M.frameCycles ? cycle : M.frameCycles;
-	if (gm->incomingCount && due <= gm->incoming[gm->incomingCount - 1].due) {
-		due = gm->incoming[gm->incomingCount - 1].due + 1;
+	// At once; but a byte that followed the last within a frame keeps the time it followed it by
+	uint32_t const now = gm->frames * GM_FRAME_CYCLES + (uint32_t) M.frameCycles;
+	uint32_t due = now;
+	uint32_t const gap = sent - gm->lastSent;
+	if (gm->haveLast && gap <= GM_FRAME_CYCLES && (int32_t) (gm->lastDue + gap - now) > 0) {
+		due = gm->lastDue + gap;
 	}
+	gm->haveLast = true;
+	gm->lastSent = sent;
+	gm->lastDue = due;
 	gm->incoming[gm->incomingCount].byte = byte;
 	gm->incoming[gm->incomingCount++].due = due;
 }
