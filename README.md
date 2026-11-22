@@ -62,7 +62,7 @@ desktops.
     on (NESdev, Game Genie).
 - Games inside `.zip` and `.7z` archives. RetroArch unpacks them, so achievements recognize the game.
 - Watara Supervision games (`.sv`, or `.ws`): its 65C02, 160x160 four-shade LCD, two square channels,
-  noise, sample DMA and timer, ported from MAME's driver, and cartridges up to 512 KB. A
+  noise, sample DMA, video DMA and timer, ported from MAME's driver, and cartridges up to 512 KB. A
   multicart without a menu (a game in every 64 KB) plays its next game on each Reset. Turbo A and B,
   Left Stick as D-Pad, save states, run-ahead and netplay work as for the NES; the NES options are
   hidden while one runs.
@@ -358,8 +358,7 @@ the last frame; `coretest <core> <rom>` drives any libretro core and checks its 
 - Overclock gives games extra CPU time each frame; a few games misbehave with it.
 - The app's netplay connects only to another armnes, not to RetroArch.
 - Supervision: how a multicart without a menu picks its game on the hardware isn't known, so Reset
-  steps through them. One aftermarket game stops early, its music driver's NMI overwriting a copy
-  routine's pointer. There's no LCD ghosting and no link cable.
+  steps through them. There's no LCD ghosting and no link cable.
 
 ## Credits
 
@@ -383,7 +382,8 @@ Code taken from other projects, each under its own license (see License):
 
 Read for how the hardware behaves, without code taken: **Mesen** (the VS. System boards and their
 protection, DualSystem wiring, and several unlicensed boards), the **NESdev Wiki**, and **Nestopia**;
-for the Supervision, the **MiSTer SuperVision core** (how cartridges over 128 KB bank).
+for the Supervision, Kevin Horton's reverse engineering notes (the video DMA) and the **MiSTer
+SuperVision core** (how cartridges over 128 KB bank).
 
 Test ROMs: AccuracyCoin, blargg's NES tests and the nes-test-roms collection; for the Supervision's
 65C02, Klaus Dormann's 6502 functional and 65C02 extended opcodes tests, which it passes.

@@ -52,6 +52,8 @@ struct SvMachine {
 	int32_t timerLeft;
 	// Cycles run in the frame, and towards the next sound tick; the frames' leftover clocks (of 61ths).
 	int32_t frameCycles, soundCycles, frameRemainder;
+	// Clocks the CPU is held for (by the video DMA).
+	int32_t stall;
 	struct SvSquare square[2];
 	struct SvNoise noise;
 	struct SvDma dma;

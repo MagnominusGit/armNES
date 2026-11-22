@@ -149,6 +149,26 @@ static void noiseWrite(struct Supervision* sv, int offset, uint8_t data) {
 	n->timer = 0;
 }
 
+// The video DMA: length * 16 bytes (0 for 4096) from the RAM or cartridge into the video RAM, 5
+// bytes every 6 clocks with the CPU held. The addresses and length are left where it stopped.
+static void videoDma(struct Supervision* sv) {
+	uint16_t from = (uint16_t) (M.reg[0x08] | M.reg[0x09] << 8);
+	uint16_t to = (uint16_t) (M.reg[0x0a] | M.reg[0x0b] << 8);
+	uint32_t length = (M.reg[0x0c] ? M.reg[0x0c] : 0x100) * 16u;
+	for (uint32_t i = 0; i < length; i++, from++, to++) {
+		// Only video RAM takes it; elsewhere the hardware just goes wrong.
+		if ((to >> 13) == 2) {
+			M.vram[to & 0x1fff] = peek(sv, from);
+		}
+	}
+	M.reg[0x08] = (uint8_t) from;
+	M.reg[0x09] = (uint8_t) (from >> 8);
+	M.reg[0x0a] = (uint8_t) to;
+	M.reg[0x0b] = (uint8_t) (to >> 8);
+	M.reg[0x0c] = 0;
+	M.stall += (int32_t) (length * 6 / 5);
+}
+
 static void writeReg(struct Supervision* sv, uint16_t offset, uint8_t data) {
 	M.reg[offset] = data;
 	switch (offset) {
@@ -161,6 +181,11 @@ static void writeReg(struct Supervision* sv, uint16_t offset, uint8_t data) {
 		M.timerOn = 1;
 		break;
 	}
+	case 0x0d:
+		if (data & 0x80) {
+			videoDma(sv);
+		}
+		break;
 	case 0x10: case 0x11: case 0x12: case 0x13: squareWrite(sv, 0, offset & 3, data); break;
 	case 0x14: case 0x15: case 0x16: case 0x17: squareWrite(sv, 1, offset & 3, data); break;
 	case 0x18: case 0x19: case 0x1a: case 0x1b: case 0x1c: dmaWrite(sv, offset - 0x18, data); break;
@@ -378,7 +403,8 @@ void svRunFrame(struct Supervision* sv, uint8_t buttons) {
 		M.frameRemainder -= SV_FPS;
 	}
 	while (M.frameCycles < frame) {
-		int cycles = w65c02Step(&sv->cpu);
+		int cycles = w65c02Step(&sv->cpu) + M.stall;
+		M.stall = 0;
 		M.frameCycles += cycles;
 		if (M.timerOn) {
 			M.timerLeft -= cycles;
