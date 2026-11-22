@@ -99,6 +99,14 @@ static void stepVramAddress(struct Gamate* gm) {
 static void linkClock(struct Gamate* gm) {
 	int const bit = M.txData >> 7;
 	M.txData = (uint8_t) (M.txData << 1);
+	// Over the network: each 8 bits go out as a byte, with when in the frame it was sent
+	M.outShift = (uint8_t) (M.outShift << 1 | bit);
+	if (++M.outBits == 8) {
+		M.outBits = 0;
+		if (gm->send) {
+			gm->send(gm->sendContext, M.outShift, M.frameCycles);
+		}
+	}
 	struct Gamate* other = gm->link;
 	if (!other) {
 		return;
@@ -361,8 +369,13 @@ static void frameStart(struct Gamate* gm, uint8_t buttons) {
 	M.line = 0;
 }
 
-// One instruction, and what runs beside it
+// One instruction, and what runs beside it: first a byte from the network that's due
 static void step(struct Gamate* gm) {
+	if (gm->incomingCount && gm->incoming[0].due <= M.frameCycles) {
+		M.rxData = gm->incoming[0].byte;
+		gm->cpu.nmi = true;
+		memmove(gm->incoming, gm->incoming + 1, --gm->incomingCount * sizeof(gm->incoming[0]));
+	}
 	{
 		int const cycles = w65c02Step(&gm->cpu);
 		M.frameCycles += cycles;
@@ -396,6 +409,9 @@ static void frameEnd(struct Gamate* gm) {
 		passEnded(gm, M.line++);
 	}
 	M.frameCycles -= GM_FRAME_CYCLES;
+	for (int i = 0; i < gm->incomingCount; i++) {
+		gm->incoming[i].due = gm->incoming[i].due > GM_FRAME_CYCLES ? gm->incoming[i].due - GM_FRAME_CYCLES : 0;
+	}
 	machineFromCpu(gm);
 }
 
@@ -420,6 +436,19 @@ void gmRunLinked(struct Gamate* first, struct Gamate* second, uint8_t buttonsFir
 	frameEnd(first);
 	frameEnd(second);
 	first->link = second->link = NULL;
+}
+
+void gmLinkReceive(struct Gamate* gm, uint8_t byte, int32_t cycle) {
+	if (gm->incomingCount == GM_INCOMING) {
+		return;
+	}
+	// At the sender's point in a frame, not before one now under way or the byte before
+	int32_t due = cycle > M.frameCycles ? cycle : M.frameCycles;
+	if (gm->incomingCount && due <= gm->incoming[gm->incomingCount - 1].due) {
+		due = gm->incoming[gm->incomingCount - 1].due + 1;
+	}
+	gm->incoming[gm->incomingCount].byte = byte;
+	gm->incoming[gm->incomingCount++].due = due;
 }
 
 size_t gmStateSize(void) {

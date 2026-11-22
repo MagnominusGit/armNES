@@ -28,6 +28,9 @@ enum {
 	GM_UP = 1, GM_DOWN = 2, GM_LEFT = 4, GM_RIGHT = 8, GM_A = 16, GM_B = 32, GM_START = 64, GM_SELECT = 128,
 };
 
+// Bytes from the network waiting to arrive
+enum { GM_INCOMING = 64 };
+
 // The sound channels, to mute: the AY's three squares (noise mixes into them) as A, B and C.
 enum { GM_CHANNEL_A = 1, GM_CHANNEL_B = 2, GM_CHANNEL_C = 4 };
 
@@ -46,8 +49,9 @@ struct GmMachine {
 	uint8_t bank, multibank;
 	uint8_t protectionPassed, protectionFailed, protectionReady, protectionBit, protectionByte, protectionCount;
 	struct Sunsoft5b ay;
-	// The link port: the byte being sent, the bits coming in and how many, the last byte received.
-	uint8_t txData, rxShift, rxBits, rxData;
+	// The link port: the byte being sent, the bits coming in and how many, the last byte received, and
+	// the bits gone out (for the network) and how many.
+	uint8_t txData, rxShift, rxBits, rxData, outShift, outBits;
 	// Cycles run in the frame and to the next timer IRQ (and whether it's waiting); the LCD's pass next.
 	int32_t frameCycles, irqLeft, irqPending, line;
 	// The sound: cycles towards the next tick and sample, and the ticks being summed.
@@ -66,6 +70,15 @@ struct Gamate {
 	uint8_t muted;
 	// The Gamate at the other end of the link cable, or NULL.
 	struct Gamate* link;
+	// Or the network: each byte sent, with the cycle of the frame it went on; and the bytes come in,
+	// each due at its sender's cycle.
+	void (*send)(void* context, uint8_t byte, int32_t cycle);
+	void* sendContext;
+	struct {
+		uint8_t byte;
+		int32_t due;
+	} incoming[GM_INCOMING];
+	int incomingCount;
 	// The frame's picture (in the four shades, 0 lightest) and sound (stereo pairs).
 	uint8_t picture[GM_WIDTH * GM_HEIGHT];
 	int16_t sound[2 * 640];
@@ -78,6 +91,9 @@ void gmUnload(struct Gamate* gm);
 void gmReset(struct Gamate* gm);
 // One frame, with the buttons held through it.
 void gmRunFrame(struct Gamate* gm, uint8_t buttons);
+// A byte from the other Gamate over the network, sent at that cycle of its frame: it arrives at the
+// same point of this one's (or as soon as it can), with an NMI.
+void gmLinkReceive(struct Gamate* gm, uint8_t byte, int32_t cycle);
 // A frame of two Gamates joined by the link cable, run an instruction at a time each.
 void gmRunLinked(struct Gamate* first, struct Gamate* second, uint8_t buttonsFirst, uint8_t buttonsSecond);
 size_t gmStateSize(void);

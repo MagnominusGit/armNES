@@ -40,10 +40,11 @@ static bool loaded;
 // A Watara Supervision game (src/supervision), run in place of the NES while it's loaded.
 static struct Supervision supervision;
 static bool svLoaded;
-// A Bit Corporation Gamate game (src/gamate), likewise; with the link cable, a second Gamate with the
-// same game on controller 2, and which of them is shown (0 both, 1 or 2 one player's)
+// A Bit Corporation Gamate game (src/gamate), likewise. Link Mode Together: a second Gamate with the
+// same game on controller 2, and how they're shown (0 side by side, 1 top and bottom, 2 or 3 player 1's
+// or 2's). Separate: the other player's Gamate over netplay.
 static struct Gamate gamate, gamateTwo;
-static bool gmLoaded, gmLinked;
+static bool gmLoaded, gmLinked, gmSeparate;
 static int gmScreen;
 
 // Pro Action Replay (see the game on top, further down)
@@ -96,6 +97,7 @@ static void setMemoryMaps(void);
 static void svShowGame(void);
 static void handheldCheatsApply(void);
 static unsigned gamateWidth(void);
+static unsigned gamateHeight(void);
 
 // The Supervision's and Gamate's cheats: RAM bytes written before each frame
 enum { HANDHELD_CHEATS = 64 };
@@ -416,14 +418,16 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
 	{ "armnes_cart_code_5", "Cheat Code 5", NULL,
 		NULL, NULL, "system", { { "none", "None" }, { NULL, NULL } }, "none" },
-	{ "armnes_gm_link", "Gamate Link Cable", NULL,
-		"A second Gamate with the same game, on controller 2, joined by the link cable, for the games two "
-		"can play. Changing it restarts both.",
-		NULL, "system", { { "Off", NULL }, { "On", NULL }, { NULL, NULL } }, "Off" },
-	{ "armnes_gm_link_screen", "Link Screen", NULL,
-		"Which Gamate is shown and heard: both, side by side, or one player's (in netplay, each picks their "
-		"own).",
-		NULL, "system", { { "Both", NULL }, { "Player 1", NULL }, { "Player 2", NULL }, { NULL, NULL } }, "Both" },
+	{ "armnes_gm_link", "Link Mode", NULL,
+		"The Gamate's link cable, for its two-player games. Off: one Gamate. Together: both Gamates on every "
+		"device, the second on controller 2 (or the second player in netplay); changing it restarts them. "
+		"Separate: one Gamate per device, linked in netplay; applies when the game starts.",
+		NULL, "system", { { "off", "Off" }, { "together", "Together" }, { "separate", "Separate" }, { NULL, NULL } }, "off" },
+	{ "armnes_gm_link_screen", "Screen Layout", NULL,
+		"With Link Mode Together, how the two Gamates are shown (and heard): both, or one player's, as each "
+		"picks in netplay.",
+		NULL, "system", { { "side by side", "Side by Side" }, { "top and bottom", "Top and Bottom" },
+		{ "player 1", "Player 1 Only" }, { "player 2", "Player 2 Only" }, { NULL, NULL } }, "side by side" },
 	{ "armnes_sv_game", "Multicart Game", NULL,
 		"The game a Supervision multicart without a menu plays. Reset moves on to the next one. Changing it "
 		"restarts the console.",
@@ -1022,7 +1026,8 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 		return;
 	}
 	if (gmLoaded) {
-		info->geometry = (struct retro_game_geometry) { gamateWidth(), GM_HEIGHT, 2 * GM_WIDTH, GM_HEIGHT, (float) gamateWidth() / GM_HEIGHT };
+		info->geometry = (struct retro_game_geometry) { gamateWidth(), gamateHeight(), 2 * GM_WIDTH, 2 * GM_HEIGHT,
+			(float) gamateWidth() / gamateHeight() };
 		info->timing.fps = GM_FPS;
 		info->timing.sample_rate = GM_SOUND_RATE;
 		return;
@@ -2044,34 +2049,116 @@ static uint8_t gamateButtons(unsigned port) {
 	return buttons;
 }
 
-// The Gamate's frame picture's size: one screen, or two side by side
+// The Gamate's frame picture's size: one screen, or two side by side or top and bottom
 static unsigned gamateWidth(void) {
-	return gmLinked && !gmScreen ? 2 * GM_WIDTH : GM_WIDTH;
+	return gmLinked && gmScreen == 0 ? 2 * GM_WIDTH : GM_WIDTH;
 }
 
-// Link Cable and Link Screen: a change to the cable restarts both Gamates; the picture's shape follows
+static unsigned gamateHeight(void) {
+	return gmLinked && gmScreen == 1 ? 2 * GM_HEIGHT : GM_HEIGHT;
+}
+
+// Link Mode and Screen Layout: Together in or out restarts both Gamates; the picture's shape follows.
+// Separate is set when the game starts.
 static void readGamateLink(bool loading) {
-	bool const linked = optionIs(environ_cb, "armnes_gm_link", "On");
-	static const struct OptionChoice screens[] = { { "Both", 0 }, { "Player 1", 1 }, { "Player 2", 2 } };
-	int const screen = optionChoice(environ_cb, "armnes_gm_link_screen", screens, 3, 0);
-	unsigned const width = gamateWidth();
+	bool const linked = optionIs(environ_cb, "armnes_gm_link", "together");
+	static const struct OptionChoice screens[] = {
+		{ "side by side", 0 }, { "top and bottom", 1 }, { "player 1", 2 }, { "player 2", 3 },
+	};
+	int const screen = optionChoice(environ_cb, "armnes_gm_link_screen", screens, 4, 0);
+	unsigned const width = gamateWidth(), height = gamateHeight();
 	if (linked != gmLinked && !loading) {
 		gmReset(&gamate);
 		gmReset(&gamateTwo);
-		struct retro_message message = { linked ? "Gamate link cable in: both Gamates restart" : "Gamate link cable out: the Gamate restarts", 180 };
+		struct retro_message message = { linked ? "Link Mode Together: both Gamates restart" : "Link Mode Off: the Gamate restarts", 180 };
 		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 	}
 	bool const shown = linked != gmLinked;
 	gmLinked = linked;
 	gmScreen = screen;
-	svLevelsSet = svLevelsSet && gamateWidth() == width;
-	if (!loading && gamateWidth() != width) {
-		struct retro_game_geometry g = { gamateWidth(), GM_HEIGHT, 2 * GM_WIDTH, GM_HEIGHT, (float) gamateWidth() / GM_HEIGHT };
+	bool const reshaped = gamateWidth() != width || gamateHeight() != height;
+	svLevelsSet = svLevelsSet && !reshaped;
+	if (!loading && reshaped) {
+		struct retro_game_geometry g = { gamateWidth(), gamateHeight(), 2 * GM_WIDTH, 2 * GM_HEIGHT,
+			(float) gamateWidth() / gamateHeight() };
 		environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g);
 	}
 	if (shown && !loading) {
 		showOptions();
 	}
+}
+
+// Link Mode Separate: this Gamate's cable to the other player's over netplay's packets. The host and
+// the first player to join are linked; each byte sent goes with the cycle of the frame it went on.
+static retro_netpacket_send_t gmSend;
+static retro_netpacket_poll_receive_t gmPoll;
+static bool gmPartnered;
+static uint16_t gmPartner;
+enum { GM_PACKET_BYTE = 1 };
+
+static void gamateNetSend(void* context, uint8_t byte, int32_t cycle) {
+	(void) context;
+	if (gmSend && gmPartnered) {
+		uint8_t const packet[5] = { GM_PACKET_BYTE, byte, (uint8_t) cycle, (uint8_t) (cycle >> 8), (uint8_t) (cycle >> 16) };
+		gmSend(RETRO_NETPACKET_RELIABLE | RETRO_NETPACKET_FLUSH_HINT, packet, sizeof(packet), gmPartner);
+	}
+}
+
+static void RETRO_CALLCONV gamateNetStart(uint16_t self, retro_netpacket_send_t send, retro_netpacket_poll_receive_t poll) {
+	gmSend = send;
+	gmPoll = poll;
+	// A player who joins is linked to the host; the host waits for the first to join
+	gmPartnered = self != 0;
+	gmPartner = 0;
+	gamate.incomingCount = 0;
+	struct retro_message message = { self ? "Gamate link cable: joined to the host's Gamate" : "Gamate link cable: waiting for a player to join", 240 };
+	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+}
+
+static void RETRO_CALLCONV gamateNetReceive(const void* data, size_t size, uint16_t from) {
+	const uint8_t* packet = data;
+	if (!gmPartnered || from != gmPartner || size < 5 || packet[0] != GM_PACKET_BYTE) {
+		return;
+	}
+	gmLinkReceive(&gamate, packet[1], (int32_t) (packet[2] | packet[3] << 8 | packet[4] << 16));
+}
+
+static void RETRO_CALLCONV gamateNetStop(void) {
+	gmSend = NULL;
+	gmPoll = NULL;
+	gmPartnered = false;
+	gamate.incomingCount = 0;
+}
+
+static bool RETRO_CALLCONV gamateNetConnected(uint16_t player) {
+	if (gmPartnered) {
+		return false;
+	}
+	gmPartnered = true;
+	gmPartner = player;
+	struct retro_message message = { "Gamate link cable: a player joined", 180 };
+	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+	return true;
+}
+
+static void RETRO_CALLCONV gamateNetDisconnected(uint16_t player) {
+	if (gmPartnered && player == gmPartner) {
+		gmPartnered = false;
+		gamate.incomingCount = 0;
+		struct retro_message message = { "Gamate link cable: the other player left", 180 };
+		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+	}
+}
+
+// Netplay's packets for Link Mode Separate, else (NULL) its usual netplay
+static void gamateNetplay(bool separate) {
+	static const struct retro_netpacket_callback callbacks = {
+		gamateNetStart, gamateNetReceive, gamateNetStop, NULL, gamateNetConnected, gamateNetDisconnected,
+		"armNES Gamate link 1",
+	};
+	gmSeparate = separate;
+	gamate.send = separate ? gamateNetSend : NULL;
+	environ_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, separate ? (void*) &callbacks : NULL);
 }
 
 // A Gamate frame: the NES pad's buttons as the Gamate's, as for the Supervision; with the link cable,
@@ -2087,6 +2174,9 @@ static void runGamate(void) {
 		readGamateLink(false);
 	}
 	handheldCheatsApply();
+	if (gmSeparate && gmPoll) {
+		gmPoll();
+	}
 	if (!gmLinked) {
 		gmRunFrame(&gamate, gamateButtons(0));
 		if (gamate.soundFrames) {
@@ -2096,15 +2186,15 @@ static void runGamate(void) {
 		return;
 	}
 	gmRunLinked(&gamate, &gamateTwo, gamateButtons(0), gamateButtons(1));
-	if (gmScreen) {
-		const struct Gamate* shown = gmScreen == 1 ? &gamate : &gamateTwo;
+	if (gmScreen >= 2) {
+		const struct Gamate* shown = gmScreen == 2 ? &gamate : &gamateTwo;
 		if (shown->soundFrames) {
 			audio_batch_cb(shown->sound, (size_t) shown->soundFrames);
 		}
 		showLcd(shown->picture, GM_WIDTH, GM_HEIGHT);
 		return;
 	}
-	// Both: the sound mixed, the screens side by side
+	// Both: the sound mixed, the screens side by side or top and bottom
 	static int16_t mixed[sizeof(gamate.sound) / sizeof(*gamate.sound)];
 	int const frames = gamate.soundFrames < gamateTwo.soundFrames ? gamate.soundFrames : gamateTwo.soundFrames;
 	for (int i = 0; i < 2 * frames; i++) {
@@ -2114,6 +2204,12 @@ static void runGamate(void) {
 		audio_batch_cb(mixed, (size_t) frames);
 	}
 	static uint8_t both[2 * GM_WIDTH * GM_HEIGHT];
+	if (gmScreen == 1) {
+		memcpy(both, gamate.picture, sizeof(gamate.picture));
+		memcpy(both + GM_WIDTH * GM_HEIGHT, gamateTwo.picture, sizeof(gamateTwo.picture));
+		showLcd(both, GM_WIDTH, 2 * GM_HEIGHT);
+		return;
+	}
 	for (int y = 0; y < GM_HEIGHT; y++) {
 		memcpy(both + y * 2 * GM_WIDTH, gamate.picture + y * GM_WIDTH, GM_WIDTH);
 		memcpy(both + y * 2 * GM_WIDTH + GM_WIDTH, gamateTwo.picture + y * GM_WIDTH, GM_WIDTH);
@@ -3405,6 +3501,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		svLevelsSet = false;
 		gmLinked = false;
 		readGamateLink(true);
+		gamateNetplay(optionIs(environ_cb, "armnes_gm_link", "separate"));
 		readInputOptions();
 		readSupervisionOptions();
 		showOptions();
@@ -3547,6 +3644,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 
 void retro_unload_game(void) {
 	if (gmLoaded) {
+		gamateNetplay(false);
 		gmUnload(&gamate);
 		gmUnload(&gamateTwo);
 		gmLoaded = false;
