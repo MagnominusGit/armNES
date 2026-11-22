@@ -31,6 +31,8 @@ set(CORE_SOURCES
 	src/cart.c
 	src/cheat.c
 	src/cpu.c
+	src/supervision/supervision.c
+	src/supervision/w65c02.c
 	src/input.c
 	src/nes.c
 	src/par.c

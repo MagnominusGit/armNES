@@ -10,6 +10,7 @@
 #include "composite.h"
 #include "options.h"
 #include "arcade.h"
+#include "supervision/supervision.h"
 
 #include <file/archive_file.h>
 #include <file/file_path.h>
@@ -35,6 +36,9 @@ static retro_input_state_t input_state_cb;
 
 static struct NES nes;
 static bool loaded;
+// A Watara Supervision game (src/supervision), run in place of the NES while it's loaded.
+static struct Supervision supervision;
+static bool svLoaded;
 
 // Pro Action Replay (see the game on top, further down)
 enum { PAR_CHOICES = RETRO_NUM_CORE_OPTION_VALUES_MAX - 2, PAR_NAME = 256 };
@@ -951,19 +955,25 @@ void retro_get_system_info(struct retro_system_info* info) {
 #ifdef ARMNES_ARCADE
 	// The arcade build takes archives unopened, so MAME's sets (and their parents') open here
 	info->library_name = "armNES Arcade";
-	info->valid_extensions = "zip|7z|nes|fds|unf|unif|nsf";
+	info->valid_extensions = "zip|7z|nes|fds|unf|unif|nsf|sv|ws";
 	info->block_extract = true;
 #else
 	// RetroArch unpacks archives itself, so achievements identify the game inside; a frontend that
 	// hands over a whole archive (an arcade set) still has it opened here
 	info->library_name = "armNES";
-	info->valid_extensions = "nes|fds|unf|unif|nsf";
+	info->valid_extensions = "nes|fds|unf|unif|nsf|sv|ws";
 	info->block_extract = false;
 #endif
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {
 	memset(info, 0, sizeof(*info));
+	if (svLoaded) {
+		info->geometry = (struct retro_game_geometry) { SV_WIDTH, SV_HEIGHT, SV_WIDTH, SV_HEIGHT, 1.0f };
+		info->timing.fps = SV_FPS;
+		info->timing.sample_rate = SV_SOUND_RATE;
+		return;
+	}
 	geometry(&info->geometry);
 	info->timing.fps = nes.region == REGION_NTSC ? 60.0988 : (nes.region == REGION_PAL ? 50.0070 : 50.0070);
 	info->timing.sample_rate = 48000;
@@ -1011,6 +1021,16 @@ static bool genieOverPut(bool on);
 // Shows only the options that do something for the game loaded, with the controllers plugged in and
 // the other options' values. Without a game, all of them.
 static bool showOptions(void) {
+	// A Supervision game: the controller's options alone
+	if (svLoaded) {
+		for (const struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
+			bool const show = !strcmp(d->key, "armnes_left_stick_dpad") || !strcmp(d->key, "armnes_turbo_period") ||
+			                  !strcmp(d->key, "armnes_opposing");
+			struct retro_core_option_display display = { d->key, show };
+			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
+		}
+		return true;
+	}
 	bool const vs = !loaded || nes.cart.vs;
 	bool const dual = !loaded || nes.dual;
 	bool const zapper = !loaded || portType(0) == DEVICE_ZAPPER || portType(1) == DEVICE_ZAPPER;
@@ -1104,6 +1124,10 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {
 }
 
 void retro_reset(void) {
+	if (svLoaded) {
+		svReset(&supervision);
+		return;
+	}
 	if (loaded) {
 		if (nes.dual) {
 			nesResetDual(&nes, false);
@@ -1752,7 +1776,33 @@ static void readFastForward(void) {
 	environ_cb(RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE, &override);
 }
 
+// A Supervision frame: the NES pad's buttons (with turbo and the left stick) as the Supervision's, and
+// its four shades as MAME has them, from a black and white handheld's pictures.
+static void runSupervision(void) {
+	input_poll_cb();
+	turboFrame++;
+	readFastForward();
+	uint8_t pad = readPad(0), buttons = 0;
+	static const uint8_t to[8] = { SV_A, SV_B, SV_SELECT, SV_START, SV_UP, SV_DOWN, SV_LEFT, SV_RIGHT };
+	for (int i = 0; i < 8; i++) {
+		buttons |= pad >> i & 1 ? to[i] : 0;
+	}
+	svRunFrame(&supervision, buttons);
+	static const uint16_t shades[4] = { 0xE71C, 0xBDD7, 0x52AA, 0x1082 };
+	for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
+		video[i] = shades[supervision.picture[i]];
+	}
+	video_cb(video, SV_WIDTH, SV_HEIGHT, SV_WIDTH * sizeof(uint16_t));
+	if (supervision.soundFrames) {
+		audio_batch_cb(supervision.sound, supervision.soundFrames);
+	}
+}
+
 void retro_run(void) {
+	if (svLoaded) {
+		runSupervision();
+		return;
+	}
 	saveBlockSync();
 	if (parLoaded) {
 		parWriteSave(false);
@@ -2944,6 +2994,25 @@ bool retro_load_game(const struct retro_game_info* game) {
 	}
 	giveDescriptors();
 
+	// A Supervision game, by its extension (.sv, or .ws as MAME also takes)
+	svLoaded = false;
+	const char* dot = strrchr(contentName, '.');
+	if (!empty && dot && (!strcasecmp(dot, ".sv") || !strcasecmp(dot, ".ws"))) {
+		const uint8_t* data;
+		size_t size;
+		free(unpacked);
+		unpacked = NULL;
+		if (!unpack(game, &data, &size) || !svLoad(&supervision, data, size)) {
+			struct retro_message message = { "armNES: this Supervision game couldn't be loaded", 360 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+			return false;
+		}
+		svLoaded = true;
+		readInputOptions();
+		showOptions();
+		return true;
+	}
+
 	nesInit(&nes);
 	nes.audioOut = audio;
 	nes.audioCapacity = sizeof(audio) / sizeof(audio[0]);
@@ -3079,6 +3148,14 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 }
 
 void retro_unload_game(void) {
+	if (svLoaded) {
+		svUnload(&supervision);
+		svLoaded = false;
+		free(unpacked);
+		unpacked = NULL;
+		showOptions();
+		return;
+	}
 	useSensor(-1);
 	if (parLoaded) {
 		parWriteSave(true);
@@ -3104,12 +3181,18 @@ void retro_unload_game(void) {
 }
 
 unsigned retro_get_region(void) {
+	if (svLoaded) {
+		return RETRO_REGION_NTSC;
+	}
 	return nes.region == REGION_NTSC ? RETRO_REGION_NTSC : RETRO_REGION_PAL;
 }
 
 // A DualSystem's state: both boards', then the RAM they share, the second's last picture and the one
 // it's drawing (its frames run out of step with the main board's)
 size_t retro_serialize_size(void) {
+	if (svLoaded) {
+		return svStateSize();
+	}
 	if (!loaded) {
 		return 0;
 	}
@@ -3118,6 +3201,13 @@ size_t retro_serialize_size(void) {
 
 bool retro_serialize(void* data, size_t size) {
 	checkNetplay();
+	if (svLoaded) {
+		if (size < svStateSize()) {
+			return false;
+		}
+		svSave(&supervision, data);
+		return true;
+	}
 	if (!loaded || size < retro_serialize_size()) {
 		return false;
 	}
@@ -3133,6 +3223,9 @@ bool retro_serialize(void* data, size_t size) {
 
 bool retro_unserialize(const void* data, size_t size) {
 	checkNetplay();
+	if (svLoaded) {
+		return svLoadState(&supervision, data, size);
+	}
 	if (!loaded) {
 		return false;
 	}
@@ -3159,11 +3252,17 @@ bool retro_unserialize(const void* data, size_t size) {
 }
 
 void retro_cheat_reset(void) {
+	if (svLoaded) {
+		return;
+	}
 	nesCheatClear(&nes);
 }
 
 void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 	(void) index;
+	if (svLoaded) {
+		return;
+	}
 	if (enabled && code && !nesCheatAdd(&nes, code)) {
 		struct retro_message message = { "armNES: a cheat code wasn't understood", 180 };
 		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
@@ -3171,6 +3270,9 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 }
 
 void* retro_get_memory_data(unsigned id) {
+	if (svLoaded) {
+		return id == RETRO_MEMORY_SYSTEM_RAM ? supervision.m.ram : NULL;
+	}
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
 		// The game on top under a Pro Action Replay keeps its own save
@@ -3193,6 +3295,9 @@ void* retro_get_memory_data(unsigned id) {
 }
 
 size_t retro_get_memory_size(unsigned id) {
+	if (svLoaded) {
+		return id == RETRO_MEMORY_SYSTEM_RAM ? sizeof(supervision.m.ram) : 0;
+	}
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
 		if (parLoaded) {

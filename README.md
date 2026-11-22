@@ -61,6 +61,9 @@ desktops.
     starts the game again with them, as on the hardware), including the bus conflicts some codes rely
     on (NESdev, Game Genie).
 - Games inside `.zip` and `.7z` archives. RetroArch unpacks them, so achievements recognize the game.
+- Watara Supervision games (`.sv`, or `.ws`): its 65C02, 160x160 four-shade LCD, two square channels,
+  noise, sample DMA and timer, ported from MAME's driver. Turbo A and B, Left Stick as D-Pad, save
+  states, run-ahead and netplay work as for the NES; the NES options are hidden while one runs.
 
 ## Controls
 
@@ -352,6 +355,11 @@ the last frame; `coretest <core> <rom>` drives any libretro core and checks its 
   counters.
 - Overclock gives games extra CPU time each frame; a few games misbehave with it.
 - The app's netplay connects only to another armnes, not to RetroArch.
+- Supervision: of the 92 cartridges and aftermarket games tried, three don't play. The one 512 KB
+  cartridge stays blank, as in MAME; the 256 KB 4 in 1 starts one of its games and never shows its
+  menu (cartridges over 128 KB bank in a way that isn't known); and one aftermarket game stops early,
+  its music driver's NMI overwriting a copy routine's pointer. There's no LCD ghosting and no link
+  cable.
 
 ## Credits
 
@@ -365,6 +373,8 @@ Code taken from other projects, each under its own license (see License):
 - **emu2413** (Mitsutaka Okazaki, MIT): VRC7 sound, in `src/sound/`.
 - **MAME** (BSD-3-Clause): the chip layouts of the VS. System and PlayChoice-10 sets, in
   `src/arcade-sets.inc`.
+- **MAME's Supervision driver** (Peter Trauner, GPL-2.0-or-later): the Supervision's registers,
+  screen and sound, in `src/supervision/supervision.c`.
 - **RetroArch** (MIT, public domain): libretro-common and the LZMA SDK in `libretro/deps/`, and
   rcheevos in Armulators' `deps/`.
 - **stb_truetype** (Sean Barrett, public domain or MIT): the app's text, in Armulators' `app/`.
@@ -374,7 +384,8 @@ Code taken from other projects, each under its own license (see License):
 Read for how the hardware behaves, without code taken: **Mesen** (the VS. System boards and their
 protection, DualSystem wiring, and several unlicensed boards), the **NESdev Wiki**, and **Nestopia**.
 
-Test ROMs: AccuracyCoin, blargg's NES tests and the nes-test-roms collection.
+Test ROMs: AccuracyCoin, blargg's NES tests and the nes-test-roms collection; for the Supervision's
+65C02, Klaus Dormann's 6502 functional and 65C02 extended opcodes tests, which it passes.
 
 ## AI assistance
 

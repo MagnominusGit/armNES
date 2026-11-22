@@ -11,18 +11,19 @@ set(APP_VERSION 1.4.1)
 set(APP_BUILD_OPTION ARMNES_APP)
 set(APP_BUILD_TARGET armnes-app)
 # For the desktop: what it is, and the files it opens.
-set(APP_COMMENT "NES and Famicom Disk System emulator")
+set(APP_COMMENT "NES, Famicom Disk System and Watara Supervision emulator")
 set(APP_MIME application/x-nes-rom application/x-fds-disk application/zip)
 # The console's screen: the window is a multiple of it before a game says its own.
 set(APP_WINDOW 256 240)
 # The game list's files (archives too), and what's looked for inside an archive.
-set(APP_EXTENSIONS nes fds unf unif nsf zip 7z)
-set(APP_ARCHIVED nes fds unf unif nsf)
+set(APP_EXTENSIONS nes fds unf unif nsf sv ws zip 7z)
+set(APP_ARCHIVED nes fds unf unif nsf sv ws)
 # The systems: each one's key (its folder setting is <key>_folder), name, and the folder names it's
 # found by in the Games folder (its key and these, any case).
-set(APP_SYSTEMS nes fds)
+set(APP_SYSTEMS nes fds supervision)
 set(APP_SYSTEM_nes "NES" famicom "nintendo entertainment system")
 set(APP_SYSTEM_fds "Famicom Disk System" famicomdisksystem "famicom disk system")
+set(APP_SYSTEM_supervision "Watara Supervision" svision "watara supervision")
 # The keyboard's default keys, as SDL names them (NONE for none), in libretro's order: B, Y, Select,
 # Start, Up, Down, Left, Right, A, X, L, R, L2, R2, L3, R3. APP_BUTTON_NAMES names them in the menus,
 # - for one the core doesn't use, and APP_BUTTON_ORDER lists them by libretro's numbers.
