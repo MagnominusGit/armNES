@@ -11,6 +11,7 @@
 #include "options.h"
 #include "arcade.h"
 #include "supervision/supervision.h"
+#include "gamate/gamate.h"
 
 #include <file/archive_file.h>
 #include <file/file_path.h>
@@ -39,6 +40,9 @@ static bool loaded;
 // A Watara Supervision game (src/supervision), run in place of the NES while it's loaded.
 static struct Supervision supervision;
 static bool svLoaded;
+// A Bit Corporation Gamate game (src/gamate), likewise
+static struct Gamate gamate;
+static bool gmLoaded;
 
 // Pro Action Replay (see the game on top, further down)
 enum { PAR_CHOICES = RETRO_NUM_CORE_OPTION_VALUES_MAX - 2, PAR_NAME = 256 };
@@ -412,12 +416,13 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"The colors. armNES NTSC decodes the console's video signal; the others are measured or tuned. "
 		"Custom loads nes.pal (or custom.pal) from the system folder.",
 		NULL, "video", { { NULL, NULL } }, "armNES NTSC" },
-	{ "armnes_sv_palette", "Supervision Palette", NULL,
-		"The Supervision's four shades: its own greys, or a Game Boy's screen.",
+	{ "armnes_sv_palette", "LCD Palette", NULL,
+		"The Supervision's or Gamate's four shades: greys, the Gamate's green, or a Game Boy's screen.",
 		NULL, "video", { { "Grey", NULL }, { "Game Boy", NULL }, { "Game Boy Pocket", NULL }, { "Game Boy Light", NULL },
-		{ "Amber", NULL }, { NULL, NULL } }, "Grey" },
+		{ "Amber", NULL }, { "Gamate", NULL }, { NULL, NULL } }, "Grey" },
 	{ "armnes_sv_ghosting", "LCD Ghosting", NULL,
-		"Changes fade in over a few frames, as on the Supervision's slow LCD. Flickering sprites need it.",
+		"Changes fade in over a few frames, as on the Supervision's and Gamate's slow LCDs. Flickering sprites "
+		"need it.",
 		NULL, "video", { { "disabled", "Off" }, { "25", "25%" }, { "half", "50%" }, { "75", "75%" }, { "enabled", "100%" },
 		{ NULL, NULL } }, "disabled" },
 	{ "armnes_filter", "NTSC/PAL Filter", NULL,
@@ -508,6 +513,9 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 	{ "armnes_channel_sv_square2", "Square 2", NULL, "The Supervision's second square channel.", NULL, "audio", CHANNEL_VALUES, "On" },
 	{ "armnes_channel_sv_noise", "Noise", NULL, "The Supervision's noise channel.", NULL, "audio", CHANNEL_VALUES, "On" },
 	{ "armnes_channel_sv_samples", "Samples", NULL, "The Supervision's sample DMA.", NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_gm_a", "Channel A", NULL, "The Gamate's first square (with noise), on the left.", NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_gm_b", "Channel B", NULL, "The Gamate's second square (with noise), on the right.", NULL, "audio", CHANNEL_VALUES, "On" },
+	{ "armnes_channel_gm_c", "Channel C", NULL, "The Gamate's third square (with noise), in the middle.", NULL, "audio", CHANNEL_VALUES, "On" },
 	CHANNEL_OPTION("vrc6_pulse1", "VRC6 Pulse 1"),
 	CHANNEL_OPTION("vrc6_pulse2", "VRC6 Pulse 2"),
 	CHANNEL_OPTION("vrc6_saw", "VRC6 Sawtooth"),
@@ -973,13 +981,13 @@ void retro_get_system_info(struct retro_system_info* info) {
 #ifdef ARMNES_ARCADE
 	// The arcade build takes archives unopened, so MAME's sets (and their parents') open here
 	info->library_name = "armNES Arcade";
-	info->valid_extensions = "zip|7z|nes|fds|unf|unif|nsf|sv|ws";
+	info->valid_extensions = "zip|7z|nes|fds|unf|unif|nsf|sv|ws|bin";
 	info->block_extract = true;
 #else
 	// RetroArch unpacks archives itself, so achievements identify the game inside; a frontend that
 	// hands over a whole archive (an arcade set) still has it opened here
 	info->library_name = "armNES";
-	info->valid_extensions = "nes|fds|unf|unif|nsf|sv|ws";
+	info->valid_extensions = "nes|fds|unf|unif|nsf|sv|ws|bin";
 	info->block_extract = false;
 #endif
 }
@@ -990,6 +998,12 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 		info->geometry = (struct retro_game_geometry) { SV_WIDTH, SV_HEIGHT, SV_WIDTH, SV_HEIGHT, 1.0f };
 		info->timing.fps = SV_FPS;
 		info->timing.sample_rate = SV_SOUND_RATE;
+		return;
+	}
+	if (gmLoaded) {
+		info->geometry = (struct retro_game_geometry) { GM_WIDTH, GM_HEIGHT, GM_WIDTH, GM_HEIGHT, (float) GM_WIDTH / GM_HEIGHT };
+		info->timing.fps = GM_FPS;
+		info->timing.sample_rate = GM_SOUND_RATE;
 		return;
 	}
 	geometry(&info->geometry);
@@ -1039,15 +1053,15 @@ static bool genieOverPut(bool on);
 // Shows only the options that do something for the game loaded, with the controllers plugged in and
 // the other options' values. Without a game, all of them.
 static bool showOptions(void) {
-	// A Supervision game: the controller's options and its own
-	if (svLoaded) {
+	// A Supervision or Gamate game: the controller's options and its own
+	if (svLoaded || gmLoaded) {
 		for (const struct retro_core_option_v2_definition* d = optionDefinitions; d->key; d++) {
-			bool const channel = !strncmp(d->key, "armnes_channel_sv_", 18);
+			bool const channel = !strncmp(d->key, svLoaded ? "armnes_channel_sv_" : "armnes_channel_gm_", 18);
 			bool const show = !strcmp(d->key, "armnes_left_stick_dpad") || !strcmp(d->key, "armnes_turbo_period") ||
 			                  !strcmp(d->key, "armnes_opposing") || !strcmp(d->key, "armnes_sv_palette") ||
 			                  !strcmp(d->key, "armnes_sv_ghosting") || !strcmp(d->key, "armnes_channel_selection") ||
 			                  (channel && optionIs(environ_cb, "armnes_channel_selection", "On")) ||
-			                  (!strcmp(d->key, "armnes_sv_game") && supervision.games > 1);
+			                  (!strcmp(d->key, "armnes_sv_game") && svLoaded && supervision.games > 1);
 			struct retro_core_option_display display = { d->key, show };
 			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
 		}
@@ -1078,6 +1092,9 @@ static bool showOptions(void) {
 		{ "armnes_channel_sv_square2", !loaded && channels },
 		{ "armnes_channel_sv_noise", !loaded && channels },
 		{ "armnes_channel_sv_samples", !loaded && channels },
+		{ "armnes_channel_gm_a", !loaded && channels },
+		{ "armnes_channel_gm_b", !loaded && channels },
+		{ "armnes_channel_gm_c", !loaded && channels },
 		{ "armnes_palette", !optionIs(environ_cb, "armnes_filter", "Composite") && !optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_scanlines", optionIs(environ_cb, "armnes_filter", "Composite") || optionIs(environ_cb, "armnes_filter", "S-Video") },
 		{ "armnes_volume_cart", !loaded || cartSound() },
@@ -1156,6 +1173,10 @@ void retro_reset(void) {
 	if (svLoaded) {
 		svReset(&supervision);
 		svShowGame();
+		return;
+	}
+	if (gmLoaded) {
+		gmReset(&gamate);
 		return;
 	}
 	if (loaded) {
@@ -1843,19 +1864,20 @@ static void buildSupervisionFade(int strength) {
 }
 
 static void readSupervisionOptions(void) {
-	// Lightest to darkest, as 0xRRGGBB; the first is MAME's greys
+	// Lightest to darkest, as 0xRRGGBB; the first is MAME's Supervision greys, the last its Gamate
 	static const uint32_t palettes[][4] = {
 		{ 0xE0E0E0, 0xB9B9B9, 0x545454, 0x121212 },
 		{ 0x9BBC0F, 0x8BAC0F, 0x306230, 0x0F380F },
 		{ 0xC4CFA1, 0x8B956D, 0x4D533C, 0x1F1F1F },
 		{ 0x00B581, 0x009A71, 0x00694A, 0x004F3B },
 		{ 0xF8B800, 0xC08000, 0x704800, 0x281800 },
+		{ 0x6BA64A, 0x437A63, 0x255955, 0x12424C },
 	};
 	static const struct OptionChoice paletteNames[] = {
-		{ "Grey", 0 }, { "Game Boy", 1 }, { "Game Boy Pocket", 2 }, { "Game Boy Light", 3 }, { "Amber", 4 },
+		{ "Grey", 0 }, { "Game Boy", 1 }, { "Game Boy Pocket", 2 }, { "Game Boy Light", 3 }, { "Amber", 4 }, { "Gamate", 5 },
 	};
 	static const struct OptionChoice ghosting[] = { { "25", 1 }, { "half", 2 }, { "75", 3 }, { "enabled", 4 } };
-	int const which = optionChoice(environ_cb, "armnes_sv_palette", paletteNames, 5, 0);
+	int const which = optionChoice(environ_cb, "armnes_sv_palette", paletteNames, 6, 0);
 	if (which != svPaletteShown) {
 		svPaletteShown = which;
 		for (int level = 0; level < SV_LEVELS; level++) {
@@ -1871,10 +1893,11 @@ static void readSupervisionOptions(void) {
 	}
 	supervision.muted = (uint8_t) ((muted("sv_square1") ? SV_SQUARE1 : 0) | (muted("sv_square2") ? SV_SQUARE2 : 0) |
 		(muted("sv_noise") ? SV_NOISE : 0) | (muted("sv_samples") ? SV_SAMPLES : 0));
+	gamate.muted = (uint8_t) ((muted("gm_a") ? GM_CHANNEL_A : 0) | (muted("gm_b") ? GM_CHANNEL_B : 0) | (muted("gm_c") ? GM_CHANNEL_C : 0));
 	// A multicart's game chosen anew: the console restarts with it
 	const char* game = optionValue(environ_cb, "armnes_sv_game");
 	int const chosen = game && atoi(game) > 0 ? atoi(game) : 1;
-	if (supervision.games > 1 && chosen != svGameChosen) {
+	if (svLoaded && supervision.games > 1 && chosen != svGameChosen) {
 		svGameChosen = chosen;
 		if ((uint32_t) (chosen - 1) % supervision.games != supervision.m.game) {
 			svPlay(&supervision, (uint32_t) (chosen - 1));
@@ -1935,6 +1958,32 @@ static void svListGames(void) {
 	}
 }
 
+// A handheld's four-shade picture in the LCD Palette, faded by LCD Ghosting. A frame the frontend
+// won't show (run-ahead, fast-forward) isn't drawn, nor does it fade the LCD.
+static void showLcd(const uint8_t* picture, int width, int height) {
+	int av = RETRO_AV_ENABLE_VIDEO;
+	bool dupe = false;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av) && !(av & RETRO_AV_ENABLE_VIDEO) &&
+		environ_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &dupe) && dupe) {
+		video_cb(NULL, (unsigned) width, (unsigned) height, (size_t) width * sizeof(uint16_t));
+		return;
+	}
+	int const count = width * height;
+	if (!svGhosting || !svLevelsSet) {
+		for (int i = 0; i < count; i++) {
+			svLevel[i] = (uint8_t) (picture[i] * 64);
+			video[i] = svColors[svLevel[i]];
+		}
+		svLevelsSet = svGhosting != 0;
+	} else {
+		for (int i = 0; i < count; i++) {
+			svLevel[i] = svNext[svLevel[i]][picture[i]];
+			video[i] = svColors[svLevel[i]];
+		}
+	}
+	video_cb(video, (unsigned) width, (unsigned) height, (size_t) width * sizeof(uint16_t));
+}
+
 // A Supervision frame: the NES pad's buttons (with turbo and the left stick) as the Supervision's.
 static void runSupervision(void) {
 	input_poll_cb();
@@ -1954,32 +2003,38 @@ static void runSupervision(void) {
 	if (supervision.soundFrames) {
 		audio_batch_cb(supervision.sound, supervision.soundFrames);
 	}
-	// A frame the frontend won't show (run-ahead, fast-forward) isn't drawn, nor does it fade the LCD
-	int av = RETRO_AV_ENABLE_VIDEO;
-	bool dupe = false;
-	if (environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av) && !(av & RETRO_AV_ENABLE_VIDEO) &&
-		environ_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &dupe) && dupe) {
-		video_cb(NULL, SV_WIDTH, SV_HEIGHT, SV_WIDTH * sizeof(uint16_t));
-		return;
+	showLcd(supervision.picture, SV_WIDTH, SV_HEIGHT);
+}
+
+// A Gamate frame: the NES pad's buttons as the Gamate's, as for the Supervision.
+static void runGamate(void) {
+	input_poll_cb();
+	turboFrame++;
+	readFastForward();
+	bool updated = false;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+		readInputOptions();
+		readSupervisionOptions();
 	}
-	if (!svGhosting || !svLevelsSet) {
-		for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
-			svLevel[i] = (uint8_t) (supervision.picture[i] * 64);
-			video[i] = svColors[svLevel[i]];
-		}
-		svLevelsSet = svGhosting != 0;
-	} else {
-		for (int i = 0; i < SV_WIDTH * SV_HEIGHT; i++) {
-			svLevel[i] = svNext[svLevel[i]][supervision.picture[i]];
-			video[i] = svColors[svLevel[i]];
-		}
+	uint8_t pad = readPad(0), buttons = 0;
+	static const uint8_t to[8] = { GM_A, GM_B, GM_SELECT, GM_START, GM_UP, GM_DOWN, GM_LEFT, GM_RIGHT };
+	for (int i = 0; i < 8; i++) {
+		buttons |= pad >> i & 1 ? to[i] : 0;
 	}
-	video_cb(video, SV_WIDTH, SV_HEIGHT, SV_WIDTH * sizeof(uint16_t));
+	gmRunFrame(&gamate, buttons);
+	if (gamate.soundFrames) {
+		audio_batch_cb(gamate.sound, gamate.soundFrames);
+	}
+	showLcd(gamate.picture, GM_WIDTH, GM_HEIGHT);
 }
 
 void retro_run(void) {
 	if (svLoaded) {
 		runSupervision();
+		return;
+	}
+	if (gmLoaded) {
+		runGamate();
 		return;
 	}
 	saveBlockSync();
@@ -3068,6 +3123,32 @@ static uint8_t* cartridgeRead(const char* path, size_t* size) {
 	return data;
 }
 
+// The Gamate's BIOS (4 KiB) from the system folder: either of its two versions, loose or in MAME's
+// gamate.zip; NULL without it
+static uint8_t* gamateBios(void) {
+	const char* system = NULL;
+	if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system) || !system) {
+		return NULL;
+	}
+	static const char* const names[2] = { "gamate_bios_umc.bin", "gamate_bios_bit.bin" };
+	char path[4096];
+	for (int i = 0; i < 2; i++) {
+		size_t size = 0;
+		snprintf(path, sizeof(path), "%s/%s", system, names[i]);
+		uint8_t* data = path_is_valid(path) ? readFile(path, &size) : NULL;
+		if (!data || size != GM_BIOS_SIZE) {
+			free(data);
+			snprintf(path, sizeof(path), "%s/gamate.zip", system);
+			data = path_is_valid(path) ? archiveRead(path, names[i], &size) : NULL;
+		}
+		if (data && size == GM_BIOS_SIZE) {
+			return data;
+		}
+		free(data);
+	}
+	return NULL;
+}
+
 // The Game Genie in the system folder, or NULL
 static uint8_t* genieFind(size_t* size) {
 	static const char* const names[] = {
@@ -3175,6 +3256,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 
 	// A Supervision game, by its extension (.sv, or .ws as MAME also takes)
 	svLoaded = false;
+	gmLoaded = false;
 	const char* dot = strrchr(contentName, '.');
 	if (!empty && dot && (!strcasecmp(dot, ".sv") || !strcasecmp(dot, ".ws"))) {
 		const uint8_t* data;
@@ -3193,6 +3275,34 @@ bool retro_load_game(const struct retro_game_info* game) {
 			svListGames();
 		}
 		setSupervisionMemoryMaps();
+		readInputOptions();
+		readSupervisionOptions();
+		showOptions();
+		return true;
+	}
+
+	// A Gamate game, by its extension (.bin, as No-Intro and MAME's lists have them), with the BIOS
+	if (!empty && dot && !strcasecmp(dot, ".bin")) {
+		const uint8_t* data;
+		size_t size;
+		free(unpacked);
+		unpacked = NULL;
+		uint8_t* bios = gamateBios();
+		if (!bios) {
+			struct retro_message message = { "armNES: the Gamate needs its BIOS, gamate_bios_umc.bin (or gamate.zip), in the "
+				"system folder", 480 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+			return false;
+		}
+		bool const ok = unpack(game, &data, &size) && gmLoad(&gamate, bios, data, size);
+		free(bios);
+		if (!ok) {
+			struct retro_message message = { "armNES: this Gamate game couldn't be loaded", 360 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+			return false;
+		}
+		gmLoaded = true;
+		svLevelsSet = false;
 		readInputOptions();
 		readSupervisionOptions();
 		showOptions();
@@ -3334,6 +3444,14 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 }
 
 void retro_unload_game(void) {
+	if (gmLoaded) {
+		gmUnload(&gamate);
+		gmLoaded = false;
+		free(unpacked);
+		unpacked = NULL;
+		showOptions();
+		return;
+	}
 	if (svLoaded) {
 		svUnload(&supervision);
 		svLoaded = false;
@@ -3367,7 +3485,7 @@ void retro_unload_game(void) {
 }
 
 unsigned retro_get_region(void) {
-	if (svLoaded) {
+	if (svLoaded || gmLoaded) {
 		return RETRO_REGION_NTSC;
 	}
 	return nes.region == REGION_NTSC ? RETRO_REGION_NTSC : RETRO_REGION_PAL;
@@ -3378,6 +3496,9 @@ unsigned retro_get_region(void) {
 size_t retro_serialize_size(void) {
 	if (svLoaded) {
 		return svStateSize();
+	}
+	if (gmLoaded) {
+		return gmStateSize();
 	}
 	if (!loaded) {
 		return 0;
@@ -3392,6 +3513,13 @@ bool retro_serialize(void* data, size_t size) {
 			return false;
 		}
 		svSave(&supervision, data);
+		return true;
+	}
+	if (gmLoaded) {
+		if (size < gmStateSize()) {
+			return false;
+		}
+		gmSave(&gamate, data);
 		return true;
 	}
 	if (!loaded || size < retro_serialize_size()) {
@@ -3411,6 +3539,9 @@ bool retro_unserialize(const void* data, size_t size) {
 	checkNetplay();
 	if (svLoaded) {
 		return svLoadState(&supervision, data, size);
+	}
+	if (gmLoaded) {
+		return gmLoadState(&gamate, data, size);
 	}
 	if (!loaded) {
 		return false;
@@ -3438,7 +3569,7 @@ bool retro_unserialize(const void* data, size_t size) {
 }
 
 void retro_cheat_reset(void) {
-	if (svLoaded) {
+	if (svLoaded || gmLoaded) {
 		return;
 	}
 	nesCheatClear(&nes);
@@ -3446,7 +3577,7 @@ void retro_cheat_reset(void) {
 
 void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 	(void) index;
-	if (svLoaded) {
+	if (svLoaded || gmLoaded) {
 		return;
 	}
 	if (enabled && code && !nesCheatAdd(&nes, code)) {
@@ -3458,6 +3589,9 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 void* retro_get_memory_data(unsigned id) {
 	if (svLoaded) {
 		return id == RETRO_MEMORY_SYSTEM_RAM ? supervision.m.ram : id == RETRO_MEMORY_VIDEO_RAM ? supervision.m.vram : NULL;
+	}
+	if (gmLoaded) {
+		return id == RETRO_MEMORY_SYSTEM_RAM ? gamate.m.ram : id == RETRO_MEMORY_VIDEO_RAM ? gamate.m.vram : NULL;
 	}
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:
@@ -3483,6 +3617,9 @@ void* retro_get_memory_data(unsigned id) {
 size_t retro_get_memory_size(unsigned id) {
 	if (svLoaded) {
 		return id == RETRO_MEMORY_SYSTEM_RAM ? sizeof(supervision.m.ram) : id == RETRO_MEMORY_VIDEO_RAM ? sizeof(supervision.m.vram) : 0;
+	}
+	if (gmLoaded) {
+		return id == RETRO_MEMORY_SYSTEM_RAM ? sizeof(gamate.m.ram) : id == RETRO_MEMORY_VIDEO_RAM ? sizeof(gamate.m.vram) : 0;
 	}
 	switch (id) {
 	case RETRO_MEMORY_SAVE_RAM:

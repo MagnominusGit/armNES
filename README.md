@@ -15,7 +15,7 @@ desktops.
 - **Your own games.** armNES comes with no games and doesn't download any. Play only games you own,
   dumped from your own cartridges or bought legally. armNES doesn't support or promote piracy.
 - **Nothing is shared in netplay.** Each player needs their own copy of the game, and of the Disk
-  System BIOS for disk games.
+  System BIOS for disk games or the Gamate BIOS for Gamate games.
 - **Not Nintendo.** armNES is an independent project, not affiliated with or endorsed by Nintendo.
   Nintendo Entertainment System, Famicom, Famicom Disk System, VS. System and PlayChoice-10 are
   trademarks of Nintendo, and the Disk System BIOS is Nintendo's copyright.
@@ -64,10 +64,16 @@ desktops.
 - Watara Supervision games (`.sv`, or `.ws`): its 65C02, 160x160 four-shade LCD, two square channels,
   noise, sample DMA, video DMA and timer, ported from MAME's driver, and cartridges up to 512 KB. A
   multicart without a menu (a game in every 64 KB) starts on the Multicart Game chosen, and Reset moves
-  to the next. Its shades come in its own greys, a Game Boy's colors or amber, with optional LCD
-  ghosting, and Channel Selection switches its four sound channels. Achievements see its RAM,
-  registers and video RAM. Turbo A and B, Left Stick as D-Pad, save states, run-ahead and netplay work
-  as for the NES; the NES options are hidden while one runs.
+  to the next. Its shades come in greys, the Gamate's green, a Game Boy's colors or amber (LCD
+  Palette), with optional LCD ghosting, and Channel Selection switches its four sound channels.
+  Achievements see its RAM, registers and video RAM. Turbo A and B, Left Stick as D-Pad, save states,
+  run-ahead and netplay work as for the NES; the NES options are hidden while one runs.
+- Gamate games (`.bin`), with its BIOS in the system folder: `gamate_bios_umc.bin` or
+  `gamate_bios_bit.bin`, loose or in MAME's `gamate.zip`. Its 65C02, 160x150 four-shade LCD with its
+  scrolling and window, the AY-3-8910's three channels, noise and envelope in stereo, the timer, and
+  plain, banked and 4 in 1 cartridges with their protection check, ported from MAME's driver. LCD
+  Palette, LCD Ghosting and Channel Selection work as for the Supervision, and save states, run-ahead
+  and netplay as for the NES.
 
 ## Controls
 
@@ -361,6 +367,7 @@ the last frame; `coretest <core> <rom>` drives any libretro core and checks its 
 - The app's netplay connects only to another armnes, not to RetroArch.
 - Supervision: how a multicart without a menu picks its game on the hardware isn't known, so the
   Multicart Game option and Reset pick it. There's no link cable.
+- Gamate: there's no link cable.
 
 ## Credits
 
@@ -376,6 +383,10 @@ Code taken from other projects, each under its own license (see License):
   `src/arcade-sets.inc`.
 - **MAME's Supervision driver** (Peter Trauner, GPL-2.0-or-later): the Supervision's registers,
   screen and sound, in `src/supervision/supervision.c`.
+- **MAME's Gamate driver** (Peter Trauner, GPL-2.0-or-later) and its video, cartridge and protection
+  devices (David Haywood, Peter Wilhelmsen, Kevin Horton; BSD-3-Clause): the Gamate's memory map,
+  timer, screen, banking and protection, in `src/gamate/gamate.c`. Its sound is armNES's AY-3-8910
+  (the Sunsoft 5B's).
 - **RetroArch** (MIT, public domain): libretro-common and the LZMA SDK in `libretro/deps/`, and
   rcheevos in Armulators' `deps/`.
 - **stb_truetype** (Sean Barrett, public domain or MIT): the app's text, in Armulators' `app/`.
