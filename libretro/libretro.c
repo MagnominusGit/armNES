@@ -3123,23 +3123,29 @@ static uint8_t* cartridgeRead(const char* path, size_t* size) {
 	return data;
 }
 
-// The Gamate's BIOS (4 KiB) from the system folder: either of its two versions, loose or in MAME's
-// gamate.zip; NULL without it
+// The Gamate's BIOS (4 KiB) from the system folder: either of its two versions, by MAME's names (loose
+// or in its gamate.zip) or No-Intro's (loose or each in its own zip); NULL without it
 static uint8_t* gamateBios(void) {
 	const char* system = NULL;
 	if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system) || !system) {
 		return NULL;
 	}
-	static const char* const names[2] = { "gamate_bios_umc.bin", "gamate_bios_bit.bin" };
+	// Each file, and the archive it may be in
+	static const char* const places[][2] = {
+		{ "gamate_bios_umc.bin", "gamate.zip" },
+		{ "gamate_bios_bit.bin", "gamate.zip" },
+		{ "[BIOS] Gamate (World).bin", "[BIOS] Gamate (World).zip" },
+		{ "[BIOS] Gamate (World) (Rev 1).bin", "[BIOS] Gamate (World) (Rev 1).zip" },
+	};
 	char path[4096];
-	for (int i = 0; i < 2; i++) {
+	for (size_t i = 0; i < sizeof(places) / sizeof(*places); i++) {
 		size_t size = 0;
-		snprintf(path, sizeof(path), "%s/%s", system, names[i]);
+		snprintf(path, sizeof(path), "%s/%s", system, places[i][0]);
 		uint8_t* data = path_is_valid(path) ? readFile(path, &size) : NULL;
 		if (!data || size != GM_BIOS_SIZE) {
 			free(data);
-			snprintf(path, sizeof(path), "%s/gamate.zip", system);
-			data = path_is_valid(path) ? archiveRead(path, names[i], &size) : NULL;
+			snprintf(path, sizeof(path), "%s/%s", system, places[i][1]);
+			data = path_is_valid(path) ? archiveRead(path, places[i][0], &size) : NULL;
 		}
 		if (data && size == GM_BIOS_SIZE) {
 			return data;
@@ -3289,8 +3295,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 		unpacked = NULL;
 		uint8_t* bios = gamateBios();
 		if (!bios) {
-			struct retro_message message = { "armNES: the Gamate needs its BIOS, gamate_bios_umc.bin (or gamate.zip), in the "
-				"system folder", 480 };
+			struct retro_message message = { "armNES: the Gamate needs its BIOS in the system folder: gamate_bios_umc.bin, "
+				"gamate.zip or [BIOS] Gamate (World).bin", 480 };
 			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 			return false;
 		}

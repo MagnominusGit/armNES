@@ -68,12 +68,13 @@ desktops.
   Palette), with optional LCD ghosting, and Channel Selection switches its four sound channels.
   Achievements see its RAM, registers and video RAM. Turbo A and B, Left Stick as D-Pad, save states,
   run-ahead and netplay work as for the NES; the NES options are hidden while one runs.
-- Gamate games (`.bin`), with its BIOS in the system folder: `gamate_bios_umc.bin` or
-  `gamate_bios_bit.bin`, loose or in MAME's `gamate.zip`. Its 65C02, 160x150 four-shade LCD with its
-  scrolling and window, the AY-3-8910's three channels, noise and envelope in stereo, the timer, and
-  plain, banked and 4 in 1 cartridges with their protection check, ported from MAME's driver. LCD
-  Palette, LCD Ghosting and Channel Selection work as for the Supervision, and save states, run-ahead
-  and netplay as for the NES.
+- Gamate games (`.bin`), with its BIOS in the system folder: MAME's `gamate_bios_umc.bin` or
+  `gamate_bios_bit.bin` (loose or in `gamate.zip`), or No-Intro's `[BIOS] Gamate (World).bin` or its
+  Rev 1 (loose or zipped). Its 65C02, 160x150 four-shade LCD with its scrolling and window, the
+  AY-3-8910's three channels, noise and envelope in stereo, the timer, and plain, banked and 4 in 1
+  cartridges with their protection check, ported from MAME's driver. LCD Palette, LCD Ghosting and
+  Channel Selection work as for the Supervision, and save states, run-ahead and netplay as for the
+  NES.
 
 ## Controls
 
