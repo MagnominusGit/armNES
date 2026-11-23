@@ -76,12 +76,13 @@ desktops.
   with their protection check, ported from MAME's driver and Kevin Horton's notes. Link Mode links
   two Gamates for the games two can play over the cable, as armGBA does. Together, the default and
   the mode for netplay, runs both Gamates on every device, the second on controller 2 or the second
-  netplay player; Screen Layout shows player 1's (the default), player 2's (for the second player in
-  netplay), or both side by side or top and bottom (two players on one device). Separate runs one
-  Gamate per device over netplay's packets (both players pick it before the game starts). LCD
-  Palette, LCD Ghosting and Channel Selection work as for the Supervision, and save states,
-  run-ahead and netplay as for the NES. Cheats for both handhelds write RAM: `AAAA:VV` (or
-  `AAAAVV`), several joined by `+`.
+  netplay player; Screen Layout's Auto (the default) shows player 1's Gamate when playing alone and,
+  in netplay, each device its own player's (as RetroArch after 1.22.2 says which; with 1.22.2 and
+  before, the second player picks Player 2 Only); or one player's, or both side by side or top and
+  bottom for two players on one device. Separate runs one Gamate per device over netplay's packets
+  (both players pick it before the game starts). LCD Palette, LCD Ghosting and Channel Selection
+  work as for the Supervision, and save states, run-ahead and netplay as for the NES. Cheats for
+  both handhelds write RAM: `AAAA:VV` (or `AAAAVV`), several joined by `+`.
 
 ## Controls
 

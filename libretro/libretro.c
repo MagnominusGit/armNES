@@ -425,10 +425,11 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"way. Off: one Gamate.",
 		NULL, "system", { { "together", "Together" }, { "separate", "Separate" }, { "off", "Off" }, { NULL, NULL } }, "together" },
 	{ "armnes_gm_link_screen", "Screen Layout", NULL,
-		"With Link Mode Together, which Gamate is shown and heard: player 1's, as for one player; player 2's, "
-		"for the second player in netplay; or both, for two players on one device.",
-		NULL, "system", { { "player 1", "Player 1 Only" }, { "player 2", "Player 2 Only" }, { "side by side", "Side by Side" },
-		{ "top and bottom", "Top and Bottom" }, { NULL, NULL } }, "player 1" },
+		"With Link Mode Together, which Gamate is shown and heard. Auto: player 1's when playing alone, and "
+		"in netplay each device's own player's (RetroArch after 1.22.2 says which; before, it's player 1's). "
+		"Or one player's, or both, for two players on one device.",
+		NULL, "system", { { "auto", "Auto" }, { "player 1", "Player 1 Only" }, { "player 2", "Player 2 Only" },
+		{ "side by side", "Side by Side" }, { "top and bottom", "Top and Bottom" }, { NULL, NULL } }, "auto" },
 	{ "armnes_sv_game", "Multicart Game", NULL,
 		"The game a Supervision multicart without a menu plays. Reset moves on to the next one. Changing it "
 		"restarts the console.",
@@ -2064,9 +2065,9 @@ static unsigned gamateHeight(void) {
 static void readGamateLink(bool loading) {
 	bool const linked = optionIs(environ_cb, "armnes_gm_link", "together");
 	static const struct OptionChoice screens[] = {
-		{ "side by side", 0 }, { "top and bottom", 1 }, { "player 1", 2 }, { "player 2", 3 },
+		{ "side by side", 0 }, { "top and bottom", 1 }, { "player 1", 2 }, { "player 2", 3 }, { "auto", 4 },
 	};
-	int const screen = optionChoice(environ_cb, "armnes_gm_link_screen", screens, 4, 2);
+	int const screen = optionChoice(environ_cb, "armnes_gm_link_screen", screens, 5, 4);
 	unsigned const width = gamateWidth(), height = gamateHeight();
 	if (linked != gmLinked && !loading) {
 		gmReset(&gamate);
@@ -2171,6 +2172,26 @@ static void gamateNetplay(bool separate) {
 	environ_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, separate ? (void*) &callbacks : NULL);
 }
 
+// Screen Layout Auto's player: in netplay, this device's, as RetroArch after 1.22.2 says (0 the host,
+// 1 the first to join); else, or not told, player 1. Not asked again in a game once RetroArch hasn't
+// known the call.
+#ifndef RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX
+#define RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX (82 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+#endif
+static bool gmClientUnknown;
+
+static int gamateOwnPlayer(void) {
+	unsigned client = 0;
+	if (!netplaySeen || gmClientUnknown) {
+		return 0;
+	}
+	if (!environ_cb(RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX, &client)) {
+		gmClientUnknown = true;
+		return 0;
+	}
+	return client == 1 ? 1 : 0;
+}
+
 // A Gamate frame: the NES pad's buttons as the Gamate's, as for the Supervision; with the link cable,
 // both Gamates, controller 2 the second's
 static void runGamate(void) {
@@ -2194,7 +2215,7 @@ static void runGamate(void) {
 	}
 	gmRunLinked(&gamate, &gamateTwo, gamateButtons(0), gamateButtons(1));
 	if (gmScreen >= 2) {
-		const struct Gamate* shown = gmScreen == 2 ? &gamate : &gamateTwo;
+		const struct Gamate* shown = gmScreen == 2 || (gmScreen == 4 && gamateOwnPlayer() == 0) ? &gamate : &gamateTwo;
 		if (shown->soundFrames) {
 			audio_batch_cb(shown->sound, (size_t) shown->soundFrames);
 		}
@@ -3510,6 +3531,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		gmLoaded = true;
 		svLevelsSet = false;
 		gmLinked = false;
+		gmClientUnknown = false;
 		readGamateLink(true);
 		gamateNetplay(optionIs(environ_cb, "armnes_gm_link", "separate"));
 		readInputOptions();
