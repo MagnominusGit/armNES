@@ -53,6 +53,7 @@ int main(void) { return 0; }" ARMNES_THUMB2)
 	# Thumb-2's smaller machine code footprint improves i-cache locality while cutting binary size by approx. 20% - games run about ~0.8-2.5% faster
 	if(ARMNES_THUMB2)
 		add_compile_options(-mthumb)
+		add_link_options(-mthumb)
 	endif()
 endif()
 
