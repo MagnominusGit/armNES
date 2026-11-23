@@ -2011,6 +2011,17 @@ static void svShowGame(void) {
 	}
 }
 
+// The Gamate's memory for achievements, as the CPU sees it (player 1's with two together): its 1 KiB of
+// RAM at $0000, mirrored to $1FFF. rcheevos has no Gamate yet; this is ready for when it does.
+static void setGamateMemoryMaps(void) {
+	static struct retro_memory_descriptor descriptors[1];
+	static struct retro_memory_map map = { descriptors, 1 };
+	descriptors[0] = (struct retro_memory_descriptor) { RETRO_MEMDESC_SYSTEM_RAM, gamate.m.ram, 0, 0x0000, 0xE000, 0x1C00, sizeof(gamate.m.ram), NULL };
+	environ_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &map);
+	bool achievements = true;
+	environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+}
+
 // The Supervision's memory for achievements, where rcheevos has it: RAM, registers and video RAM
 static void setSupervisionMemoryMaps(void) {
 	static struct retro_memory_descriptor descriptors[3];
@@ -3861,6 +3872,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 			return false;
 		}
 		gmLoaded = true;
+		setGamateMemoryMaps();
 		svLevelsSet = false;
 		gmLinked = false;
 		gmClientUnknown = false;
