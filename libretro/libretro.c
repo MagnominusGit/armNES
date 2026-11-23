@@ -21,6 +21,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <math.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -424,6 +425,10 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"device over netplay's packets, set when the game starts; over Wi-Fi most link games play badly this "
 		"way. Off: one Gamate.",
 		NULL, "system", { { "together", "Together" }, { "separate", "Separate" }, { "off", "Off" }, { NULL, NULL } }, "together" },
+	{ "armnes_gm_link_timing", "Gamate Link Timing", NULL,
+		"Standard: smooth over Wi-Fi, for games that wait for each other. Exact: in step like a real cable, "
+		"slower over Wi-Fi. Both players pick the same; applies when the game starts.",
+		NULL, "system", { { "standard", "Standard" }, { "exact", "Exact" }, { NULL, NULL } }, "standard" },
 	{ "armnes_gm_link_screen", "Screen Layout", NULL,
 		"With Link Mode Together, which Gamate is shown and heard. Auto: player 1's when playing alone, and "
 		"in netplay each device's own player's (RetroArch after 1.22.2 says which; before, it's player 1's). "
@@ -1091,7 +1096,8 @@ static bool showOptions(void) {
 			                  (channel && optionIs(environ_cb, "armnes_channel_selection", "On")) ||
 			                  (!strcmp(d->key, "armnes_sv_game") && svLoaded && supervision.games > 1) ||
 			                  (!strcmp(d->key, "armnes_gm_link") && gmLoaded) ||
-			                  (!strcmp(d->key, "armnes_gm_link_screen") && gmLoaded && gmLinked);
+			                  (!strcmp(d->key, "armnes_gm_link_screen") && gmLoaded && gmLinked) ||
+			                  (!strcmp(d->key, "armnes_gm_link_timing") && gmLoaded && gmSeparate);
 			struct retro_core_option_display display = { d->key, show };
 			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
 		}
@@ -1120,6 +1126,7 @@ static bool showOptions(void) {
 		{ "armnes_sv_game", !loaded },
 		{ "armnes_gm_link", !loaded },
 		{ "armnes_gm_link_screen", !loaded },
+		{ "armnes_gm_link_timing", !loaded },
 		{ "armnes_channel_sv_square1", !loaded && channels },
 		{ "armnes_channel_sv_square2", !loaded && channels },
 		{ "armnes_channel_sv_noise", !loaded && channels },
@@ -2091,19 +2098,70 @@ static void readGamateLink(bool loading) {
 }
 
 // Link Mode Separate: this Gamate's cable to the other player's over netplay's packets. The host and
-// the first player to join are linked; each byte sent goes with the cycle of the frame it went on.
+// the first player to join are linked. Each side counts link time from when they paired and sends
+// every byte with the time it went. With Exact timing each also says how far it has got eight times a
+// frame, and neither runs more than GM_LEAD past the other: a byte from the one ahead arrives at its
+// time, one from the one behind at most GM_LEAD late (its spacing kept), as the link games need. A
+// side held at the limit waits within its frame for the other, slowing the game rather than
+// breaking it. Standard leaves each side at its own pace, a byte arriving as soon as it comes.
 static retro_netpacket_send_t gmSend;
 static retro_netpacket_poll_receive_t gmPoll;
-static bool gmPartnered;
+static bool gmPartnered, gmExact;
 static uint16_t gmPartner;
-enum { GM_PACKET_BYTE = 1 };
+// This Gamate's time when the two paired, and the frames run without getting past the limit
+static uint32_t gmOrigin;
+static int gmStalled;
+enum { GM_PACKET_BYTE = 1, GM_PACKET_TIME = 2 };
+enum { GM_LEAD = GM_FRAME_CYCLES };
+// Frames held at the limit before running on alone (the other player paused or gone): 3 seconds
+enum { GM_STALL_FRAMES = 180 };
+// Waiting at the limit, up to this long a frame (ms)
+enum { GM_WAIT_MS = 50 };
+
+static void put32(uint8_t* to, uint32_t value) {
+	to[0] = (uint8_t) value;
+	to[1] = (uint8_t) (value >> 8);
+	to[2] = (uint8_t) (value >> 16);
+	to[3] = (uint8_t) (value >> 24);
+}
+
+static uint32_t get32(const uint8_t* from) {
+	return (uint32_t) from[0] | (uint32_t) from[1] << 8 | (uint32_t) from[2] << 16 | (uint32_t) from[3] << 24;
+}
 
 static void gamateNetSend(void* context, uint8_t byte, uint32_t sent) {
 	(void) context;
 	if (gmSend && gmPartnered) {
-		uint8_t const packet[6] = { GM_PACKET_BYTE, byte, (uint8_t) sent, (uint8_t) (sent >> 8), (uint8_t) (sent >> 16), (uint8_t) (sent >> 24) };
+		uint8_t packet[6] = { GM_PACKET_BYTE, byte };
+		put32(packet + 2, sent - gmOrigin);
 		gmSend(RETRO_NETPACKET_RELIABLE | RETRO_NETPACKET_FLUSH_HINT, packet, sizeof(packet), gmPartner);
 	}
+}
+
+static void gamateNetTime(void) {
+	if (gmSend && gmPartnered && gmExact) {
+		uint8_t packet[5] = { GM_PACKET_TIME };
+		put32(packet + 1, gmNow(&gamate) - gmOrigin);
+		gmSend(RETRO_NETPACKET_RELIABLE | RETRO_NETPACKET_FLUSH_HINT, packet, sizeof(packet), gmPartner);
+	}
+}
+
+// Linked from now: link time starts here, and with Exact the limit waits for the other's first word
+static void gamatePaired(void) {
+	gmPartnered = true;
+	gmOrigin = gmNow(&gamate);
+	gmStalled = 0;
+	gamate.incomingCount = 0;
+	gamate.haveLast = false;
+	gamate.limited = gmExact;
+	gamate.limit = gmNow(&gamate) + GM_LEAD;
+	gamateNetTime();
+}
+
+static void gamateUnpaired(void) {
+	gmPartnered = false;
+	gamate.incomingCount = 0;
+	gamate.limited = false;
 }
 
 static void gamateNetPoll(void* context) {
@@ -2111,41 +2169,77 @@ static void gamateNetPoll(void* context) {
 	if (gmPoll) {
 		gmPoll();
 	}
+	gamateNetTime();
+}
+
+// At the limit: waiting for the other Gamate, up to GM_WAIT_MS in a frame
+static struct timespec gmWaitStart;
+static bool gmWaitStarted;
+
+static bool gamateNetWait(void* context) {
+	(void) context;
+	if (!gmPoll) {
+		return false;
+	}
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	if (!gmWaitStarted) {
+		gmWaitStart = now;
+		gmWaitStarted = true;
+	}
+	long const waited = (now.tv_sec - gmWaitStart.tv_sec) * 1000000L + (now.tv_nsec - gmWaitStart.tv_nsec) / 1000;
+	if (waited > GM_WAIT_MS * 1000L) {
+		return false;
+	}
+	struct timespec const nap = { 0, 200000 };
+	nanosleep(&nap, NULL);
+	gmPoll();
+	return true;
 }
 
 static void RETRO_CALLCONV gamateNetStart(uint16_t self, retro_netpacket_send_t send, retro_netpacket_poll_receive_t poll) {
 	gmSend = send;
 	gmPoll = poll;
-	// A player who joins is linked to the host; the host waits for the first to join
-	gmPartnered = self != 0;
 	gmPartner = 0;
-	gamate.incomingCount = 0;
-	gamate.haveLast = false;
+	// A player who joins is linked to the host; the host waits for the first to join
+	if (self != 0) {
+		gamatePaired();
+	} else {
+		gamateUnpaired();
+	}
 	struct retro_message message = { self ? "Gamate link cable: joined to the host's Gamate" : "Gamate link cable: waiting for a player to join", 240 };
 	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 }
 
 static void RETRO_CALLCONV gamateNetReceive(const void* data, size_t size, uint16_t from) {
 	const uint8_t* packet = data;
-	if (!gmPartnered || from != gmPartner || size < 6 || packet[0] != GM_PACKET_BYTE) {
+	if (!gmPartnered || from != gmPartner || !size) {
 		return;
 	}
-	gmLinkReceive(&gamate, packet[1], (uint32_t) packet[2] | (uint32_t) packet[3] << 8 | (uint32_t) packet[4] << 16 | (uint32_t) packet[5] << 24);
+	if (packet[0] == GM_PACKET_BYTE && size >= 6) {
+		uint32_t const sent = gmOrigin + get32(packet + 2);
+		gmLinkReceive(&gamate, packet[1], sent, gmExact ? sent : gmNow(&gamate));
+	} else if (packet[0] == GM_PACKET_TIME && size >= 5 && gmExact) {
+		uint32_t const limit = gmOrigin + get32(packet + 1) + GM_LEAD;
+		if (!gamate.limited || (int32_t) (limit - gamate.limit) > 0) {
+			gamate.limit = limit;
+		}
+		gamate.limited = true;
+	}
 }
 
 static void RETRO_CALLCONV gamateNetStop(void) {
 	gmSend = NULL;
 	gmPoll = NULL;
-	gmPartnered = false;
-	gamate.incomingCount = 0;
+	gamateUnpaired();
 }
 
 static bool RETRO_CALLCONV gamateNetConnected(uint16_t player) {
 	if (gmPartnered) {
 		return false;
 	}
-	gmPartnered = true;
 	gmPartner = player;
+	gamatePaired();
 	struct retro_message message = { "Gamate link cable: a player joined", 180 };
 	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 	return true;
@@ -2153,23 +2247,31 @@ static bool RETRO_CALLCONV gamateNetConnected(uint16_t player) {
 
 static void RETRO_CALLCONV gamateNetDisconnected(uint16_t player) {
 	if (gmPartnered && player == gmPartner) {
-		gmPartnered = false;
-		gamate.incomingCount = 0;
+		gamateUnpaired();
 		struct retro_message message = { "Gamate link cable: the other player left", 180 };
 		environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 	}
 }
 
-// Netplay's packets for Link Mode Separate, else (NULL) its usual netplay
-static void gamateNetplay(bool separate) {
-	static const struct retro_netpacket_callback callbacks = {
+// Netplay's packets for Link Mode Separate, else (NULL) its usual netplay. The version names the
+// timing, so RetroArch pairs only players who chose the same.
+static void gamateNetplay(bool separate, bool exact) {
+	static const struct retro_netpacket_callback exactCallbacks = {
 		gamateNetStart, gamateNetReceive, gamateNetStop, NULL, gamateNetConnected, gamateNetDisconnected,
-		"armNES Gamate link 2",
+		"armNES Gamate link 3 exact",
+	};
+	static const struct retro_netpacket_callback standardCallbacks = {
+		gamateNetStart, gamateNetReceive, gamateNetStop, NULL, gamateNetConnected, gamateNetDisconnected,
+		"armNES Gamate link 3 standard",
 	};
 	gmSeparate = separate;
+	gmExact = separate && exact;
 	gamate.send = separate ? gamateNetSend : NULL;
 	gamate.poll = separate ? gamateNetPoll : NULL;
-	environ_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, separate ? (void*) &callbacks : NULL);
+	gamate.wait = gmExact ? gamateNetWait : NULL;
+	gamate.limited = false;
+	gamate.midFrame = false;
+	environ_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, !separate ? NULL : exact ? (void*) &exactCallbacks : (void*) &standardCallbacks);
 }
 
 // Screen Layout Auto's player: in netplay, this device's, as RetroArch after 1.22.2 says (0 the host,
@@ -2206,9 +2308,23 @@ static void runGamate(void) {
 	}
 	handheldCheatsApply();
 	if (!gmLinked) {
-		gmRunFrame(&gamate, gamateButtons(0));
+		gmWaitStarted = false;
+		bool const whole = gmRunFrame(&gamate, gamateButtons(0));
 		if (gamate.soundFrames) {
 			audio_batch_cb(gamate.sound, gamate.soundFrames);
+		}
+		// Held at Exact timing's limit: the last picture again; and if that lasts, on alone
+		gmStalled = whole ? 0 : gmStalled + 1;
+		if (gmStalled > GM_STALL_FRAMES) {
+			gamate.limited = false;
+			gmStalled = 0;
+			struct retro_message message = { "Gamate link cable: the other player isn't answering", 180 };
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+		}
+		bool dupe = false;
+		if (!whole && environ_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &dupe) && dupe) {
+			video_cb(NULL, GM_WIDTH, GM_HEIGHT, GM_WIDTH * sizeof(uint16_t));
+			return;
 		}
 		showLcd(gamate.picture, GM_WIDTH, GM_HEIGHT);
 		return;
@@ -3533,7 +3649,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		gmLinked = false;
 		gmClientUnknown = false;
 		readGamateLink(true);
-		gamateNetplay(optionIs(environ_cb, "armnes_gm_link", "separate"));
+		gamateNetplay(optionIs(environ_cb, "armnes_gm_link", "separate"), optionIs(environ_cb, "armnes_gm_link_timing", "exact"));
 		readInputOptions();
 		readSupervisionOptions();
 		showOptions();
@@ -3676,7 +3792,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info* info, 
 
 void retro_unload_game(void) {
 	if (gmLoaded) {
-		gamateNetplay(false);
+		gamateNetplay(false, false);
 		gmUnload(&gamate);
 		gmUnload(&gamateTwo);
 		gmLoaded = false;

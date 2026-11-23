@@ -80,9 +80,11 @@ desktops.
   in netplay, each device its own player's (as RetroArch after 1.22.2 says which; with 1.22.2 and
   before, the second player picks Player 2 Only); or one player's, or both side by side or top and
   bottom for two players on one device. Separate runs one Gamate per device over netplay's packets
-  (both players pick it before the game starts). LCD Palette, LCD Ghosting and Channel Selection
-  work as for the Supervision, and save states, run-ahead and netplay as for the NES. Cheats for
-  both handhelds write RAM: `AAAA:VV` (or `AAAAVV`), several joined by `+`.
+  (both players pick it before the game starts), with Gamate Link Timing as armGBA's Game Boy has
+  it: Standard, each at its own pace, smooth for games that wait for each other; or Exact, the two
+  kept within a frame of each other like a real cable, slower over Wi-Fi. LCD Palette, LCD Ghosting
+  and Channel Selection work as for the Supervision, and save states, run-ahead and netplay as for
+  the NES. Cheats for both handhelds write RAM: `AAAA:VV` (or `AAAAVV`), several joined by `+`.
 
 ## Controls
 
@@ -377,12 +379,13 @@ the last frame; `coretest <core> <rom>` drives any libretro core and checks its 
 - Supervision: how a multicart without a menu picks its game on the hardware isn't known, so the
   Multicart Game option and Reset pick it. There's no link cable.
 - Gamate: Link Mode Separate can't stand in for the cable over Wi-Fi. The games expect each byte
-  within about a frame, and the network takes about that long, so in Separate they wait on it or get
-  bytes late. Between a Raspberry Pi 5 and a handheld (16-33 ms ping), a game that waits for every
-  answer played at about 79% speed; one that trades bytes every frame lost its two Gamates' agreement
-  mid-match; and one that gives the other Gamate about 3.6 frames to answer the start of a
-  two-player game started one-player games instead. Together, which runs both Gamates on each device
-  and sends only the buttons through netplay's rollback, played all of them at full speed.
+  within about a frame, and the network takes about that long. Between a Raspberry Pi 5 and a handheld
+  (16-49 ms ping), a game that waits for every answer played at about 79% speed with Standard timing
+  and 90% with Exact; one that trades bytes every frame lost its two Gamates' agreement mid-match with
+  either; and one that gives the other Gamate about 3.6 frames to answer the start of a two-player
+  game started two players 1 time in 3 with Exact, never with Standard. Together, which runs both
+  Gamates on each device and sends only the buttons through netplay's rollback, played all of them at
+  full speed.
 
 ## Credits
 

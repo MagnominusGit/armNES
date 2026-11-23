@@ -78,8 +78,15 @@ struct Gamate {
 	// Or the network: each byte sent, with when (in cycles, counted from load); and the bytes come in,
 	// each due on this side's same count, with the last one's when it was sent and was due.
 	void (*send)(void* context, uint8_t byte, uint32_t sent);
-	// Called a few times a frame to take in what the network has brought
+	// Called a few times a frame to take in what the network has brought; and, at the limit, to wait
+	// a little for the other Gamate (false: no more waiting this frame).
 	void (*poll)(void* context);
+	bool (*wait)(void* context);
+	// Exact timing: not to run past this cycle (as gmNow counts), where the other Gamate has got plus a
+	// lead; and whether the frame was stopped there, to carry on in the next call.
+	bool limited;
+	uint32_t limit;
+	bool midFrame;
 	void* sendContext;
 	struct {
 		uint8_t byte;
@@ -98,12 +105,15 @@ struct Gamate {
 bool gmLoad(struct Gamate* gm, const uint8_t* bios, const uint8_t* rom, size_t size);
 void gmUnload(struct Gamate* gm);
 void gmReset(struct Gamate* gm);
-// One frame, with the buttons held through it.
-void gmRunFrame(struct Gamate* gm, uint8_t buttons);
-// A byte from the other Gamate over the network, sent at that cycle of its count: it arrives at once
-// with an NMI, or as long after the byte before as it was sent after it, so bytes sent back to back
-// stay apart.
-void gmLinkReceive(struct Gamate* gm, uint8_t byte, uint32_t sent);
+// One frame, with the buttons held through it; false if it stopped at the link's limit (the next call
+// carries on).
+bool gmRunFrame(struct Gamate* gm, uint8_t buttons);
+// This Gamate's time: cycles run since it was loaded.
+uint32_t gmNow(const struct Gamate* gm);
+// A byte from the other Gamate over the network, sent at that cycle of its count, due at that cycle
+// of this one's (now, for Standard timing): it arrives then with an NMI (at once if that's past), but
+// no sooner after the byte before than it was sent after it.
+void gmLinkReceive(struct Gamate* gm, uint8_t byte, uint32_t sent, uint32_t due);
 // A frame of two Gamates joined by the link cable, run an instruction at a time each.
 void gmRunLinked(struct Gamate* first, struct Gamate* second, uint8_t buttonsFirst, uint8_t buttonsSecond);
 size_t gmStateSize(void);

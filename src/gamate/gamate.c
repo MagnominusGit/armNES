@@ -104,7 +104,7 @@ static void linkClock(struct Gamate* gm) {
 	if (++M.outBits == 8) {
 		M.outBits = 0;
 		if (gm->send) {
-			gm->send(gm->sendContext, M.outShift, gm->frames * GM_FRAME_CYCLES + (uint32_t) M.frameCycles);
+			gm->send(gm->sendContext, M.outShift, gmNow(gm));
 		}
 	}
 	struct Gamate* other = gm->link;
@@ -370,9 +370,13 @@ static void frameStart(struct Gamate* gm, uint8_t buttons) {
 	M.line = 0;
 }
 
+uint32_t gmNow(const struct Gamate* gm) {
+	return gm->frames * GM_FRAME_CYCLES + (uint32_t) M.frameCycles;
+}
+
 // One instruction, and what runs beside it: first a byte from the network that's due
 static void step(struct Gamate* gm) {
-	if (gm->incomingCount && (int32_t) (gm->incoming[0].due - (gm->frames * GM_FRAME_CYCLES + (uint32_t) M.frameCycles)) <= 0) {
+	if (gm->incomingCount && (int32_t) (gm->incoming[0].due - gmNow(gm)) <= 0) {
 		M.rxData = gm->incoming[0].byte;
 		gm->cpu.nmi = true;
 		memmove(gm->incoming, gm->incoming + 1, --gm->incomingCount * sizeof(gm->incoming[0]));
@@ -435,17 +439,43 @@ static void frameEnd(struct Gamate* gm) {
 	machineFromCpu(gm);
 }
 
-void gmRunFrame(struct Gamate* gm, uint8_t buttons) {
-	frameStart(gm, buttons);
+bool gmRunFrame(struct Gamate* gm, uint8_t buttons) {
+	// A frame stopped at the link's limit carries on where it stopped
+	if (!gm->midFrame) {
+		frameStart(gm, buttons);
+	} else {
+		cpuFromMachine(gm);
+		M.buttons = buttons;
+		gm->soundFrames = 0;
+	}
 	if (gm->poll) {
-		for (int i = 1; i <= POLLS; i++) {
+		int32_t const slice = GM_FRAME_CYCLES / POLLS;
+		while (M.frameCycles < GM_FRAME_CYCLES) {
 			gm->poll(gm->sendContext);
-			runTo(gm, GM_FRAME_CYCLES * i / POLLS);
+			int32_t until = (M.frameCycles / slice + 1) * slice;
+			until = until < GM_FRAME_CYCLES ? until : GM_FRAME_CYCLES;
+			if (gm->limited) {
+				// Not past where the other Gamate has got and the lead it allows; waiting for it, as
+				// long as the frontend lets this frame wait
+				int32_t room = (int32_t) (gm->limit - gmNow(gm));
+				while (room <= 0 && gm->wait && gm->wait(gm->sendContext)) {
+					room = (int32_t) (gm->limit - gmNow(gm));
+				}
+				if (room <= 0) {
+					gm->midFrame = true;
+					machineFromCpu(gm);
+					return false;
+				}
+				until = until < M.frameCycles + room ? until : M.frameCycles + room;
+			}
+			runTo(gm, until);
 		}
 	} else {
 		runTo(gm, GM_FRAME_CYCLES);
 	}
+	gm->midFrame = false;
 	frameEnd(gm);
+	return true;
 }
 
 void gmRunLinked(struct Gamate* first, struct Gamate* second, uint8_t buttonsFirst, uint8_t buttonsSecond) {
@@ -465,22 +495,23 @@ void gmRunLinked(struct Gamate* first, struct Gamate* second, uint8_t buttonsFir
 	first->link = second->link = NULL;
 }
 
-void gmLinkReceive(struct Gamate* gm, uint8_t byte, uint32_t sent) {
+void gmLinkReceive(struct Gamate* gm, uint8_t byte, uint32_t sent, uint32_t due) {
 	if (gm->incomingCount == GM_INCOMING) {
 		return;
 	}
-	// At once; but a byte that followed the last within a frame keeps the time it followed it by
-	uint32_t const now = gm->frames * GM_FRAME_CYCLES + (uint32_t) M.frameCycles;
-	uint32_t due = now;
+	// At its time here, or at once if that's past; but never sooner after the byte before than it was
+	// sent after it (within a frame), so bytes don't arrive on top of one another
+	uint32_t const now = gmNow(gm);
+	uint32_t at = (int32_t) (due - now) > 0 ? due : now;
 	uint32_t const gap = sent - gm->lastSent;
-	if (gm->haveLast && gap <= GM_FRAME_CYCLES && (int32_t) (gm->lastDue + gap - now) > 0) {
-		due = gm->lastDue + gap;
+	if (gm->haveLast && gap <= GM_FRAME_CYCLES && (int32_t) (gm->lastDue + gap - at) > 0) {
+		at = gm->lastDue + gap;
 	}
 	gm->haveLast = true;
 	gm->lastSent = sent;
-	gm->lastDue = due;
+	gm->lastDue = at;
 	gm->incoming[gm->incomingCount].byte = byte;
-	gm->incoming[gm->incomingCount++].due = due;
+	gm->incoming[gm->incomingCount++].due = at;
 }
 
 size_t gmStateSize(void) {
