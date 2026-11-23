@@ -435,7 +435,7 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"the second on controller 2 or the second player; changing it restarts them. Separate: one Gamate per "
 		"device over netplay's packets, set when the game starts; over Wi-Fi most link games play badly this "
 		"way. Off: one Gamate.",
-		NULL, "system", { { "together", "Together" }, { "separate", "Separate" }, { "off", "Off" }, { NULL, NULL } }, "together" },
+		NULL, "system", { { "together", "Together" }, { "separate", "Separate" }, { "off", "Off" }, { NULL, NULL } }, "off" },
 	{ "armnes_gm_link_timing", "Gamate Link Timing", NULL,
 		"Standard: smooth over Wi-Fi, for games that wait for each other. Exact: in step like a real cable, "
 		"slower over Wi-Fi. Both players pick the same; applies when the game starts.",

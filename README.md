@@ -74,7 +74,7 @@ desktops.
   LCD with its scrolling and window (each bit plane read as the LCD takes it), the AY-3-8910's three
   channels, noise and 16-step envelope in stereo, the timer, and plain, banked and 4 in 1 cartridges
   with their protection check, ported from MAME's driver and Kevin Horton's notes. Link Mode links
-  two Gamates for the games two can play over the cable, as armGBA does. Together, the default and
+  two Gamates for the games two can play over the cable, as armGBA does (Off by default). Together,
   the mode for netplay, runs both Gamates on every device, the second on controller 2 or the second
   netplay player. As armGBA does: Screen Layout shows both side by side (the default), top and
   bottom, or one player's; R2 goes to the next layout and L2 back (or fast-forwards, as L2 Button
