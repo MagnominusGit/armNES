@@ -46,7 +46,18 @@ static bool svLoaded;
 // or 2's). Separate: the other player's Gamate over netplay.
 static struct Gamate gamate, gamateTwo;
 static bool gmLoaded, gmLinked, gmSeparate;
-static int gmScreen;
+// The screens as shown now (GM_SCREENS_*), which R2 and L2 change, and as Screen Layout last said
+enum { GM_SCREENS_SIDE, GM_SCREENS_STACKED, GM_SCREENS_ONE };
+static int gmScreen, gmScreenOption = -1;
+// L2 Button's fast-forward, Screen Layout Control's player (-1 Auto), Show Player Numbers, the Switch
+// Controller Combo, and the console controller 1 plays
+enum { GM_SWITCH_START_L2_R2, GM_SWITCH_L_R_A_B, GM_SWITCH_L3_R3, GM_SWITCH_START_L3, GM_SWITCH_START_R3, GM_SWITCH_OFF };
+static bool gmL2FastForward = true, gmPlayerNumbers = true;
+static int gmR2Follows = -1, gmSwitchCombo, gmControllerFocus;
+// A tag of this device's own in the states it saves: one from another device's session, loaded by
+// netplay, means this device joined it (so with Auto its player is 2 even where RetroArch doesn't say)
+static uint32_t gmSessionTag;
+static bool gmJoined;
 
 // Pro Action Replay (see the game on top, further down)
 enum { PAR_CHOICES = RETRO_NUM_CORE_OPTION_VALUES_MAX - 2, PAR_NAME = 256 };
@@ -430,11 +441,24 @@ static struct retro_core_option_v2_definition optionDefinitions[] = {
 		"slower over Wi-Fi. Both players pick the same; applies when the game starts.",
 		NULL, "system", { { "standard", "Standard" }, { "exact", "Exact" }, { NULL, NULL } }, "standard" },
 	{ "armnes_gm_link_screen", "Screen Layout", NULL,
-		"With Link Mode Together, which Gamate is shown and heard. Auto: player 1's when playing alone, and "
-		"in netplay each device's own player's (RetroArch after 1.22.2 says which; before, it's player 1's). "
-		"Or one player's, or both, for two players on one device.",
-		NULL, "system", { { "auto", "Auto" }, { "player 1", "Player 1 Only" }, { "player 2", "Player 2 Only" },
-		{ "side by side", "Side by Side" }, { "top and bottom", "Top and Bottom" }, { NULL, NULL } }, "auto" },
+		"How the screens are arranged. R2 changes it while playing.",
+		NULL, "system", { { "side by side", "Side by Side" }, { "top and bottom", "Top and Bottom" },
+		{ "player 1", "Player 1 Only" }, { "player 2", "Player 2 Only" }, { NULL, NULL } }, "side by side" },
+	{ "armnes_gm_link_l2", "L2 Button", NULL,
+		"Outside netplay, L2 fast-forwards or goes back a layout. In netplay it always goes back.",
+		NULL, "system", { { "fast forward", "Fast-Forward" }, { "previous screens", "Previous Layout" }, { NULL, NULL } },
+		"fast forward" },
+	{ "armnes_gm_r2_follows", "Screen Layout Control", NULL,
+		"In netplay, whose L2 and R2 change this device's screens. Auto: this device's player.",
+		NULL, "system", { { "auto", "Auto" }, { "1", "Player 1" }, { "2", "Player 2" }, { NULL, NULL } }, "auto" },
+	{ "armnes_gm_switch_controller", "Switch Controller Combo", NULL,
+		"Moves controller 1 to the next console (not in netplay).",
+		NULL, "system",
+		{ { "start l2 r2", "Start + L2 + R2" }, { "l r a b", "L + R + A + B" }, { "l3 r3", "L3 + R3" }, { "start l3", "Start + L3" },
+		{ "start r3", "Start + R3" }, { "off", "Off" }, { NULL, NULL } }, "start l2 r2" },
+	{ "armnes_gm_player_numbers", "Show Player Numbers", NULL,
+		"Each player's number, faintly, at the top left of their screen.",
+		NULL, "system", { { "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL } }, "enabled" },
 	{ "armnes_sv_game", "Multicart Game", NULL,
 		"The game a Supervision multicart without a menu plays. Reset moves on to the next one. Changing it "
 		"restarts the console.",
@@ -1096,7 +1120,9 @@ static bool showOptions(void) {
 			                  (channel && optionIs(environ_cb, "armnes_channel_selection", "On")) ||
 			                  (!strcmp(d->key, "armnes_sv_game") && svLoaded && supervision.games > 1) ||
 			                  (!strcmp(d->key, "armnes_gm_link") && gmLoaded) ||
-			                  (!strcmp(d->key, "armnes_gm_link_screen") && gmLoaded && gmLinked) ||
+			                  ((!strcmp(d->key, "armnes_gm_link_screen") || !strcmp(d->key, "armnes_gm_link_l2") ||
+			                    !strcmp(d->key, "armnes_gm_r2_follows") || !strcmp(d->key, "armnes_gm_switch_controller") ||
+			                    !strcmp(d->key, "armnes_gm_player_numbers")) && gmLoaded && gmLinked) ||
 			                  (!strcmp(d->key, "armnes_gm_link_timing") && gmLoaded && gmSeparate);
 			struct retro_core_option_display display = { d->key, show };
 			environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &display);
@@ -1126,6 +1152,10 @@ static bool showOptions(void) {
 		{ "armnes_sv_game", !loaded },
 		{ "armnes_gm_link", !loaded },
 		{ "armnes_gm_link_screen", !loaded },
+		{ "armnes_gm_link_l2", !loaded },
+		{ "armnes_gm_r2_follows", !loaded },
+		{ "armnes_gm_switch_controller", !loaded },
+		{ "armnes_gm_player_numbers", !loaded },
 		{ "armnes_gm_link_timing", !loaded },
 		{ "armnes_channel_sv_square1", !loaded && channels },
 		{ "armnes_channel_sv_square2", !loaded && channels },
@@ -1856,9 +1886,19 @@ static void checkNetplay(void) {
 }
 
 // R2 held fast-forwards at the frontend's maximum run speed, outside netplay
+static bool gamateSwitchStart(int port);
+
 static void readFastForward(void) {
 	static bool held;
 	bool now = !netplaySeen && input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2) != 0;
+	// Gamates together: R2 changes the screens, and L2 fast-forwards as the L2 Button option says
+	if (gmLoaded && gmLinked) {
+		now = false;
+		for (int port = 0; port < 2; port++) {
+			now |= !netplaySeen && gmL2FastForward && !gamateSwitchStart(port) &&
+			       input_state_cb((unsigned) port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2) != 0;
+		}
+	}
 	if (now == held) {
 		return;
 	}
@@ -2001,7 +2041,7 @@ static void svListGames(void) {
 
 // A handheld's four-shade picture in the LCD Palette, faded by LCD Ghosting. A frame the frontend
 // won't show (run-ahead, fast-forward) isn't drawn, nor does it fade the LCD.
-static void showLcd(const uint8_t* picture, int width, int height) {
+static void showLcd(const uint8_t* picture, int width, int height, void (*decorate)(void)) {
 	int av = RETRO_AV_ENABLE_VIDEO;
 	bool dupe = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av) && !(av & RETRO_AV_ENABLE_VIDEO) &&
@@ -2021,6 +2061,9 @@ static void showLcd(const uint8_t* picture, int width, int height) {
 			svLevel[i] = svNext[svLevel[i]][picture[i]];
 			video[i] = svColors[svLevel[i]];
 		}
+	}
+	if (decorate) {
+		decorate();
 	}
 	video_cb(video, (unsigned) width, (unsigned) height, (size_t) width * sizeof(uint16_t));
 }
@@ -2045,11 +2088,13 @@ static void runSupervision(void) {
 	if (supervision.soundFrames) {
 		audio_batch_cb(supervision.sound, supervision.soundFrames);
 	}
-	showLcd(supervision.picture, SV_WIDTH, SV_HEIGHT);
+	showLcd(supervision.picture, SV_WIDTH, SV_HEIGHT, NULL);
 }
 
-// A Gamate frame: the NES pad's buttons as the Gamate's, as for the Supervision.
-static uint8_t gamateButtons(unsigned port) {
+// A Gamate's buttons: the NES pad's as the Gamate's, as for the Supervision, from the controller that
+// plays it (controller 1 plays the console the Switch Controller Combo moved it to)
+static uint8_t gamateButtons(unsigned console) {
+	unsigned const port = gmLinked && !netplaySeen ? (console + 2 - (unsigned) gmControllerFocus) % 2 : console;
 	uint8_t pad = readPad(port), buttons = 0;
 	static const uint8_t to[8] = { GM_A, GM_B, GM_SELECT, GM_START, GM_UP, GM_DOWN, GM_LEFT, GM_RIGHT };
 	for (int i = 0; i < 8; i++) {
@@ -2060,11 +2105,11 @@ static uint8_t gamateButtons(unsigned port) {
 
 // The Gamate's frame picture's size: one screen, or two side by side or top and bottom
 static unsigned gamateWidth(void) {
-	return gmLinked && gmScreen == 0 ? 2 * GM_WIDTH : GM_WIDTH;
+	return gmLinked && gmScreen == GM_SCREENS_SIDE ? 2 * GM_WIDTH : GM_WIDTH;
 }
 
 static unsigned gamateHeight(void) {
-	return gmLinked && gmScreen == 1 ? 2 * GM_HEIGHT : GM_HEIGHT;
+	return gmLinked && gmScreen == GM_SCREENS_STACKED ? 2 * GM_HEIGHT : GM_HEIGHT;
 }
 
 // Link Mode and Screen Layout: Together in or out restarts both Gamates; the picture's shape follows.
@@ -2072,9 +2117,22 @@ static unsigned gamateHeight(void) {
 static void readGamateLink(bool loading) {
 	bool const linked = optionIs(environ_cb, "armnes_gm_link", "together");
 	static const struct OptionChoice screens[] = {
-		{ "side by side", 0 }, { "top and bottom", 1 }, { "player 1", 2 }, { "player 2", 3 }, { "auto", 4 },
+		{ "side by side", GM_SCREENS_SIDE }, { "top and bottom", GM_SCREENS_STACKED }, { "player 1", GM_SCREENS_ONE },
+		{ "player 2", GM_SCREENS_ONE + 1 },
 	};
-	int const screen = optionChoice(environ_cb, "armnes_gm_link_screen", screens, 5, 4);
+	// R2 and L2 change the screens too; the option wins only when it changes
+	int const chosen = optionChoice(environ_cb, "armnes_gm_link_screen", screens, 4, GM_SCREENS_SIDE);
+	int const screen = chosen != gmScreenOption ? chosen : gmScreen;
+	gmScreenOption = chosen;
+	gmL2FastForward = !optionIs(environ_cb, "armnes_gm_link_l2", "previous screens");
+	const char* follows = optionValue(environ_cb, "armnes_gm_r2_follows");
+	gmR2Follows = follows && (*follows == '1' || *follows == '2') ? *follows - '1' : -1;
+	gmPlayerNumbers = !optionIs(environ_cb, "armnes_gm_player_numbers", "disabled");
+	static const struct OptionChoice combos[] = {
+		{ "start l2 r2", GM_SWITCH_START_L2_R2 }, { "l r a b", GM_SWITCH_L_R_A_B }, { "l3 r3", GM_SWITCH_L3_R3 },
+		{ "start l3", GM_SWITCH_START_L3 }, { "start r3", GM_SWITCH_START_R3 }, { "off", GM_SWITCH_OFF },
+	};
+	gmSwitchCombo = optionChoice(environ_cb, "armnes_gm_switch_controller", combos, 6, GM_SWITCH_START_L2_R2);
 	unsigned const width = gamateWidth(), height = gamateHeight();
 	if (linked != gmLinked && !loading) {
 		gmReset(&gamate);
@@ -2274,24 +2332,178 @@ static void gamateNetplay(bool separate, bool exact) {
 	environ_cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, !separate ? NULL : exact ? (void*) &exactCallbacks : (void*) &standardCallbacks);
 }
 
-// Screen Layout Auto's player: in netplay, this device's, as RetroArch after 1.22.2 says (0 the host,
-// 1 the first to join); else, or not told, player 1. Not asked again in a game once RetroArch hasn't
-// known the call.
+// RetroArch after 1.22.2 says which netplay client this device is: 0 the host, then the devices that
+// joined, each playing the player of its number. Not asked again in a game once it hasn't known.
 #ifndef RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX
 #define RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX (82 | RETRO_ENVIRONMENT_EXPERIMENTAL)
 #endif
 static bool gmClientUnknown;
 
-static int gamateOwnPlayer(void) {
+// This device's session tag, made once netplay is seen: the time, the processor time used and where this
+// core sits in memory, which differ from one device to the next
+static void gamateTagSession(void) {
+	while (netplaySeen && !gmSessionTag) {
+		gmSessionTag = (uint32_t) time(NULL) * 2654435761u ^ (uint32_t) clock() ^ (uint32_t) (uintptr_t) &gmSessionTag;
+	}
+}
+
+// A frame RetroArch runs again and doesn't show (run-ahead): buttons aren't taken as new presses
+static bool gamateRerunning(void) {
+	int av = RETRO_AV_ENABLE_VIDEO;
+	return environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av) && !(av & RETRO_AV_ENABLE_VIDEO);
+}
+
+// The Switch Controller Combo's buttons, and whether controller 1 holds them (outside netplay)
+static const struct {
+	int count;
+	unsigned buttons[3];
+} gmCombos[] = {
+	[GM_SWITCH_START_L2_R2] = { 3, { RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_L2, RETRO_DEVICE_ID_JOYPAD_R2 } },
+	[GM_SWITCH_L_R_A_B] = { 3, { RETRO_DEVICE_ID_JOYPAD_L, RETRO_DEVICE_ID_JOYPAD_R, RETRO_DEVICE_ID_JOYPAD_A } },
+	[GM_SWITCH_L3_R3] = { 2, { RETRO_DEVICE_ID_JOYPAD_L3, RETRO_DEVICE_ID_JOYPAD_R3 } },
+	[GM_SWITCH_START_L3] = { 2, { RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_L3 } },
+	[GM_SWITCH_START_R3] = { 2, { RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_R3 } },
+};
+
+static bool gamateSwitchHeld(void) {
+	if (gmSwitchCombo == GM_SWITCH_OFF || netplaySeen) {
+		return false;
+	}
+	for (int k = 0; k < gmCombos[gmSwitchCombo].count; k++) {
+		if (!input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, gmCombos[gmSwitchCombo].buttons[k])) {
+			return false;
+		}
+	}
+	// L + R + A + B: B too
+	return gmSwitchCombo != GM_SWITCH_L_R_A_B || input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B);
+}
+
+// Controller 1 holding Start with the combo on Start + L2 + R2: its L2 and R2 only switch
+static bool gamateSwitchStart(int port) {
+	return gmSwitchCombo == GM_SWITCH_START_L2_R2 && port == 0 && !netplaySeen &&
+	       input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START);
+}
+
+static void gamateNotify(const char* text) {
+	struct retro_message message = { text, 120 };
+	environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+}
+
+// The Switch Controller Combo on controller 1 moves it to the next console
+static void readGamateControllerSwitch(void) {
+	static bool held;
+	if (gamateRerunning()) {
+		return;
+	}
+	if (netplaySeen) {
+		gmControllerFocus = 0;
+	}
+	bool const now = gamateSwitchHeld();
+	bool const pressed = now && !held;
+	held = now;
+	if (pressed) {
+		gmControllerFocus = (gmControllerFocus + 1) % 2;
+		static char name[48];
+		snprintf(name, sizeof(name), "Controller 1: Player %d's Console", gmControllerFocus + 1);
+		gamateNotify(name);
+	}
+}
+
+// R2 moves to the next way of showing the screens, and L2 back unless it fast-forwards. In netplay
+// each device shows the screens its own way, changed by one player's L2 and R2: Screen Layout
+// Control's player, or with Auto this device's own, which RetroArch after 1.22.2 says; with one that
+// doesn't, the host's player 1, or player 2 on a device that joined.
+static void readGamateScreenKeys(void) {
+	static bool held[2][2];
+	if (gamateRerunning()) {
+		return;
+	}
+	bool const netplay = netplaySeen;
+	int here = gmJoined ? 1 : 0;
 	unsigned client = 0;
-	if (!netplaySeen || gmClientUnknown) {
-		return 0;
+	if (gmR2Follows >= 0) {
+		here = gmR2Follows;
+	} else if (netplay && !gmClientUnknown) {
+		if (environ_cb(RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX, &client)) {
+			here = client < 2 && !(client == 0 && gmJoined) ? (int) client : here;
+		} else {
+			gmClientUnknown = true;
+		}
 	}
-	if (!environ_cb(RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX, &client)) {
-		gmClientUnknown = true;
-		return 0;
+	int step = 0;
+	for (int port = 0; port < 2; port++) {
+		if (netplay && port != here) {
+			continue;
+		}
+		for (int k = netplay || !gmL2FastForward ? 0 : 1; k < 2; k++) {
+			bool const now = !gamateSwitchStart(port) &&
+			                 input_state_cb((unsigned) port, RETRO_DEVICE_JOYPAD, 0, k ? RETRO_DEVICE_ID_JOYPAD_R2 : RETRO_DEVICE_ID_JOYPAD_L2);
+			if (now && !held[port][k]) {
+				step += k ? 1 : -1;
+			}
+			held[port][k] = now;
+		}
 	}
-	return client == 1 ? 1 : 0;
+	if (!step) {
+		return;
+	}
+	gmScreen = ((gmScreen + step) % 4 + 4) % 4;
+	svLevelsSet = false;
+	struct retro_game_geometry g = { gamateWidth(), gamateHeight(), 2 * GM_WIDTH, 2 * GM_HEIGHT, (float) gamateWidth() / gamateHeight() };
+	environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g);
+	static const char* const names[4] = { "Side by Side", "Top and Bottom", "Player 1 Only", "Player 2 Only" };
+	gamateNotify(names[gmScreen]);
+}
+
+// Show Player Numbers: each player's number in a small badge, faintly, at the top left of their screen,
+// as armGBA draws it
+static uint16_t blend565(uint16_t was, uint32_t color, int alpha) {
+	int const r = (was >> 11) << 3, g = (was >> 5 & 63) << 2, b = (was & 31) << 3;
+	int const cr = (int) (color >> 16 & 0xFF), cg = (int) (color >> 8 & 0xFF), cb = (int) (color & 0xFF);
+	int const nr = (r * (256 - alpha) + cr * alpha) >> 8, ng = (g * (256 - alpha) + cg * alpha) >> 8, nb = (b * (256 - alpha) + cb * alpha) >> 8;
+	return (uint16_t) ((nr >> 3) << 11 | (ng >> 2) << 5 | nb >> 3);
+}
+
+static void numberScreen(uint16_t* corner, int pitch, int player) {
+	static const uint8_t glyphs[3][7] = {
+		{ 0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10 }, { 0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E },
+		{ 0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F },
+	};
+	static const uint32_t colors[2] = { 0x2F6FE0, 0xD83C3C };
+	uint32_t const fill = colors[player], edge = (fill >> 1) & 0x7F7F7F;
+	int const width = 15, height = 11;
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			if ((x == 0 || x == width - 1) && (y == 0 || y == height - 1)) {
+				continue;
+			}
+			bool const border = x == 0 || y == 0 || x == width - 1 || y == height - 1;
+			int const gx = x - 2, gy = y - 2, glyph = gx < 5 ? 0 : 1, column = glyph ? gx - 6 : gx;
+			bool const dot = !border && gy >= 0 && gy < 7 && column >= 0 && column < 5 && (gx < 5 || gx > 5) &&
+			                 glyphs[glyph ? player + 1 : 0][gy] >> (4 - column) & 1;
+			uint16_t* at = corner + (y + 2) * pitch + (x + 2);
+			*at = dot ? blend565(*at, 0xFFFFFF, 170) : blend565(*at, border ? edge : fill, border ? 110 : 90);
+		}
+	}
+}
+
+static void numberGamates(void) {
+	if (!gmPlayerNumbers) {
+		return;
+	}
+	switch (gmScreen) {
+	case GM_SCREENS_SIDE:
+		numberScreen(video, 2 * GM_WIDTH, 0);
+		numberScreen(video + GM_WIDTH, 2 * GM_WIDTH, 1);
+		break;
+	case GM_SCREENS_STACKED:
+		numberScreen(video, GM_WIDTH, 0);
+		numberScreen(video + GM_WIDTH * GM_HEIGHT, GM_WIDTH, 1);
+		break;
+	default:
+		numberScreen(video, GM_WIDTH, gmScreen - GM_SCREENS_ONE);
+		break;
+	}
 }
 
 // A Gamate frame: the NES pad's buttons as the Gamate's, as for the Supervision; with the link cable,
@@ -2305,6 +2517,10 @@ static void runGamate(void) {
 		readInputOptions();
 		readSupervisionOptions();
 		readGamateLink(false);
+	}
+	if (gmLinked) {
+		readGamateControllerSwitch();
+		readGamateScreenKeys();
 	}
 	handheldCheatsApply();
 	if (!gmLinked) {
@@ -2326,16 +2542,16 @@ static void runGamate(void) {
 			video_cb(NULL, GM_WIDTH, GM_HEIGHT, GM_WIDTH * sizeof(uint16_t));
 			return;
 		}
-		showLcd(gamate.picture, GM_WIDTH, GM_HEIGHT);
+		showLcd(gamate.picture, GM_WIDTH, GM_HEIGHT, NULL);
 		return;
 	}
 	gmRunLinked(&gamate, &gamateTwo, gamateButtons(0), gamateButtons(1));
-	if (gmScreen >= 2) {
-		const struct Gamate* shown = gmScreen == 2 || (gmScreen == 4 && gamateOwnPlayer() == 0) ? &gamate : &gamateTwo;
+	if (gmScreen >= GM_SCREENS_ONE) {
+		const struct Gamate* shown = gmScreen == GM_SCREENS_ONE ? &gamate : &gamateTwo;
 		if (shown->soundFrames) {
 			audio_batch_cb(shown->sound, (size_t) shown->soundFrames);
 		}
-		showLcd(shown->picture, GM_WIDTH, GM_HEIGHT);
+		showLcd(shown->picture, GM_WIDTH, GM_HEIGHT, numberGamates);
 		return;
 	}
 	// Both: the sound mixed, the screens side by side or top and bottom
@@ -2348,17 +2564,17 @@ static void runGamate(void) {
 		audio_batch_cb(mixed, (size_t) frames);
 	}
 	static uint8_t both[2 * GM_WIDTH * GM_HEIGHT];
-	if (gmScreen == 1) {
+	if (gmScreen == GM_SCREENS_STACKED) {
 		memcpy(both, gamate.picture, sizeof(gamate.picture));
 		memcpy(both + GM_WIDTH * GM_HEIGHT, gamateTwo.picture, sizeof(gamateTwo.picture));
-		showLcd(both, GM_WIDTH, 2 * GM_HEIGHT);
+		showLcd(both, GM_WIDTH, 2 * GM_HEIGHT, numberGamates);
 		return;
 	}
 	for (int y = 0; y < GM_HEIGHT; y++) {
 		memcpy(both + y * 2 * GM_WIDTH, gamate.picture + y * GM_WIDTH, GM_WIDTH);
 		memcpy(both + y * 2 * GM_WIDTH + GM_WIDTH, gamateTwo.picture + y * GM_WIDTH, GM_WIDTH);
 	}
-	showLcd(both, 2 * GM_WIDTH, GM_HEIGHT);
+	showLcd(both, 2 * GM_WIDTH, GM_HEIGHT, numberGamates);
 }
 
 void retro_run(void) {
@@ -3648,6 +3864,10 @@ bool retro_load_game(const struct retro_game_info* game) {
 		svLevelsSet = false;
 		gmLinked = false;
 		gmClientUnknown = false;
+		gmScreenOption = -1;
+		gmControllerFocus = 0;
+		gmSessionTag = 0;
+		gmJoined = false;
 		readGamateLink(true);
 		gamateNetplay(optionIs(environ_cb, "armnes_gm_link", "separate"), optionIs(environ_cb, "armnes_gm_link_timing", "exact"));
 		readInputOptions();
@@ -3847,7 +4067,7 @@ size_t retro_serialize_size(void) {
 		return svStateSize();
 	}
 	if (gmLoaded) {
-		return 2 * gmStateSize();
+		return 2 * gmStateSize() + sizeof(gmSessionTag);
 	}
 	if (!loaded) {
 		return 0;
@@ -3865,11 +4085,13 @@ bool retro_serialize(void* data, size_t size) {
 		return true;
 	}
 	if (gmLoaded) {
-		if (size < 2 * gmStateSize()) {
+		if (size < 2 * gmStateSize() + sizeof(gmSessionTag)) {
 			return false;
 		}
+		gamateTagSession();
 		gmSave(&gamate, data);
 		gmSave(&gamateTwo, (uint8_t*) data + gmStateSize());
+		memcpy((uint8_t*) data + 2 * gmStateSize(), &gmSessionTag, sizeof(gmSessionTag));
 		return true;
 	}
 	if (!loaded || size < retro_serialize_size()) {
@@ -3891,8 +4113,22 @@ bool retro_unserialize(const void* data, size_t size) {
 		return svLoadState(&supervision, data, size);
 	}
 	if (gmLoaded) {
-		return size >= 2 * gmStateSize() && gmLoadState(&gamate, data, gmStateSize()) &&
-		       gmLoadState(&gamateTwo, (const uint8_t*) data + gmStateSize(), gmStateSize());
+		if (size < 2 * gmStateSize() + sizeof(gmSessionTag) || !gmLoadState(&gamate, data, gmStateSize()) ||
+			!gmLoadState(&gamateTwo, (const uint8_t*) data + gmStateSize(), gmStateSize())) {
+			return false;
+		}
+		// A state of another device's session, loaded by netplay: this device joined it. One loaded by
+		// hand in netplay keeps this device's own tag.
+		uint32_t tag;
+		memcpy(&tag, (const uint8_t*) data + 2 * gmStateSize(), sizeof(tag));
+		int context = RETRO_SAVESTATE_CONTEXT_NORMAL;
+		bool const byNetplay = environ_cb(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &context) && context == RETRO_SAVESTATE_CONTEXT_ROLLBACK_NETPLAY;
+		if (!netplaySeen || byNetplay) {
+			gamateTagSession();
+			gmJoined |= netplaySeen && tag != gmSessionTag;
+			gmSessionTag = tag;
+		}
+		return true;
 	}
 	if (!loaded) {
 		return false;

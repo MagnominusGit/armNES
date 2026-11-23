@@ -76,10 +76,13 @@ desktops.
   with their protection check, ported from MAME's driver and Kevin Horton's notes. Link Mode links
   two Gamates for the games two can play over the cable, as armGBA does. Together, the default and
   the mode for netplay, runs both Gamates on every device, the second on controller 2 or the second
-  netplay player; Screen Layout's Auto (the default) shows player 1's Gamate when playing alone and,
-  in netplay, each device its own player's (as RetroArch after 1.22.2 says which; with 1.22.2 and
-  before, the second player picks Player 2 Only); or one player's, or both side by side or top and
-  bottom for two players on one device. Separate runs one Gamate per device over netplay's packets
+  netplay player. As armGBA does: Screen Layout shows both side by side (the default), top and
+  bottom, or one player's; R2 goes to the next layout and L2 back (or fast-forwards, as L2 Button
+  says), each change named on screen; in netplay each device changes its own screens with its own
+  player's L2 and R2 (RetroArch after 1.22.2 says which player; with 1.22.2 and before, a device that
+  joined is player 2), or one chosen player's with Screen Layout Control. Switch Controller Combo
+  (Start + L2 + R2) moves controller 1 to the other Gamate outside netplay, and Show Player Numbers
+  marks each screen P1 or P2. Separate runs one Gamate per device over netplay's packets
   (both players pick it before the game starts), with Gamate Link Timing as armGBA's Game Boy has
   it: Standard, each at its own pace, smooth for games that wait for each other; or Exact, the two
   kept within a frame of each other like a real cable, slower over Wi-Fi. LCD Palette, LCD Ghosting
@@ -94,8 +97,8 @@ desktops.
 | X, Y | Turbo A, turbo B, once every Turbo Button Period |
 | R | Zapper trigger, when it aims with the right stick |
 | L | Zapper trigger off the screen, when it aims with the right stick |
-| R2 | Fast-forward while held |
-| L2 | Zapper fine aim: the further it's pulled, the slower the crosshair moves |
+| R2 | Fast-forward while held; with two Gamates together, the next screen layout |
+| L2 | Zapper fine aim: the further it's pulled, the slower the crosshair moves; with two Gamates together, fast-forward or the previous screen layout (L2 Button) |
 | R3 | Zapper: centers the crosshair; with Zapper Motion, how the device is held becomes the middle |
 | L3 | On Disk System games, takes the disk out, then puts the next side in; VS. System service button; on controller 2, the Famicom's microphone; on Datach games, a barcode swipe |
 | Left stick | The D-pad too, unless Left Stick as D-Pad is off |
