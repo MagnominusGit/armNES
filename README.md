@@ -434,8 +434,8 @@ assistant's word.
 
 ## License
 
-Distributed under the GNU General Public License, version 2 (`LICENSE`), as FCEUmm's boards are.
-armNES's own files are GPL-2.0-or-later. Each part keeps its own notice:
+Distributed under the GNU General Public License, version 2 or (at your option) any later version
+(`LICENSE`), as armNES's own files and FCEUmm's boards are. Each part keeps its own notice:
 
 | Part | License |
 | --- | --- |
