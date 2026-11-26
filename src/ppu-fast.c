@@ -1179,7 +1179,7 @@ static void drawTile(uint16_t* out, uint64_t pixels, const uint8_t* sprites, con
 	uint8x8_t color = vand_u8(lookup32(palette, index), vdup_n_u8(grayMask));
 	vst1q_u16(out, vorrq_u16(vmovl_u8(color), vdupq_n_u16(emphasis)));
 }
-#elif defined(__x86_64__) || defined(__i386__)
+#elif defined(__x86_64__)
 #include <immintrin.h>
 
 __attribute__((target("sse4.1"))) static void drawTileSse(uint16_t* out, uint64_t pixels, const uint8_t* sprites,
@@ -1209,6 +1209,9 @@ __attribute__((target("sse4.1"))) static void drawTileSse(uint16_t* out, uint64_
 
 static void drawTile(uint16_t* out, uint64_t pixels, const uint8_t* sprites, const uint8_t* palette,
 	uint8_t grayMask, uint16_t emphasis) {
+#ifdef __SSE4_1__
+	drawTileSse(out, pixels, sprites, palette, grayMask, emphasis);
+#else
 	static int sse = -1;
 	if (sse < 0) {
 		sse = __builtin_cpu_supports("sse4.1");
@@ -1218,6 +1221,7 @@ static void drawTile(uint16_t* out, uint64_t pixels, const uint8_t* sprites, con
 	} else {
 		drawTileScalar(out, pixels, sprites, palette, grayMask, emphasis);
 	}
+#endif
 }
 #else
 #define drawTile drawTileScalar
